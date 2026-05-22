@@ -10,7 +10,7 @@
 #   The final path must be the document root of this app on the server.
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/youruser/public_html/kdisc
+    - export DEPLOYPATH=/home/shooting/public_html/jf.kdiscmis.org.in
     - /bin/mkdir -p "$DEPLOYPATH"
     - /bin/cp -R *.php "$DEPLOYPATH/"
     - /bin/cp -R includes "$DEPLOYPATH/"
