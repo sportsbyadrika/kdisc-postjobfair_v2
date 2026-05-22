@@ -1,0 +1,18 @@
+---
+# cPanel Git Version Control deployment manifest.
+#
+# cPanel runs these tasks (in a single bash session) whenever you click
+# "Deploy HEAD Commit" in Git Version Control, or via the cPanel API.
+#
+# >>> BEFORE FIRST USE: edit the DEPLOYPATH line below. <<<
+#   - Replace  youruser  with your cPanel account username.
+#   - Replace  kdisc     with the actual subfolder your site is served from.
+#   The final path must be the document root of this app on the server.
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/youruser/public_html/kdisc
+    - /bin/mkdir -p "$DEPLOYPATH"
+    - /bin/cp -R *.php "$DEPLOYPATH/"
+    - /bin/cp -R includes "$DEPLOYPATH/"
+    - /bin/cp -R assets "$DEPLOYPATH/"
+    - /bin/cp -R config "$DEPLOYPATH/"
