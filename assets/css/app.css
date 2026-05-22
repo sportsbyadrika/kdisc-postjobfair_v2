@@ -1,0 +1,95 @@
+.brand-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.card-stat {
+    border-left: 4px solid var(--bs-primary);
+}
+
+
+.stat-icon {
+    font-size: 1.5rem;
+    line-height: 1;
+}
+
+.job-fair-result-card {
+    border-left: 4px solid var(--bs-success);
+}
+
+
+.navbar-silver {
+    background-color: silver;
+}
+
+.navbar-silver .navbar-brand,
+.navbar-silver .nav-link,
+.navbar-silver .navbar-toggler {
+    color: #212529;
+}
+
+.navbar-silver .nav-link.active,
+.navbar-silver .nav-link:focus,
+.navbar-silver .nav-link:hover {
+    color: #000;
+}
+
+.navbar-silver .navbar-toggler {
+    border-color: rgba(0, 0, 0, 0.2);
+}
+
+.navbar-silver .navbar-toggler-icon {
+    filter: invert(1) grayscale(100%);
+}
+
+.login-page-container {
+    max-width: 100%;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #f4f8ff 0%, #e8f0fe 45%, #eef2f7 100%);
+}
+
+.login-modal {
+    border-radius: 1rem;
+    background: #ffffff;
+    overflow: hidden;
+}
+
+.login-modal .card-body {
+    position: relative;
+}
+
+.login-modal .card-body::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 4px;
+    background: linear-gradient(90deg, #0d6efd 0%, #34a853 100%);
+}
+
+.login-kicker {
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #6c757d;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.login-disclaimer {
+    border: 0;
+    border-left: 4px solid #f59f00;
+}
+
+@media (max-width: 575.98px) {
+    .login-modal {
+        border-radius: 0.75rem;
+    }
+
+    .login-modal .card-body {
+        padding: 1.25rem !important;
+    }
+}
