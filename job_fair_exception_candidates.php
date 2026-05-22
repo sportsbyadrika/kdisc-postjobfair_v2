@@ -281,11 +281,11 @@ if ($downloadCsv) {
 
 render_header('Exception Candidates', ['show_navigation' => false, 'main_container_class' => 'container-fluid']);
 ?>
-<h1 class="h3 mb-3">Exception Candidates</h1>
-<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
-    <p class="text-muted mb-0">Showing candidates for Job Fair No <strong><?= esc($jobFairRow) ?></strong> and metric <strong><?= esc($metricLabel) ?></strong>.</p>
-    <a class="btn btn-success" href="<?= esc($_SERVER['REQUEST_URI'] . (str_contains($_SERVER['REQUEST_URI'], '?') ? '&' : '?') . 'download=csv') ?>">Download CSV</a>
-</div>
+<?php render_page_header('Exception Candidates', [
+    'icon' => 'bi-exclamation-triangle',
+    'subtitle' => 'Job Fair No ' . $jobFairRow . ' · Metric: ' . $metricLabel,
+    'actions' => '<a class="btn btn-primary" href="' . esc($_SERVER['REQUEST_URI'] . (str_contains($_SERVER['REQUEST_URI'], '?') ? '&' : '?') . 'download=csv') . '"><i class="bi bi-download me-1"></i>Download CSV</a>',
+]); ?>
 
 <div class="card">
     <div class="card-body">

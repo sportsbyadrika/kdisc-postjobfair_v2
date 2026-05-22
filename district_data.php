@@ -28,17 +28,18 @@ $districtTotals = [
 ];
 
 render_header('District Data');
+render_page_header('District Overview', [
+    'icon' => 'bi-bar-chart-line',
+    'subtitle' => 'District wise record count across selection, shortlist and offer letter stages.',
+    'actions' => '<a class="btn btn-light" href="/dashboard.php"><i class="bi bi-arrow-left me-1"></i>Back to Dashboard</a>',
+]);
 ?>
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h1 class="h3 mb-0">District Data</h1>
-    <a class="btn btn-outline-primary btn-sm" href="/dashboard.php">Back to Dashboard</a>
-</div>
 
-<div class="card">
+<div class="card table-card">
+    <div class="card-header"><i class="bi bi-geo-alt-fill text-primary me-1"></i>District wise Record Count</div>
     <div class="card-body">
-        <h2 class="h5 mb-2">District wise Record Count</h2>
         <div class="table-responsive">
-            <table class="table table-bordered table-striped align-middle mb-0">
+            <table class="table table-hover align-middle mb-0">
                 <thead>
                     <tr>
                         <th>Sl No</th>

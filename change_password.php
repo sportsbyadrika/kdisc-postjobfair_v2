@@ -39,16 +39,19 @@ render_header('Change Password');
 ?>
 <div class="row justify-content-center">
     <div class="col-12 col-md-8 col-lg-5">
-        <h1 class="h3 mb-3">Change Password</h1>
+        <?php render_page_header('Change Password', [
+            'icon' => 'bi-key',
+            'subtitle' => 'Update your account password.',
+        ]); ?>
 
         <?php if ($flash): ?>
-            <div class="alert alert-success"><?= esc($flash) ?></div>
+            <div class="alert alert-success d-flex align-items-center gap-2"><i class="bi bi-check-circle-fill"></i><span><?= esc($flash) ?></span></div>
         <?php endif; ?>
         <?php if ($error): ?>
-            <div class="alert alert-danger"><?= esc($error) ?></div>
+            <div class="alert alert-danger d-flex align-items-center gap-2"><i class="bi bi-exclamation-circle-fill"></i><span><?= esc($error) ?></span></div>
         <?php endif; ?>
 
-        <div class="card shadow-sm">
+        <div class="card">
             <div class="card-body">
                 <form method="post">
                     <div class="mb-3">

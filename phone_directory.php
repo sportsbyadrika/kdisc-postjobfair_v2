@@ -86,17 +86,18 @@ $stmt->execute($params);
 $entries = $stmt->fetchAll();
 
 render_header('Phone Directory');
+render_page_header('Phone Directory', [
+    'icon' => 'bi-person-rolodex',
+    'subtitle' => 'Contact details for team members across aggregators, employers and districts.',
+    'actions' => $isAdmin
+        ? '<button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#phoneDirectoryModal" onclick="openAddModal()"><i class="bi bi-plus-lg me-1"></i>Add Entry</button>'
+        : '',
+]);
 ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h3 mb-0">Phone Directory</h1>
-    <?php if ($isAdmin): ?>
-        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#phoneDirectoryModal" onclick="openAddModal()">Add Entry</button>
-    <?php endif; ?>
-</div>
 
-<?php if ($flash): ?><div class="alert alert-success"><?= esc($flash) ?></div><?php endif; ?>
+<?php if ($flash): ?><div class="alert alert-success d-flex align-items-center gap-2"><i class="bi bi-check-circle-fill"></i><span><?= esc($flash) ?></span></div><?php endif; ?>
 
-<form class="row g-2 mb-3">
+<form class="filter-bar row g-3 align-items-end">
     <div class="col-12 col-md-3">
         <label class="form-label mb-1">Team</label>
         <select class="form-select" name="team">
@@ -128,13 +129,15 @@ render_header('Phone Directory');
             </select>
         </div>
     <?php endif; ?>
-    <div class="col-12 col-md-1 d-flex align-items-end">
-        <button class="btn btn-outline-secondary w-100">Filter</button>
+    <div class="col-12 col-md-2 d-flex align-items-end gap-2">
+        <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
+        <a class="btn btn-light" href="/phone_directory.php">Reset</a>
     </div>
 </form>
 
+<div class="card table-card">
 <div class="table-responsive">
-    <table class="table table-striped table-bordered align-middle">
+    <table class="table table-hover align-middle mb-0">
         <thead>
             <tr>
                 <th>Name</th>
@@ -145,19 +148,19 @@ render_header('Phone Directory');
                 <th>Location</th>
                 <?php if ($isAdmin): ?>
                     <th>Status</th>
-                    <th>Actions</th>
+                    <th class="text-end">Actions</th>
                 <?php endif; ?>
             </tr>
         </thead>
         <tbody>
             <?php if (empty($entries)): ?>
                 <tr>
-                    <td colspan="<?= $isAdmin ? '8' : '6' ?>" class="text-center text-muted">No directory entries found.</td>
+                    <td colspan="<?= $isAdmin ? '8' : '6' ?>"><div class="empty-state"><i class="bi bi-person-x"></i>No directory entries found.</div></td>
                 </tr>
             <?php endif; ?>
             <?php foreach ($entries as $entry): ?>
                 <tr>
-                    <td><?= esc($entry['name']) ?></td>
+                    <td class="fw-semibold"><?= esc($entry['name']) ?></td>
                     <td><?= esc($entry['designation']) ?></td>
                     <td><?= esc($entry['team']) ?></td>
                     <td><?= esc($entry['mobile_number']) ?></td>
@@ -165,25 +168,28 @@ render_header('Phone Directory');
                     <td><?= esc($entry['location']) ?></td>
                     <?php if ($isAdmin): ?>
                         <td>
-                            <span class="badge bg-<?= $entry['active_status'] ? 'success' : 'secondary' ?>">
+                            <span class="status-chip <?= $entry['active_status'] ? 'status-yes' : 'status-neutral' ?>">
                                 <?= $entry['active_status'] ? 'Active' : 'Inactive' ?>
                             </span>
                         </td>
-                        <td class="d-flex gap-1">
-                            <button class="btn btn-sm btn-warning" onclick='openEditModal(<?= json_encode($entry, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'>Edit</button>
+                        <td>
+                            <div class="d-flex gap-1 justify-content-end">
+                            <button class="btn btn-sm btn-outline-primary" onclick='openEditModal(<?= json_encode($entry, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'><i class="bi bi-pencil"></i> Edit</button>
                             <?php if ($entry['active_status']): ?>
-                                <form method="post">
+                                <form method="post" class="d-inline">
                                     <input type="hidden" name="action" value="deactivate">
                                     <input type="hidden" name="id" value="<?= (int) $entry['id'] ?>">
-                                    <button class="btn btn-sm btn-danger" onclick="return confirm('Deactivate this entry?')">Deactivate</button>
+                                    <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Deactivate this entry?')"><i class="bi bi-x-circle"></i> Deactivate</button>
                                 </form>
                             <?php endif; ?>
+                            </div>
                         </td>
                     <?php endif; ?>
                 </tr>
             <?php endforeach; ?>
         </tbody>
     </table>
+</div>
 </div>
 
 <?php if ($isAdmin): ?>

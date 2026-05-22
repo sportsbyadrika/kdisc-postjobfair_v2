@@ -74,12 +74,15 @@ $crmMemberOptions = fetch_master_distinct_values('CRM_Member');
 $rows = fetch_master_rows($filters);
 
 render_header('Job fair masters');
+render_page_header('Job Fair Masters', [
+    'icon' => 'bi-sliders',
+    'subtitle' => 'Master and configuration data for job fairs.',
+]);
 ?>
-<h1 class="h3 mb-4">Job fair masters</h1>
 
 <div class="card mb-4">
     <div class="card-body">
-        <h2 class="h5">Filters</h2>
+        <h2 class="h5 mb-3"><i class="bi bi-funnel text-primary me-1"></i>Filters</h2>
         <form method="get" class="row g-3 align-items-end">
             <div class="col-md-4">
                 <label for="aggregator" class="form-label">Aggregator</label>

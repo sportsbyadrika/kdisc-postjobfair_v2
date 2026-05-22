@@ -263,7 +263,10 @@ render_header('Call History Report', [
 ]);
 ?>
 <?php if ($viewMode === 'details'): ?>
-    <h1 class="h3 mb-3">Call Details Report</h1>
+    <?php render_page_header('Call Details Report', [
+        'icon' => 'bi-telephone',
+        'subtitle' => 'Individual call records for the selected metric and user.',
+    ]); ?>
     <div class="card mb-3">
         <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div>
@@ -320,11 +323,14 @@ render_header('Call History Report', [
             </tbody>
     </table>
 <?php else: ?>
-    <h1 class="h3 mb-3">User-wise Call History Report</h1>
+    <?php render_page_header('User-wise Call History Report', [
+        'icon' => 'bi-telephone-fill',
+        'subtitle' => 'Call activity grouped by CRM member, stage and call status.',
+    ]); ?>
 
     <div class="card mb-3">
         <div class="card-body">
-            <form method="get" class="row g-2 align-items-end">
+            <form method="get" class="row g-3 align-items-end">
                 <div class="col-12 col-md-4 col-lg-3">
                     <label for="crm_member" class="form-label">Filter by User</label>
                     <select id="crm_member" name="crm_member" class="form-select">

@@ -29,15 +29,12 @@ if (!$candidate) {
 }
 
 render_header('Manage Candidate');
+render_page_header('Manage Candidate', [
+    'icon' => 'bi-person-vcard',
+    'subtitle' => ($candidate['Candidate_Name'] ?: 'N/A') . ' · DWMS ID ' . ($candidate['DWMS_ID'] ?: 'N/A'),
+    'actions' => '<a class="btn btn-light" href="' . esc($returnUrl) . '"><i class="bi bi-arrow-left me-1"></i>Back to Results</a>',
+]);
 ?>
-
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-        <h1 class="h4 mb-1">Manage Candidate</h1>
-        <div class="text-muted small"><?= esc($candidate['Candidate_Name'] ?: 'N/A') ?> (<?= esc($candidate['DWMS_ID'] ?: 'N/A') ?>)</div>
-    </div>
-    <a class="btn btn-outline-secondary" href="<?= esc($returnUrl) ?>">← Back to Results</a>
-</div>
 
 <form method="post" action="/job_fair_results.php" id="manageCandidateForm">
     <input type="hidden" name="candidate_id" value="<?= (int) $candidateId ?>" id="candidateId">
@@ -59,17 +56,6 @@ render_header('Manage Candidate');
 
     <div id="dynamicPanels"></div>
 </form>
-
-<style>
-.status-chip { display:inline-block; padding:0.2rem 0.55rem; border-radius:999px; font-size:0.75rem; font-weight:600; border:1px solid transparent; }
-.status-selected { color:#146c43; background:#d1e7dd; border-color:#a3cfbb; }
-.status-shortlisted { color:#7a3f00; background:#ffe5cc; border-color:#ffca99; }
-.status-onhold { color:#084298; background:#cfe2ff; border-color:#9ec5fe; }
-.status-rejected { color:#dc3545; background:#f8d7da; border-color:#f1aeb5; }
-.offer-letter-link-icon { font-size:1rem; line-height:1; text-decoration:none; }
-.offer-letter-link-icon.disabled { opacity:0.45; pointer-events:none; cursor:not-allowed; }
-.focus-field-label { color:#800000; font-weight:600; }
-</style>
 
 <script>
 const candidateId = <?= json_encode($candidateId) ?>;

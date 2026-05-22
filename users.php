@@ -62,35 +62,56 @@ $stmt->execute($params);
 $users = $stmt->fetchAll();
 
 render_header('Users');
+render_page_header('User Management', [
+    'icon' => 'bi-people-fill',
+    'subtitle' => 'Create and manage Administrator, CRM and District user accounts.',
+    'actions' => '<button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#userModal" onclick="openAddModal()"><i class="bi bi-plus-lg me-1"></i>Add User</button>',
+]);
 ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h3 mb-0">User Management</h1>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#userModal" onclick="openAddModal()">Add User</button>
-</div>
-<?php if ($flash): ?><div class="alert alert-success"><?= esc($flash) ?></div><?php endif; ?>
-<form class="row g-2 mb-3">
-    <div class="col-6 col-md-3"><select class="form-select" name="role"><option value="">All Roles</option><option value="administrator" <?= $filterRole==='administrator'?'selected':'' ?>>Administrator</option><option value="crm_member" <?= $filterRole==='crm_member'?'selected':'' ?>>CRM Member</option><option value="district_user" <?= $filterRole==='district_user'?'selected':'' ?>>District User</option></select></div>
-    <div class="col-6 col-md-3"><select class="form-select" name="active_status"><option value="">All Status</option><option value="1" <?= $filterStatus==='1'?'selected':'' ?>>Active</option><option value="0" <?= $filterStatus==='0'?'selected':'' ?>>Inactive</option></select></div>
-    <div class="col-12 col-md-2"><button class="btn btn-outline-secondary w-100">Filter</button></div>
+<?php if ($flash): ?><div class="alert alert-success d-flex align-items-center gap-2"><i class="bi bi-check-circle-fill"></i><span><?= esc($flash) ?></span></div><?php endif; ?>
+<form class="filter-bar">
+    <div class="row g-3 align-items-end">
+        <div class="col-6 col-md-3">
+            <label class="form-label">Role</label>
+            <select class="form-select" name="role"><option value="">All Roles</option><option value="administrator" <?= $filterRole==='administrator'?'selected':'' ?>>Administrator</option><option value="crm_member" <?= $filterRole==='crm_member'?'selected':'' ?>>CRM Member</option><option value="district_user" <?= $filterRole==='district_user'?'selected':'' ?>>District User</option></select>
+        </div>
+        <div class="col-6 col-md-3">
+            <label class="form-label">Status</label>
+            <select class="form-select" name="active_status"><option value="">All Status</option><option value="1" <?= $filterStatus==='1'?'selected':'' ?>>Active</option><option value="0" <?= $filterStatus==='0'?'selected':'' ?>>Inactive</option></select>
+        </div>
+        <div class="col-12 col-md-3">
+            <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply Filters</button>
+            <a class="btn btn-light" href="/users.php">Reset</a>
+        </div>
+    </div>
 </form>
+<div class="card table-card">
 <div class="table-responsive">
-<table class="table table-striped table-bordered align-middle">
-    <thead><tr><th>Name</th><th>Role</th><th>Mobile</th><th>Email</th><th>Address</th><th>Status</th><th>Actions</th></tr></thead>
+<table class="table table-hover align-middle mb-0">
+    <thead><tr><th>Name</th><th>Role</th><th>Mobile</th><th>Email</th><th>Address</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
     <tbody>
+    <?php if ($users === []): ?>
+        <tr><td colspan="7"><div class="empty-state"><i class="bi bi-people"></i>No users found for the selected filters.</div></td></tr>
+    <?php endif; ?>
     <?php foreach ($users as $u): ?>
         <tr>
-            <td><?= esc($u['name']) ?></td><td><?= esc($u['role']) ?></td><td><?= esc($u['mobile_number']) ?></td><td><?= esc($u['email']) ?></td><td><?= esc($u['address']) ?></td>
-            <td><span class="badge bg-<?= $u['active_status']?'success':'secondary' ?>"><?= $u['active_status']?'Active':'Inactive' ?></span></td>
-            <td class="d-flex gap-1">
-                <button class="btn btn-sm btn-warning" onclick='openEditModal(<?= json_encode($u, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'>Edit</button>
+            <td class="fw-semibold"><?= esc($u['name']) ?></td>
+            <td><span class="status-chip status-neutral"><?= esc(role_label($u['role'])) ?></span></td>
+            <td><?= esc($u['mobile_number']) ?></td><td><?= esc($u['email']) ?></td><td><?= esc($u['address']) ?></td>
+            <td><span class="status-chip <?= $u['active_status']?'status-yes':'status-neutral' ?>"><?= $u['active_status']?'Active':'Inactive' ?></span></td>
+            <td>
+                <div class="d-flex gap-1 justify-content-end">
+                <button class="btn btn-sm btn-outline-primary" onclick='openEditModal(<?= json_encode($u, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'><i class="bi bi-pencil"></i> Edit</button>
                 <?php if ($u['active_status']): ?>
-                <form method="post"><input type="hidden" name="action" value="deactivate"><input type="hidden" name="id" value="<?= (int) $u['id'] ?>"><button class="btn btn-sm btn-danger" onclick="return confirm('Deactivate this user?')">Deactivate</button></form>
+                <form method="post" class="d-inline"><input type="hidden" name="action" value="deactivate"><input type="hidden" name="id" value="<?= (int) $u['id'] ?>"><button class="btn btn-sm btn-outline-danger" onclick="return confirm('Deactivate this user?')"><i class="bi bi-person-x"></i> Deactivate</button></form>
                 <?php endif; ?>
+                </div>
             </td>
         </tr>
     <?php endforeach; ?>
     </tbody>
 </table>
+</div>
 </div>
 
 <div class="modal fade" id="userModal" tabindex="-1" aria-hidden="true">
