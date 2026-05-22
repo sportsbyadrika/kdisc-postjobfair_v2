@@ -149,12 +149,15 @@ foreach ($groups as $title => $expression) {
 }
 
 render_header('Job fair reports');
+render_page_header('Job Fair Reports', [
+    'icon' => 'bi-graph-up',
+    'subtitle' => 'Summary reports across job fairs, categories and aggregators.',
+]);
 ?>
-<h1 class="h3 mb-4">Job fair reports</h1>
 
 <div class="card mb-4">
     <div class="card-body">
-        <h2 class="h5">Filters</h2>
+        <h2 class="h5 mb-3"><i class="bi bi-funnel text-primary me-1"></i>Filters</h2>
         <form method="get" class="row g-3 align-items-end">
             <div class="col-md-4">
                 <label for="job_fair" class="form-label">Job Fair</label>

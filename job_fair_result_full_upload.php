@@ -252,13 +252,23 @@ if (is_post()) {
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Full Upload - Job Fair Results</title>
+    <title>Full Upload · Job Fair CRM</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/css/app.css">
 </head>
-<body class="bg-light">
+<body>
 <div class="container py-4">
-    <h1 class="h3 mb-3">Full Upload to Job Fair Results</h1>
-    <p class="text-muted">Standalone upload page (not in menu). This uploads the full dataset to <code>job_fair_result</code> and converts <code>Y</code>/<code>N</code> to <code>Yes</code>/<code>No</code>.</p>
+    <div class="page-header">
+        <div class="page-title-group">
+            <span class="page-title-icon"><i class="bi bi-cloud-arrow-up"></i></span>
+            <div>
+                <h1>Full Upload to Job Fair Results</h1>
+                <p class="page-subtitle">Standalone upload page (not in menu).</p>
+            </div>
+        </div>
+    </div>
 
     <?php if ($flashMessage !== null): ?>
         <div class="alert alert-<?= esc($flashType ?? 'info') ?>"><?= esc($flashMessage) ?></div>
@@ -266,16 +276,23 @@ if (is_post()) {
 
     <div class="card">
         <div class="card-body">
-            <p class="text-muted mb-3">Required CSV columns: <code><?= esc(implode(', ', $uploadColumns)) ?></code>.</p>
             <form method="post" enctype="multipart/form-data" class="row g-3">
                 <div class="col-12 col-lg-8">
-                    <label for="csv_file" class="form-label">CSV file</label>
+                    <label for="csv_file" class="form-label">CSV File</label>
                     <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv,text/csv" required>
+                    <div class="form-text">Uploads the full dataset to <code>job_fair_result</code> and converts <code>Y</code>/<code>N</code> to <code>Yes</code>/<code>No</code>.</div>
                 </div>
                 <div class="col-12">
-                    <button class="btn btn-primary" type="submit">Upload Full CSV</button>
+                    <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up me-1"></i>Upload Full CSV</button>
                 </div>
             </form>
+            <hr class="my-3">
+            <p class="form-label mb-1">Required columns</p>
+            <div class="d-flex flex-wrap gap-1">
+                <?php foreach ($uploadColumns as $col): ?>
+                    <span class="status-chip status-neutral"><?= esc($col) ?></span>
+                <?php endforeach; ?>
+            </div>
         </div>
     </div>
 </div>

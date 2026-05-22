@@ -169,10 +169,11 @@ if (is_post()) {
 }
 
 render_header('Upload Aggregator Offer Letter CSV');
+render_page_header('Upload Aggregator Offer Letter CSV', [
+    'icon' => 'bi-upload',
+    'subtitle' => 'Import aggregator-side offer letter tracking data.',
+]);
 ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h3 mb-0">Upload Aggregator Offer Letter CSV</h1>
-</div>
 
 <?php if ($flashMessage !== null): ?>
     <div class="alert alert-<?= esc($flashType ?? 'info') ?>"><?= esc($flashMessage) ?></div>
@@ -180,20 +181,23 @@ render_header('Upload Aggregator Offer Letter CSV');
 
 <div class="card">
     <div class="card-body">
-        <p class="text-muted mb-3">
-            Upload CSV with required columns in this format:
-            <code><?= esc(implode(', ', array_keys($requiredColumns))) ?></code>.
-            Data is inserted into <code>aggregator_offer_letter_upload</code>.
-        </p>
         <form method="post" enctype="multipart/form-data" class="row g-3">
             <div class="col-12 col-lg-8">
-                <label for="csv_file" class="form-label">CSV file</label>
+                <label for="csv_file" class="form-label">CSV File</label>
                 <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv,text/csv" required>
+                <div class="form-text">Data is inserted into <code>aggregator_offer_letter_upload</code>.</div>
             </div>
             <div class="col-12">
-                <button class="btn btn-primary" type="submit">Upload CSV</button>
+                <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up me-1"></i>Upload CSV</button>
             </div>
         </form>
+        <hr class="my-3">
+        <p class="form-label mb-1">Required columns</p>
+        <div class="d-flex flex-wrap gap-1">
+            <?php foreach (array_keys($requiredColumns) as $col): ?>
+                <span class="status-chip status-neutral"><?= esc($col) ?></span>
+            <?php endforeach; ?>
+        </div>
     </div>
 </div>
 <?php render_footer(); ?>

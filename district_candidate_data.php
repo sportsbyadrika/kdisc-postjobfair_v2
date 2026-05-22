@@ -81,11 +81,12 @@ $stmt->execute([...$params, $perPage, $offset]);
 $rows = $stmt->fetchAll();
 
 render_header('Candidate Data');
+render_page_header('Candidate Data', [
+    'icon' => 'bi-people',
+    'subtitle' => 'Candidate records scoped to your district.',
+    'actions' => '<span class="status-chip status-info">' . (int) $totalRecords . ' records</span>',
+]);
 ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h3 mb-0">Candidate Data</h1>
-    <span class="badge bg-primary-subtle text-primary-emphasis">Records: <?= $totalRecords ?></span>
-</div>
 
 <?php
 $baseParams = $_GET;

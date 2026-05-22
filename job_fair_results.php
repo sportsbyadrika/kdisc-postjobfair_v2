@@ -1015,16 +1015,16 @@ $stmt->execute($queryParams);
 $rows = $stmt->fetchAll();
 
 render_header('Job fair result data');
+$resultsActions = '<span class="status-chip status-info me-1">' . (int) $totalRecords . ' records</span>';
+if ($user['role'] === 'administrator') {
+    $resultsActions .= '<a class="btn btn-light" href="/job_fair_result_upload.php"><i class="bi bi-upload me-1"></i>Upload CSV</a>';
+}
+render_page_header('Job Fair Result Data', [
+    'icon' => 'bi-table',
+    'subtitle' => 'Search, filter and manage post job fair candidate records.',
+    'actions' => $resultsActions,
+]);
 ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h3 mb-0">Job fair result data</h1>
-    <div class="d-flex align-items-center gap-2">
-        <?php if ($user['role'] === 'administrator'): ?>
-            <a class="btn btn-sm btn-outline-primary" href="/job_fair_result_upload.php">Upload CSV</a>
-        <?php endif; ?>
-        <span class="badge bg-primary-subtle text-primary-emphasis">Records: <?= $totalRecords ?></span>
-    </div>
-</div>
 
 <?php
 $baseParams = $_GET;
@@ -1044,46 +1044,10 @@ unset($baseParams['page'], $baseParams['candidate_call_history']);
     </nav>
 <?php endif; ?>
 
-<style>
-.status-chip {
-    display: inline-block;
-    padding: 0.2rem 0.55rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    line-height: 1.2;
-    border: 1px solid transparent;
-}
-
-.status-selected {
-    color: #146c43;
-    background-color: #d1e7dd;
-    border-color: #a3cfbb;
-}
-
-.status-shortlisted {
-    color: #7a3f00;
-    background-color: #ffe5cc;
-    border-color: #ffca99;
-}
-
-.status-onhold {
-    color: #084298;
-    background-color: #cfe2ff;
-    border-color: #9ec5fe;
-}
-
-.status-rejected {
-    color: #dc3545;
-    background-color: #f8d7da;
-    border-color: #f1aeb5;
-}
-</style>
-
 <form method="get" class="card mb-4">
     <div class="card-body">
-        <h2 class="h6 mb-3">Filters</h2>
-        <div class="row g-2">
+        <h2 class="h5 mb-3"><i class="bi bi-funnel text-primary me-1"></i>Filters</h2>
+        <div class="row g-3">
             <div class="col-12 col-md-4 col-lg-2">
                 <label class="form-label">Selection Status</label>
                 <select class="form-select" name="selection_status">
@@ -1245,18 +1209,17 @@ unset($baseParams['page'], $baseParams['candidate_call_history']);
                     <?php endforeach; ?>
                 </select>
             </div>
-            <div class="col-12 d-flex gap-2 mt-3">
-                <button class="btn btn-primary" type="submit">Apply filters</button>
-                <a class="btn btn-outline-secondary" href="/job_fair_results.php">Reset</a>
+            <div class="col-12 d-flex gap-2 mt-2">
+                <button class="btn btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply Filters</button>
+                <a class="btn btn-light" href="/job_fair_results.php">Reset</a>
             </div>
         </div>
     </div>
 </form>
 
-<div class="card mb-4">
-    <div class="card-body">
+<div class="card table-card mb-4">
         <div class="table-responsive">
-            <table class="table table-bordered table-striped align-middle mb-0">
+            <table class="table table-hover align-middle mb-0">
                 <thead>
                     <tr>
                         <th>Job Fair / Status</th>
@@ -1275,7 +1238,7 @@ unset($baseParams['page'], $baseParams['candidate_call_history']);
                 <tbody>
                     <?php if ($rows === []): ?>
                         <tr>
-                            <td colspan="11" class="text-center text-muted">No results found for the selected filters.</td>
+                            <td colspan="11"><div class="empty-state"><i class="bi bi-search"></i>No results found for the selected filters.</div></td>
                         </tr>
                     <?php endif; ?>
                     <?php foreach ($rows as $row): ?>
@@ -1325,8 +1288,6 @@ unset($baseParams['page'], $baseParams['candidate_call_history']);
                 </tbody>
             </table>
         </div>
-    </div>
 </div>
-
 
 <?php render_footer(); ?>

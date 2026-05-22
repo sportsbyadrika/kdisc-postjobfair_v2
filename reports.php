@@ -56,12 +56,15 @@ foreach ($allLogs as $log) {
 }
 
 render_header('Login Reports');
+render_page_header('User-wise Login Report', [
+    'icon' => 'bi-clock-history',
+    'subtitle' => 'Login activity and drill-down logs by user.',
+]);
 ?>
-<h1 class="h3 mb-3">User-wise Login Report</h1>
 
 <div class="card mb-3">
     <div class="card-body">
-        <form method="get" class="row g-2 align-items-end">
+        <form method="get" class="row g-3 align-items-end">
             <div class="col-12 col-md-4 col-lg-3">
                 <label for="date_from" class="form-label">Date from</label>
                 <input type="date" id="date_from" name="date_from" class="form-control" value="<?= esc($hasDateFrom ? $dateFrom : '') ?>">
@@ -78,8 +81,9 @@ render_header('Login Reports');
     </div>
 </div>
 
+<div class="card table-card">
 <div class="table-responsive">
-<table class="table table-bordered table-striped align-middle">
+<table class="table table-hover align-middle mb-0">
 <thead><tr><th>User</th><th>Mobile</th><th>Total Logins</th><th>Drill-down</th></tr></thead>
 <tbody>
 <?php foreach ($summary as $s): ?>
@@ -106,5 +110,6 @@ render_header('Login Reports');
 <?php endforeach; ?>
 </tbody>
 </table>
+</div>
 </div>
 <?php render_footer(); ?>

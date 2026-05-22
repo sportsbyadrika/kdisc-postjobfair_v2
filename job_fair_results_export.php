@@ -73,12 +73,13 @@ $countStmt->execute($params);
 $totalRows = (int) ($countStmt->fetch()['total_rows'] ?? 0);
 
 render_header('Export job fair result CSV');
+render_page_header('Export Job Fair Results CSV', [
+    'icon' => 'bi-download',
+    'subtitle' => 'Filter and download job fair result data as a CSV file.',
+]);
 ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h3 mb-0">Export Job Fair Results CSV</h1>
-</div>
 
-<div class="card shadow-sm mb-4">
+<div class="card mb-4">
     <div class="card-body">
         <form method="get" class="row g-3 align-items-end">
             <div class="col-md-3">

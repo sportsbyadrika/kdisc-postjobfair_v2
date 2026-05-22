@@ -100,12 +100,15 @@ $joinedStatusCallStagePivotRows = $joinedStatusCallStagePivotReport['rows'];
 $joinedStatusCallStagePivotStages = $joinedStatusCallStagePivotReport['stages'];
 
 render_header('Consolidated report', ['main_container_class' => 'container-fluid']);
+render_page_header('Consolidated Report', [
+    'icon' => 'bi-clipboard-data',
+    'subtitle' => 'Cross-functional metrics across aggregators, employers and job fairs.',
+]);
 ?>
-<h1 class="h3 mb-4">Consolidated report</h1>
 
 <div class="card mb-4">
     <div class="card-body">
-        <h2 class="h5">Filters</h2>
+        <h2 class="h5 mb-3"><i class="bi bi-funnel text-primary me-1"></i>Filters</h2>
         <form method="get" class="row g-3 align-items-end">
             <div class="col-md-3">
                 <label for="aggregator" class="form-label">Aggregator</label>

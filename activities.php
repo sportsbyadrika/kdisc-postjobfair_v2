@@ -59,31 +59,55 @@ $stmt->execute($params);
 $rows = $stmt->fetchAll();
 
 render_header('Activities');
+render_page_header('Activities', [
+    'icon' => 'bi-list-task',
+    'subtitle' => 'Track project, CRM and report tasks and their progress.',
+    'actions' => '<button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#activityModal" onclick="openAddModal()"><i class="bi bi-plus-lg me-1"></i>Add Activity</button>',
+]);
 ?>
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h3 mb-0">Activities</h1>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#activityModal" onclick="openAddModal()">Add Activity</button>
-</div>
-<?php if ($flash): ?><div class="alert alert-success"><?= esc($flash) ?></div><?php endif; ?>
-<form class="row g-2 mb-3">
-    <div class="col-6 col-md-3"><select class="form-select" name="module_name"><option value="">All Modules</option><option value="project" <?= $filterModule==='project'?'selected':'' ?>>Project</option><option value="crm" <?= $filterModule==='crm'?'selected':'' ?>>CRM</option><option value="report" <?= $filterModule==='report'?'selected':'' ?>>Report</option></select></div>
-    <div class="col-6 col-md-3"><select class="form-select" name="status"><option value="">All Status</option><option value="open" <?= $filterStatus==='open'?'selected':'' ?>>Open</option><option value="in_progress" <?= $filterStatus==='in_progress'?'selected':'' ?>>In Progress</option><option value="closed" <?= $filterStatus==='closed'?'selected':'' ?>>Closed</option></select></div>
-    <div class="col-12 col-md-2"><button class="btn btn-outline-secondary w-100">Filter</button></div>
+<?php if ($flash): ?><div class="alert alert-success d-flex align-items-center gap-2"><i class="bi bi-check-circle-fill"></i><span><?= esc($flash) ?></span></div><?php endif; ?>
+<form class="filter-bar">
+    <div class="row g-3 align-items-end">
+        <div class="col-6 col-md-3">
+            <label class="form-label">Module</label>
+            <select class="form-select" name="module_name"><option value="">All Modules</option><option value="project" <?= $filterModule==='project'?'selected':'' ?>>Project</option><option value="crm" <?= $filterModule==='crm'?'selected':'' ?>>CRM</option><option value="report" <?= $filterModule==='report'?'selected':'' ?>>Report</option></select>
+        </div>
+        <div class="col-6 col-md-3">
+            <label class="form-label">Status</label>
+            <select class="form-select" name="status"><option value="">All Status</option><option value="open" <?= $filterStatus==='open'?'selected':'' ?>>Open</option><option value="in_progress" <?= $filterStatus==='in_progress'?'selected':'' ?>>In Progress</option><option value="closed" <?= $filterStatus==='closed'?'selected':'' ?>>Closed</option></select>
+        </div>
+        <div class="col-12 col-md-3">
+            <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply Filters</button>
+            <a class="btn btn-light" href="/activities.php">Reset</a>
+        </div>
+    </div>
 </form>
-<div class="table-responsive"><table class="table table-striped table-bordered align-middle">
-<thead><tr><th>Module</th><th>Title</th><th>Status</th><th>Owner</th><th>Active</th><th>Actions</th></tr></thead>
+<div class="card table-card"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
+<thead><tr><th>Module</th><th>Title</th><th>Status</th><th>Owner</th><th>Active</th><th class="text-end">Actions</th></tr></thead>
 <tbody>
+<?php if ($rows === []): ?>
+<tr><td colspan="6"><div class="empty-state"><i class="bi bi-clipboard-x"></i>No activities found.</div></td></tr>
+<?php endif; ?>
 <?php foreach ($rows as $r): ?>
+<?php
+$statusChip = ['open' => 'status-pending', 'in_progress' => 'status-info', 'closed' => 'status-yes'][$r['status']] ?? 'status-neutral';
+$statusText = ucwords(str_replace('_', ' ', (string) $r['status']));
+?>
 <tr>
-    <td><?= esc($r['module_name']) ?></td><td><?= esc($r['title']) ?></td><td><?= esc($r['status']) ?></td><td><?= esc($r['owner_name']) ?></td>
-    <td><span class="badge bg-<?= $r['active_status']?'success':'secondary' ?>"><?= $r['active_status']?'Yes':'No' ?></span></td>
-    <td class="d-flex gap-1">
-        <button class="btn btn-sm btn-warning" onclick='openEditModal(<?= json_encode($r, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'>Edit</button>
-        <?php if ($r['active_status']): ?><form method="post"><input type="hidden" name="action" value="deactivate"><input type="hidden" name="id" value="<?= (int) $r['id'] ?>"><button class="btn btn-sm btn-danger">Deactivate</button></form><?php endif; ?>
+    <td><span class="status-chip status-neutral"><?= esc(ucfirst((string) $r['module_name'])) ?></span></td>
+    <td class="fw-semibold"><?= esc($r['title']) ?></td>
+    <td><span class="status-chip <?= $statusChip ?>"><?= esc($statusText) ?></span></td>
+    <td><?= esc($r['owner_name']) ?></td>
+    <td><span class="status-chip <?= $r['active_status']?'status-yes':'status-neutral' ?>"><?= $r['active_status']?'Yes':'No' ?></span></td>
+    <td>
+        <div class="d-flex gap-1 justify-content-end">
+        <button class="btn btn-sm btn-outline-primary" onclick='openEditModal(<?= json_encode($r, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'><i class="bi bi-pencil"></i> Edit</button>
+        <?php if ($r['active_status']): ?><form method="post" class="d-inline"><input type="hidden" name="action" value="deactivate"><input type="hidden" name="id" value="<?= (int) $r['id'] ?>"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-x-circle"></i> Deactivate</button></form><?php endif; ?>
+        </div>
     </td>
 </tr>
 <?php endforeach; ?>
-</tbody></table></div>
+</tbody></table></div></div>
 
 <div class="modal fade" id="activityModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg"><div class="modal-content">
 <form method="post" id="activityForm">

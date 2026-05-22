@@ -86,14 +86,15 @@ if ($downloadCsv) {
 
 render_header('Consolidated Report Candidates', ['show_navigation' => false, 'main_container_class' => 'container-fluid']);
 ?>
-<h1 class="h3 mb-3">Consolidated Report Candidates</h1>
-<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
-    <div>
-        <p class="text-muted mb-1"><strong>Section:</strong> <?= esc($sectionLabel) ?></p>
-        <p class="text-muted mb-1"><strong>Metric:</strong> <?= esc($metricLabel) ?></p>
-        <p class="text-muted mb-0"><strong><?= esc($groupTitle) ?>:</strong> <?= esc($groupFilter ?? ('All filtered ' . $groupLabel)) ?></p>
-    </div>
-    <a class="btn btn-success" href="<?= esc(consolidated_detail_request_uri_with_download()) ?>">Download CSV</a>
+<?php render_page_header('Consolidated Report Candidates', [
+    'icon' => 'bi-people',
+    'subtitle' => 'Candidate-level breakdown for the selected consolidated metric.',
+    'actions' => '<a class="btn btn-primary" href="' . esc(consolidated_detail_request_uri_with_download()) . '"><i class="bi bi-download me-1"></i>Download CSV</a>',
+]); ?>
+<div class="card mb-4"><div class="card-body d-flex flex-wrap gap-4">
+    <div><p class="form-label mb-1">Section</p><span class="status-chip status-neutral"><?= esc($sectionLabel) ?></span></div>
+    <div><p class="form-label mb-1">Metric</p><span class="status-chip status-info"><?= esc($metricLabel) ?></span></div>
+    <div><p class="form-label mb-1"><?= esc($groupTitle) ?></p><span class="status-chip status-neutral"><?= esc($groupFilter ?? ('All filtered ' . $groupLabel)) ?></span></div>
 </div>
 
 <div class="card">

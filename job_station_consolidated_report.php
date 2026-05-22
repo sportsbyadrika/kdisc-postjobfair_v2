@@ -82,12 +82,15 @@ $shortlistedTotals = calculate_consolidated_totals($shortlistedRows, [
 ]);
 
 render_header('Job Station Consolidated Report', ['main_container_class' => 'container-fluid']);
+render_page_header('Job Station Consolidated Report', [
+    'icon' => 'bi-buildings',
+    'subtitle' => 'Metrics aggregated by job station within a selected district.',
+]);
 ?>
-<h1 class="h3 mb-4">Job Station Consolidated Report</h1>
 
 <div class="card mb-4">
     <div class="card-body">
-        <h2 class="h5">Filters</h2>
+        <h2 class="h5 mb-3"><i class="bi bi-funnel text-primary me-1"></i>Filters</h2>
         <form method="get" class="row g-3 align-items-end">
             <div class="col-md-3">
                 <label for="candidate_district" class="form-label">Candidate District</label>
