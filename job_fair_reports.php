@@ -26,18 +26,18 @@ function build_where_clause(array $filters, array &$params): string
     $conditions = [];
 
     if ($filters['job_fair'] !== '') {
-        $conditions[] = "COALESCE(NULLIF(TRIM(Job_Fair_No), ''), 'Unknown') = :job_fair";
-        $params['job_fair'] = $filters['job_fair'];
+        $conditions[] = "COALESCE(NULLIF(TRIM(Job_Fair_No), ''), 'Unknown') = ?";
+        $params[] = $filters['job_fair'];
     }
 
     if ($filters['category'] !== '') {
-        $conditions[] = "COALESCE(NULLIF(TRIM(Category), ''), 'Unknown') = :category";
-        $params['category'] = $filters['category'];
+        $conditions[] = "COALESCE(NULLIF(TRIM(Category), ''), 'Unknown') = ?";
+        $params[] = $filters['category'];
     }
 
     if ($filters['aggregator'] !== '') {
-        $conditions[] = "COALESCE(NULLIF(TRIM(Aggregator), ''), 'Unknown') = :aggregator";
-        $params['aggregator'] = $filters['aggregator'];
+        $conditions[] = "COALESCE(NULLIF(TRIM(Aggregator), ''), 'Unknown') = ?";
+        $params[] = $filters['aggregator'];
     }
 
     if ($conditions === []) {
