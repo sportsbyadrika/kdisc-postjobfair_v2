@@ -116,7 +116,7 @@ function render_header(string $title, array $options = []): void
                                 </ul>
                             </li>
                             <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_reports.php', 'call_history_report.php', 'consolidated_report.php', 'consolidated_report_candidates.php', 'job_fair_exception_report.php', 'job_fair_exception_candidates.php', 'job_station_consolidated_report.php', 'joined_candidates_report.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-graph-up me-1"></i>Reports</a>
+                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_reports.php', 'call_history_report.php', 'consolidated_report.php', 'consolidated_report_candidates.php', 'job_fair_exception_report.php', 'job_fair_exception_candidates.php', 'job_station_consolidated_report.php', 'joined_candidates_report.php', 'district_discrepancy_report.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-graph-up me-1"></i>Reports</a>
                                 <ul class="dropdown-menu">
                                     <li><a class="dropdown-item" href="/job_fair_reports.php"><i class="bi bi-clipboard2-pulse me-2"></i>Over all Report</a></li>
                                     <li><a class="dropdown-item" href="/call_history_report.php"><i class="bi bi-telephone me-2"></i>Call History Report</a></li>
@@ -124,6 +124,7 @@ function render_header(string $title, array $options = []): void
                                     <li><a class="dropdown-item" href="/job_fair_exception_report.php"><i class="bi bi-exclamation-triangle me-2"></i>Exception Report</a></li>
                                     <li><a class="dropdown-item" href="/job_station_consolidated_report.php"><i class="bi bi-buildings me-2"></i>Job Station Consolidated Report</a></li>
                                     <li><a class="dropdown-item" href="/joined_candidates_report.php"><i class="bi bi-door-open-fill me-2"></i>Joined Candidates</a></li>
+                                    <li><a class="dropdown-item" href="/district_discrepancy_report.php"><i class="bi bi-exclamation-diamond me-2"></i>Discrepancy Report</a></li>
                                 </ul>
                             </li>
                             <?php if (is_admin($user)): ?>

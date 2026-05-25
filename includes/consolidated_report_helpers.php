@@ -86,6 +86,7 @@ const CONSOLIDATED_METRIC_LABELS = [
         'joined_yes' => 'Candidate Joined: Yes',
         'joined_no' => 'Candidate Joined: No',
         'joined_pending' => 'Candidate Joined: Pending',
+        'joined_future_date' => 'Candidate Joined: Future Date',
     ],
     'shortlisted_rounds_pending' => [
         'total_shortlisted_onhold_candidate' => 'Total Shortlisted/Onhold Candidate count',
@@ -273,7 +274,8 @@ function fetch_shortlisted_onhold_report(array $filters): array
             SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND (LOWER(TRIM(COALESCE(Confirm_Offer_Letter_Receipt_by_Candidate, ''))) = 'pending' OR TRIM(COALESCE(Confirm_Offer_Letter_Receipt_by_Candidate, '')) = '') THEN 1 ELSE 0 END) AS receipt_confirmed_pending,
             SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS joined_yes,
             SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'no' THEN 1 ELSE 0 END) AS joined_no,
-            SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending' OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS joined_pending
+            SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending' OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS joined_pending,
+            SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS joined_future_date
         FROM job_fair_result
         $whereClause
         GROUP BY job_fair_no
@@ -654,7 +656,8 @@ function fetch_shortlisted_onhold_report_by_job_station(array $filters): array
             SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND (LOWER(TRIM(COALESCE(Confirm_Offer_Letter_Receipt_by_Candidate, ''))) = 'pending' OR TRIM(COALESCE(Confirm_Offer_Letter_Receipt_by_Candidate, '')) = '') THEN 1 ELSE 0 END) AS receipt_confirmed_pending,
             SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS joined_yes,
             SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'no' THEN 1 ELSE 0 END) AS joined_no,
-            SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending' OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS joined_pending
+            SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending' OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS joined_pending,
+            SUM(CASE WHEN $shortlistStatusExpression = 'selected' AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS joined_future_date
         FROM job_fair_result
         $whereClause
         GROUP BY job_station
@@ -733,6 +736,9 @@ function build_consolidated_detail_conditions(string $section, string $metric, a
                 break;
             case 'joined_pending':
                 $conditions[] = "(LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending' OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '')";
+                break;
+            case 'joined_future_date':
+                $conditions[] = "LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date'";
                 break;
             case 'total_selected_candidate':
             default:
@@ -1351,4 +1357,91 @@ function fetch_crm_user_activity_report(array $filters): array
     });
 
     return $rows;
+}
+
+/**
+ * For the Shortlisted/On hold tab: district-wise breakdown of joining
+ * outcomes among candidates whose Offer Letter Receipt is confirmed = Yes,
+ * split into two cohorts:
+ *  - Selected directly (Selection_Status = 'Selected')
+ *  - Shortlist/Onhold whose Final status = 'Selected'
+ * Also reports the distinct job-station count per district.
+ */
+function fetch_shortlisted_district_jobstation_joined_report(array $filters): array
+{
+    $params = [];
+    $conditions = build_common_conditions($filters, $params);
+    $jfrConditionsSql = $conditions === [] ? '' : (' AND ' . implode(' AND ', $conditions));
+
+    $sql = "SELECT
+            COALESCE(NULLIF(TRIM(Candidate_District), ''), 'Unknown') AS district,
+            COUNT(DISTINCT NULLIF(TRIM(Candidate_Jobstation), '')) AS job_station_count,
+            -- Direct Selected cohort
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS selected_joined_yes,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'no' THEN 1 ELSE 0 END) AS selected_joined_no,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                     AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending'
+                          OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS selected_joined_pending,
+            -- Shortlist/Onhold with Final Selected cohort
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS shortlist_joined_yes,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'no' THEN 1 ELSE 0 END) AS shortlist_joined_no,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                     AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending'
+                          OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS shortlist_joined_pending
+        FROM job_fair_result
+        WHERE LOWER(TRIM(COALESCE(Confirm_Offer_Letter_Receipt_by_Candidate, ''))) = 'yes'
+          AND (
+                LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                OR (
+                    LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                    AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                )
+          )
+          $jfrConditionsSql
+        GROUP BY COALESCE(NULLIF(TRIM(Candidate_District), ''), 'Unknown')
+        ORDER BY district ASC";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
+
+/**
+ * For the Shortlisted/On hold tab: pivot of Candidate_Join_Remarks_Type
+ * against Candidate_Joined_Status (Yes / No / Pending / Future Date).
+ * Limited to Shortlisted / On hold candidates and the common filters.
+ *
+ * Returns ['rows' => [...], 'statuses' => [...]] so the caller can render
+ * the matrix in any order.
+ */
+function fetch_shortlisted_join_remarks_pivot(array $filters): array
+{
+    $params = [];
+    $conditions = build_common_conditions($filters, $params);
+    $conditions[] = "LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')";
+    $whereClause = 'WHERE ' . implode(' AND ', $conditions);
+
+    $sql = "SELECT
+            COALESCE(NULLIF(TRIM(Candidate_Join_Remarks_Type), ''), '(No Remark Type)') AS remark_type,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS joined_yes,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'no' THEN 1 ELSE 0 END) AS joined_no,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending'
+                     OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '' THEN 1 ELSE 0 END) AS joined_pending,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS joined_future_date,
+            COUNT(*) AS total
+        FROM job_fair_result
+        $whereClause
+        GROUP BY COALESCE(NULLIF(TRIM(Candidate_Join_Remarks_Type), ''), '(No Remark Type)')
+        ORDER BY total DESC, remark_type ASC";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
 }

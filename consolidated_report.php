@@ -83,6 +83,7 @@ $shortlistedTotals = calculate_consolidated_totals($shortlistedRows, [
     'joined_yes',
     'joined_no',
     'joined_pending',
+    'joined_future_date',
 ]);
 $roundPivotReport = fetch_shortlisted_onhold_round_pivot_report($filters);
 $roundPivotRows = $roundPivotReport['rows'];
@@ -378,7 +379,7 @@ render_page_header('Consolidated Report', [
                     <th colspan="2" class="text-center">Offer Letter Softcopy</th>
                     <th colspan="3" class="text-center">Softcopy Verified</th>
                     <th colspan="3" class="text-center">Offer Letter Receipt Confirmed</th>
-                    <th colspan="3" class="text-center">Candidate Joined</th>
+                    <th colspan="4" class="text-center">Candidate Joined</th>
                 </tr>
                 <tr>
                     <th>Selected</th>
@@ -401,11 +402,12 @@ render_page_header('Consolidated Report', [
                     <th>Yes</th>
                     <th>No</th>
                     <th>Pending</th>
+                    <th>Future Date</th>
                 </tr>
                 </thead>
                 <tbody>
                 <?php if ($shortlistedRows === []): ?>
-                    <tr><td colspan="22" class="text-center text-muted">No data available.</td></tr>
+                    <tr><td colspan="23" class="text-center text-muted">No data available.</td></tr>
                 <?php endif; ?>
                 <?php foreach ($shortlistedRows as $row): ?>
                     <tr>
@@ -431,6 +433,7 @@ render_page_header('Consolidated Report', [
                         <td><?= render_metric_link((int) $row['joined_yes'], 'shortlisted', 'joined_yes', (string) $row['job_fair_no'], $filters) ?></td>
                         <td><?= render_metric_link((int) $row['joined_no'], 'shortlisted', 'joined_no', (string) $row['job_fair_no'], $filters) ?></td>
                         <td><?= render_metric_link((int) $row['joined_pending'], 'shortlisted', 'joined_pending', (string) $row['job_fair_no'], $filters) ?></td>
+                        <td><?= render_metric_link((int) ($row['joined_future_date'] ?? 0), 'shortlisted', 'joined_future_date', (string) $row['job_fair_no'], $filters) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if ($shortlistedRows !== []): ?>
@@ -457,6 +460,141 @@ render_page_header('Consolidated Report', [
                         <td><?= render_metric_link($shortlistedTotals['joined_yes'], 'shortlisted', 'joined_yes', null, $filters) ?></td>
                         <td><?= render_metric_link($shortlistedTotals['joined_no'], 'shortlisted', 'joined_no', null, $filters) ?></td>
                         <td><?= render_metric_link($shortlistedTotals['joined_pending'], 'shortlisted', 'joined_pending', null, $filters) ?></td>
+                        <td><?= render_metric_link((int) ($shortlistedTotals['joined_future_date'] ?? 0), 'shortlisted', 'joined_future_date', null, $filters) ?></td>
+                    </tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<?php
+$districtJobstationRows = fetch_shortlisted_district_jobstation_joined_report($filters);
+$districtJobstationTotals = [
+    'job_station_count' => 0,
+    'selected_joined_yes' => 0, 'selected_joined_no' => 0, 'selected_joined_pending' => 0,
+    'shortlist_joined_yes' => 0, 'shortlist_joined_no' => 0, 'shortlist_joined_pending' => 0,
+];
+foreach ($districtJobstationRows as $r) {
+    foreach (array_keys($districtJobstationTotals) as $k) {
+        $districtJobstationTotals[$k] += (int) ($r[$k] ?? 0);
+    }
+}
+?>
+<div class="card mb-4">
+    <div class="card-body">
+        <h2 class="h5">District wise &middot; Job Station and Joined Status (Offer Letter Receipt = Yes)</h2>
+        <p class="data-meta mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            District-wise count of distinct job stations affected, plus joining outcomes split into two cohorts whose <strong>Offer Letter Receipt Confirmed = Yes</strong>: directly Selected candidates, and Shortlisted/On hold candidates whose Final Status = Selected. Honours Aggregator / Job Fair / Category filters above.
+        </p>
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th rowspan="2">Sl No</th>
+                        <th rowspan="2">Candidate District</th>
+                        <th rowspan="2" class="text-end">Job Stations</th>
+                        <th colspan="3" class="text-center">Selected &mdash; Candidate Joined</th>
+                        <th colspan="3" class="text-center">Shortlist Final Selected &mdash; Candidate Joined</th>
+                    </tr>
+                    <tr>
+                        <th class="text-end">Yes</th>
+                        <th class="text-end">No</th>
+                        <th class="text-end">Pending</th>
+                        <th class="text-end">Yes</th>
+                        <th class="text-end">No</th>
+                        <th class="text-end">Pending</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if ($districtJobstationRows === []): ?>
+                    <tr><td colspan="9"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
+                <?php endif; ?>
+                <?php $djIdx = 1; foreach ($districtJobstationRows as $djRow): ?>
+                    <tr>
+                        <td><?= $djIdx++ ?></td>
+                        <td class="fw-semibold"><?= esc((string) $djRow['district']) ?></td>
+                        <td class="text-end"><?= number_format((int) $djRow['job_station_count']) ?></td>
+                        <td class="text-end"><?= number_format((int) $djRow['selected_joined_yes']) ?></td>
+                        <td class="text-end"><?= number_format((int) $djRow['selected_joined_no']) ?></td>
+                        <td class="text-end"><?= number_format((int) $djRow['selected_joined_pending']) ?></td>
+                        <td class="text-end"><?= number_format((int) $djRow['shortlist_joined_yes']) ?></td>
+                        <td class="text-end"><?= number_format((int) $djRow['shortlist_joined_no']) ?></td>
+                        <td class="text-end"><?= number_format((int) $djRow['shortlist_joined_pending']) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                <?php if ($districtJobstationRows !== []): ?>
+                    <tr class="table-secondary fw-semibold">
+                        <td colspan="2">Total</td>
+                        <td class="text-end"><?= number_format($districtJobstationTotals['job_station_count']) ?></td>
+                        <td class="text-end"><?= number_format($districtJobstationTotals['selected_joined_yes']) ?></td>
+                        <td class="text-end"><?= number_format($districtJobstationTotals['selected_joined_no']) ?></td>
+                        <td class="text-end"><?= number_format($districtJobstationTotals['selected_joined_pending']) ?></td>
+                        <td class="text-end"><?= number_format($districtJobstationTotals['shortlist_joined_yes']) ?></td>
+                        <td class="text-end"><?= number_format($districtJobstationTotals['shortlist_joined_no']) ?></td>
+                        <td class="text-end"><?= number_format($districtJobstationTotals['shortlist_joined_pending']) ?></td>
+                    </tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<?php
+$joinRemarksPivotRows = fetch_shortlisted_join_remarks_pivot($filters);
+$joinRemarksPivotTotals = ['joined_yes' => 0, 'joined_no' => 0, 'joined_pending' => 0, 'joined_future_date' => 0, 'total' => 0];
+foreach ($joinRemarksPivotRows as $r) {
+    foreach (array_keys($joinRemarksPivotTotals) as $k) {
+        $joinRemarksPivotTotals[$k] += (int) ($r[$k] ?? 0);
+    }
+}
+?>
+<div class="card mb-4">
+    <div class="card-body">
+        <h2 class="h5">Candidate Join Remarks Type &times; Candidate Joined Status (Shortlisted / On hold)</h2>
+        <p class="data-meta mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            Pivot of <strong>Candidate Join Remarks Type</strong> by <strong>Candidate Joined Status</strong> across all Shortlisted / On hold candidates matching the filters above.
+        </p>
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Sl No</th>
+                        <th>Candidate Join Remarks Type</th>
+                        <th class="text-end">Joined: Yes</th>
+                        <th class="text-end">Joined: No</th>
+                        <th class="text-end">Joined: Pending</th>
+                        <th class="text-end">Joined: Future Date</th>
+                        <th class="text-end">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if ($joinRemarksPivotRows === []): ?>
+                    <tr><td colspan="7"><div class="empty-state"><i class="bi bi-inbox"></i>No remarks data available.</div></td></tr>
+                <?php endif; ?>
+                <?php $jrIdx = 1; foreach ($joinRemarksPivotRows as $jrRow): ?>
+                    <tr>
+                        <td><?= $jrIdx++ ?></td>
+                        <td class="fw-semibold"><?= esc((string) $jrRow['remark_type']) ?></td>
+                        <td class="text-end"><?= number_format((int) $jrRow['joined_yes']) ?></td>
+                        <td class="text-end"><?= number_format((int) $jrRow['joined_no']) ?></td>
+                        <td class="text-end"><?= number_format((int) $jrRow['joined_pending']) ?></td>
+                        <td class="text-end"><?= number_format((int) $jrRow['joined_future_date']) ?></td>
+                        <td class="text-end"><strong><?= number_format((int) $jrRow['total']) ?></strong></td>
+                    </tr>
+                <?php endforeach; ?>
+                <?php if ($joinRemarksPivotRows !== []): ?>
+                    <tr class="table-secondary fw-semibold">
+                        <td colspan="2">Total</td>
+                        <td class="text-end"><?= number_format($joinRemarksPivotTotals['joined_yes']) ?></td>
+                        <td class="text-end"><?= number_format($joinRemarksPivotTotals['joined_no']) ?></td>
+                        <td class="text-end"><?= number_format($joinRemarksPivotTotals['joined_pending']) ?></td>
+                        <td class="text-end"><?= number_format($joinRemarksPivotTotals['joined_future_date']) ?></td>
+                        <td class="text-end"><?= number_format($joinRemarksPivotTotals['total']) ?></td>
                     </tr>
                 <?php endif; ?>
                 </tbody>
