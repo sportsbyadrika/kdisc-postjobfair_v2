@@ -73,10 +73,14 @@ $checkDefinitions = [
 $jobFairFilter = trim((string) ($_GET['job_fair'] ?? ''));
 $candidateDistrictFilter = trim((string) ($_GET['candidate_district'] ?? ''));
 $sdpkDistrictFilter = trim((string) ($_GET['sdpk_district'] ?? ''));
+$finalStatusSelectedFilter = isset($_GET['final_status_selected']) && $_GET['final_status_selected'] !== '';
 $check = (int) ($_GET['check'] ?? 1);
 if (!isset($checkDefinitions[$check])) {
     $check = 1;
 }
+
+/** Which checks the Final Status filter applies to (per request: 1, 3, 4). */
+$finalStatusApplicableChecks = [1, 3, 4];
 
 $jobFairOptions = array_map(
     static fn(array $r): string => (string) $r['value'],
@@ -109,6 +113,10 @@ if ($sdpkDistrictFilter !== '') {
 $activeDef = $checkDefinitions[$check];
 $conditions = $commonConditions;
 $params = $commonParams;
+if ($finalStatusSelectedFilter && in_array($check, $finalStatusApplicableChecks, true)) {
+    $conditions[] = "LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')";
+    $conditions[] = "LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'";
+}
 $conditions[] = '(' . $activeDef['where'] . ')';
 $whereClause = 'WHERE ' . implode(' AND ', $conditions);
 
@@ -129,6 +137,10 @@ $checkCounts = [];
 foreach ($checkDefinitions as $idx => $def) {
     $cConds = $commonConditions;
     $cParams = $commonParams;
+    if ($finalStatusSelectedFilter && in_array($idx, $finalStatusApplicableChecks, true)) {
+        $cConds[] = "LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')";
+        $cConds[] = "LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'";
+    }
     $cConds[] = '(' . $def['where'] . ')';
     $countSql = "SELECT COUNT(*) FROM job_fair_result WHERE " . implode(' AND ', $cConds);
     $cStmt = db()->prepare($countSql);
@@ -136,12 +148,13 @@ foreach ($checkDefinitions as $idx => $def) {
     $checkCounts[$idx] = (int) $cStmt->fetchColumn();
 }
 
-$buildCheckUrl = static function (int $newCheck) use ($jobFairFilter, $candidateDistrictFilter, $sdpkDistrictFilter): string {
+$buildCheckUrl = static function (int $newCheck) use ($jobFairFilter, $candidateDistrictFilter, $sdpkDistrictFilter, $finalStatusSelectedFilter): string {
     return '/district_discrepancy_report.php?' . http_build_query(array_filter([
         'check' => $newCheck,
         'job_fair' => $jobFairFilter,
         'candidate_district' => $candidateDistrictFilter,
         'sdpk_district' => $sdpkDistrictFilter,
+        'final_status_selected' => $finalStatusSelectedFilter ? '1' : '',
     ], static fn($v): bool => $v !== ''));
 };
 
@@ -151,6 +164,7 @@ $downloadUrl = '/district_discrepancy_report.php?' . http_build_query(array_filt
     'job_fair' => $jobFairFilter,
     'candidate_district' => $candidateDistrictFilter,
     'sdpk_district' => $sdpkDistrictFilter,
+    'final_status_selected' => $finalStatusSelectedFilter ? '1' : '',
 ], static fn($v): bool => $v !== ''));
 
 if (($_GET['download'] ?? '') === 'csv') {
@@ -159,7 +173,7 @@ if (($_GET['download'] ?? '') === 'csv') {
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     $out = fopen('php://output', 'w');
     fwrite($out, "\xEF\xBB\xBF");
-    $csvHeader = ['Sl No', 'DWMS ID', 'Candidate Name', 'Mobile', 'Job Fair No', 'Job Fair Date', 'Candidate District', 'SDPK District', 'Selection Status'];
+    $csvHeader = ['Sl No', 'DWMS ID', 'Candidate Name', 'Mobile', 'Job Fair No', 'Job Fair Date', 'Candidate District', 'SDPK District', 'Selection Status', 'Final Status'];
     foreach ($activeDef['extra_columns'] as $label => $_) {
         $csvHeader[] = $label;
     }
@@ -176,6 +190,7 @@ if (($_GET['download'] ?? '') === 'csv') {
             (string) ($row['Candidate_District'] ?? ''),
             (string) ($row['SDPK_District'] ?? ''),
             (string) ($row['Selection_Status'] ?? ''),
+            (string) ($row['Shortlist_Candidate_Status'] ?? ''),
         ];
         foreach ($activeDef['extra_columns'] as $col) {
             $line[] = (string) ($row[$col['field']] ?? '');
@@ -230,6 +245,15 @@ render_page_header('Discrepancy Report', [
                 <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply Filters</button>
                 <a class="btn btn-light" href="<?= esc('/district_discrepancy_report.php?check=' . (int) $check) ?>">Reset</a>
             </div>
+            <div class="col-12">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="final_status_selected" name="final_status_selected" value="1" <?= $finalStatusSelectedFilter ? 'checked' : '' ?>>
+                    <label class="form-check-label" for="final_status_selected">
+                        <strong>Final Status = Selected</strong> (Shortlisted / On hold candidates whose Final status is Selected)
+                        <span class="text-muted small d-block">Applies only to: Future Date missing date &middot; Joined No missing remarks &middot; Pending with receipt but no remarks. Ignored for Joined Yes missing date.</span>
+                    </label>
+                </div>
+            </div>
         </div>
     </div>
 </form>
@@ -274,6 +298,7 @@ render_page_header('Discrepancy Report', [
                     <th>Candidate District</th>
                     <th>SDPK District</th>
                     <th>Selection Status</th>
+                    <th>Final Status</th>
                     <?php foreach ($activeDef['extra_columns'] as $label => $_): ?>
                         <th><?= esc($label) ?></th>
                     <?php endforeach; ?>
@@ -281,7 +306,7 @@ render_page_header('Discrepancy Report', [
                 </tr>
             </thead>
             <tbody>
-                <?php $colCount = 8 + count($activeDef['extra_columns']); ?>
+                <?php $colCount = 9 + count($activeDef['extra_columns']); ?>
                 <?php if ($rows === []): ?>
                     <tr><td colspan="<?= $colCount ?>"><div class="empty-state"><i class="bi bi-check2-circle"></i>No discrepancies found for this check with the selected filters.</div></td></tr>
                 <?php endif; ?>
@@ -300,6 +325,7 @@ render_page_header('Discrepancy Report', [
                         <td><?= esc((string) ($row['Candidate_District'] ?? '')) ?></td>
                         <td><?= esc((string) ($row['SDPK_District'] ?? '')) ?></td>
                         <td><?= render_status_chip($row['Selection_Status']) ?></td>
+                        <td><?= render_status_chip($row['Shortlist_Candidate_Status']) ?></td>
                         <?php foreach ($activeDef['extra_columns'] as $col): ?>
                             <td>
                                 <?php
