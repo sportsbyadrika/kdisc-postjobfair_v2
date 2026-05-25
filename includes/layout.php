@@ -66,8 +66,8 @@ function render_header(string $title, array $options = []): void
                     <?php $isDistrictUser = is_district_user($user); ?>
                     <ul class="navbar-nav me-auto mb-2 mb-lg-0">
                         <li class="nav-item"><a class="nav-link<?= $isActive(['dashboard.php']) ?>" href="/dashboard.php"><i class="bi bi-grid-1x2 me-1"></i>Dashboard</a></li>
-                        <li class="nav-item"><a class="nav-link<?= $isActive(['phone_directory.php']) ?>" href="/phone_directory.php"><i class="bi bi-person-rolodex me-1"></i>Phone Directory</a></li>
                         <?php if ($isDistrictUser): ?>
+                            <li class="nav-item"><a class="nav-link<?= $isActive(['phone_directory.php']) ?>" href="/phone_directory.php"><i class="bi bi-person-rolodex me-1"></i>Phone Directory</a></li>
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle<?= $isActive(['district_data.php', 'district_consolidated_report.php', 'job_station_consolidated_report.php', 'district_candidate_data.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-geo-alt me-1"></i>District Data</a>
                                 <ul class="dropdown-menu">
@@ -78,18 +78,11 @@ function render_header(string $title, array $options = []): void
                                 </ul>
                             </li>
                         <?php else: ?>
-                            <li class="nav-item"><a class="nav-link<?= $isActive(['activities.php']) ?>" href="/activities.php"><i class="bi bi-list-task me-1"></i>Activities</a></li>
                             <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'call_history_report.php', 'job_fair_reports.php', 'consolidated_report.php', 'consolidated_report_candidates.php', 'job_fair_exception_report.php', 'job_fair_exception_candidates.php', 'job_station_consolidated_report.php', 'job_fair_masters.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'manage_candidate.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
+                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'activities.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'manage_candidate.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
                                 <ul class="dropdown-menu">
-                                    <li><h6 class="dropdown-header">Data &amp; Reports</h6></li>
                                     <li><a class="dropdown-item" href="/job_fair_results.php"><i class="bi bi-table me-2"></i>Job Fair Result Data</a></li>
-                                    <li><a class="dropdown-item" href="/call_history_report.php"><i class="bi bi-telephone me-2"></i>Call History Report</a></li>
-                                    <li><a class="dropdown-item" href="/job_fair_reports.php"><i class="bi bi-graph-up me-2"></i>Reports</a></li>
-                                    <li><a class="dropdown-item" href="/consolidated_report.php"><i class="bi bi-clipboard-data me-2"></i>Consolidated Report</a></li>
-                                    <li><a class="dropdown-item" href="/job_fair_exception_report.php"><i class="bi bi-exclamation-triangle me-2"></i>Exception Report</a></li>
-                                    <li><a class="dropdown-item" href="/job_station_consolidated_report.php"><i class="bi bi-buildings me-2"></i>Job Station Report</a></li>
-                                    <li><a class="dropdown-item" href="/job_fair_masters.php"><i class="bi bi-sliders me-2"></i>Masters</a></li>
+                                    <li><a class="dropdown-item" href="/activities.php"><i class="bi bi-list-task me-2"></i>Activities</a></li>
                                     <?php if (is_admin($user)): ?>
                                         <li><hr class="dropdown-divider"></li>
                                         <li><h6 class="dropdown-header">Data Management</h6></li>
@@ -97,6 +90,23 @@ function render_header(string $title, array $options = []): void
                                         <li><a class="dropdown-item" href="/aggregator_offer_letter_upload.php"><i class="bi bi-upload me-2"></i>Upload Aggregator Data CSV</a></li>
                                         <li><a class="dropdown-item" href="/job_fair_results_export.php"><i class="bi bi-download me-2"></i>Download Job Fair Result CSV</a></li>
                                     <?php endif; ?>
+                                </ul>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle<?= $isActive(['phone_directory.php', 'job_fair_masters.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-sliders me-1"></i>Masters</a>
+                                <ul class="dropdown-menu">
+                                    <li><a class="dropdown-item" href="/phone_directory.php"><i class="bi bi-person-rolodex me-2"></i>Phone Directory</a></li>
+                                    <li><a class="dropdown-item" href="/job_fair_masters.php"><i class="bi bi-diagram-3 me-2"></i>Employer and SPOC Mapping</a></li>
+                                </ul>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_reports.php', 'call_history_report.php', 'consolidated_report.php', 'consolidated_report_candidates.php', 'job_fair_exception_report.php', 'job_fair_exception_candidates.php', 'job_station_consolidated_report.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-graph-up me-1"></i>Reports</a>
+                                <ul class="dropdown-menu">
+                                    <li><a class="dropdown-item" href="/job_fair_reports.php"><i class="bi bi-clipboard2-pulse me-2"></i>Over all Report</a></li>
+                                    <li><a class="dropdown-item" href="/call_history_report.php"><i class="bi bi-telephone me-2"></i>Call History Report</a></li>
+                                    <li><a class="dropdown-item" href="/consolidated_report.php"><i class="bi bi-clipboard-data me-2"></i>Consolidated Report</a></li>
+                                    <li><a class="dropdown-item" href="/job_fair_exception_report.php"><i class="bi bi-exclamation-triangle me-2"></i>Exception Report</a></li>
+                                    <li><a class="dropdown-item" href="/job_station_consolidated_report.php"><i class="bi bi-buildings me-2"></i>Job Station Consolidated Report</a></li>
                                 </ul>
                             </li>
                             <?php if (is_admin($user)): ?>
