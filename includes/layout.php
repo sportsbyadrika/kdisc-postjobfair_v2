@@ -67,14 +67,24 @@ function render_header(string $title, array $options = []): void
                     <ul class="navbar-nav me-auto mb-2 mb-lg-0">
                         <li class="nav-item"><a class="nav-link<?= $isActive(['dashboard.php']) ?>" href="/dashboard.php"><i class="bi bi-grid-1x2 me-1"></i>Dashboard</a></li>
                         <?php if ($isDistrictUser): ?>
-                            <li class="nav-item"><a class="nav-link<?= $isActive(['phone_directory.php']) ?>" href="/phone_directory.php"><i class="bi bi-person-rolodex me-1"></i>Phone Directory</a></li>
                             <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['district_data.php', 'district_consolidated_report.php', 'job_station_consolidated_report.php', 'district_candidate_data.php', 'joined_candidates_report.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-geo-alt me-1"></i>District Data</a>
+                                <a class="nav-link dropdown-toggle<?= $isActive(['phone_directory.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-sliders me-1"></i>Masters</a>
+                                <ul class="dropdown-menu">
+                                    <li><a class="dropdown-item" href="/phone_directory.php"><i class="bi bi-person-rolodex me-2"></i>Phone Directory</a></li>
+                                </ul>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle<?= $isActive(['district_candidate_data.php', 'manage_candidate.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
+                                <ul class="dropdown-menu">
+                                    <li><a class="dropdown-item" href="/district_candidate_data.php"><i class="bi bi-people me-2"></i>Candidate Data</a></li>
+                                </ul>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle<?= $isActive(['district_data.php', 'district_consolidated_report.php', 'job_station_consolidated_report.php', 'joined_candidates_report.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-graph-up me-1"></i>Reports</a>
                                 <ul class="dropdown-menu">
                                     <li><a class="dropdown-item" href="/district_data.php"><i class="bi bi-bar-chart-line me-2"></i>District Overview</a></li>
                                     <li><a class="dropdown-item" href="/district_consolidated_report.php"><i class="bi bi-clipboard-data me-2"></i>Consolidated Report</a></li>
                                     <li><a class="dropdown-item" href="/job_station_consolidated_report.php"><i class="bi bi-buildings me-2"></i>Job Station Report</a></li>
-                                    <li><a class="dropdown-item" href="/district_candidate_data.php"><i class="bi bi-people me-2"></i>Candidate Data</a></li>
                                     <li><a class="dropdown-item" href="/joined_candidates_report.php"><i class="bi bi-door-open-fill me-2"></i>Joined Candidates</a></li>
                                 </ul>
                             </li>

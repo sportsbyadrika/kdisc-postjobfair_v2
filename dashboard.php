@@ -27,6 +27,33 @@ $latestUpload = db()->query('SELECT MAX(Data_uploaded_date) FROM job_fair_result
 $offerLetterPct = $totalSelectedCount > 0 ? round(($offerLetterCount / $totalSelectedCount) * 100, 1) : 0;
 $joinedPct = $totalSelectedCount > 0 ? round(($totalJoinedCount / $totalSelectedCount) * 100, 1) : 0;
 
+// Last 5 days call statistics (today + previous 4 days) — shown on CRM & District user dashboards.
+$last5DaysCallRows = !$isAdmin
+    ? db()->query(
+        "SELECT
+            DATE(call_datetime) AS call_date,
+            COUNT(*) AS total_calls,
+            SUM(CASE WHEN stage = 'Employer Connect' THEN 1 ELSE 0 END) AS employer_calls,
+            SUM(CASE WHEN stage = 'Candidate Connect' THEN 1 ELSE 0 END) AS candidate_calls,
+            SUM(CASE WHEN stage = 'Aggregator Contact' THEN 1 ELSE 0 END) AS aggregator_calls,
+            SUM(CASE WHEN call_status = 'Attended' THEN 1 ELSE 0 END) AS attended,
+            SUM(CASE WHEN call_status = 'Not attended' THEN 1 ELSE 0 END) AS not_attended,
+            SUM(CASE WHEN call_status = 'Invalid number' THEN 1 ELSE 0 END) AS invalid_number
+        FROM candidate_call_history
+        WHERE DATE(call_datetime) >= DATE_SUB(CURDATE(), INTERVAL 4 DAY)
+        GROUP BY DATE(call_datetime)
+        ORDER BY call_date DESC"
+    )->fetchAll()
+    : [];
+$last5DaysCallByDate = [];
+foreach ($last5DaysCallRows as $r) {
+    $last5DaysCallByDate[(string) $r['call_date']] = $r;
+}
+$last5DaysDates = [];
+for ($i = 0; $i < 5; $i++) {
+    $last5DaysDates[] = date('Y-m-d', strtotime('-' . $i . ' day'));
+}
+
 $pivotRows = db()->query('SELECT Job_Fair_No, Selection_Status, COUNT(*) AS total_count FROM job_fair_result GROUP BY Job_Fair_No, Selection_Status ORDER BY Job_Fair_No, Selection_Status')->fetchAll();
 $pivotStatuses = [];
 $pivotData = [];
@@ -189,6 +216,90 @@ render_header('Dashboard');
         </div>
     </div>
 </div>
+
+<?php if (!$isAdmin): ?>
+<div class="card table-card mt-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-telephone-fill text-primary me-1"></i>Last 5 Days Call Statistics</span>
+        <a class="btn btn-sm btn-outline-primary" href="/call_history_report.php">Open Call History Report</a>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th rowspan="2">Date</th>
+                    <th colspan="3" class="text-center">Stage</th>
+                    <th colspan="3" class="text-center">Call Status</th>
+                    <th rowspan="2" class="text-end">Total</th>
+                </tr>
+                <tr>
+                    <th class="text-end">Employer</th>
+                    <th class="text-end">Candidate</th>
+                    <th class="text-end">Aggregator</th>
+                    <th class="text-end">Attended</th>
+                    <th class="text-end">Not Attended</th>
+                    <th class="text-end">Invalid Number</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php
+                    $callTotals = [
+                        'employer_calls' => 0, 'candidate_calls' => 0, 'aggregator_calls' => 0,
+                        'attended' => 0, 'not_attended' => 0, 'invalid_number' => 0, 'total_calls' => 0,
+                    ];
+                    $anyCalls = false;
+                ?>
+                <?php foreach ($last5DaysDates as $dateKey): ?>
+                    <?php $r = $last5DaysCallByDate[$dateKey] ?? null; ?>
+                    <?php
+                        $employer = (int) ($r['employer_calls'] ?? 0);
+                        $candidate = (int) ($r['candidate_calls'] ?? 0);
+                        $aggregator = (int) ($r['aggregator_calls'] ?? 0);
+                        $attended = (int) ($r['attended'] ?? 0);
+                        $notAttended = (int) ($r['not_attended'] ?? 0);
+                        $invalid = (int) ($r['invalid_number'] ?? 0);
+                        $total = (int) ($r['total_calls'] ?? 0);
+                        $callTotals['employer_calls'] += $employer;
+                        $callTotals['candidate_calls'] += $candidate;
+                        $callTotals['aggregator_calls'] += $aggregator;
+                        $callTotals['attended'] += $attended;
+                        $callTotals['not_attended'] += $notAttended;
+                        $callTotals['invalid_number'] += $invalid;
+                        $callTotals['total_calls'] += $total;
+                        if ($total > 0) { $anyCalls = true; }
+                    ?>
+                    <tr>
+                        <td>
+                            <div class="fw-semibold"><?= esc(date('d M Y', strtotime($dateKey))) ?></div>
+                            <div class="small text-muted"><?= esc(date('l', strtotime($dateKey))) ?><?= $dateKey === date('Y-m-d') ? ' · Today' : '' ?></div>
+                        </td>
+                        <td class="text-end"><?= number_format($employer) ?></td>
+                        <td class="text-end"><?= number_format($candidate) ?></td>
+                        <td class="text-end"><?= number_format($aggregator) ?></td>
+                        <td class="text-end"><?= number_format($attended) ?></td>
+                        <td class="text-end"><?= number_format($notAttended) ?></td>
+                        <td class="text-end"><?= number_format($invalid) ?></td>
+                        <td class="text-end"><strong><?= number_format($total) ?></strong></td>
+                    </tr>
+                <?php endforeach; ?>
+                <tr class="table-secondary fw-semibold">
+                    <td>Total (last 5 days)</td>
+                    <td class="text-end"><?= number_format($callTotals['employer_calls']) ?></td>
+                    <td class="text-end"><?= number_format($callTotals['candidate_calls']) ?></td>
+                    <td class="text-end"><?= number_format($callTotals['aggregator_calls']) ?></td>
+                    <td class="text-end"><?= number_format($callTotals['attended']) ?></td>
+                    <td class="text-end"><?= number_format($callTotals['not_attended']) ?></td>
+                    <td class="text-end"><?= number_format($callTotals['invalid_number']) ?></td>
+                    <td class="text-end"><?= number_format($callTotals['total_calls']) ?></td>
+                </tr>
+                <?php if (!$anyCalls): ?>
+                    <tr><td colspan="8"><div class="empty-state"><i class="bi bi-telephone-x"></i>No calls logged in the last 5 days.</div></td></tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+<?php endif; ?>
 
 <div class="card table-card mt-3">
     <div class="card-header d-flex justify-content-between align-items-center">

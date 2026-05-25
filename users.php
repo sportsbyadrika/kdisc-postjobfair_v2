@@ -3,8 +3,28 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_admin();
 
+// One-time self-migration: add assigned_districts column to users table if missing.
+// NULL / empty value means the user has access to all districts.
+$hasAssignedDistrictsCol = db()->query("SHOW COLUMNS FROM users LIKE 'assigned_districts'")->fetchAll() !== [];
+if (!$hasAssignedDistrictsCol) {
+    db()->query("ALTER TABLE users ADD COLUMN assigned_districts TEXT NULL AFTER address");
+}
+
 $user = current_user();
 $flash = null;
+
+function parse_assigned_districts(): ?string
+{
+    if (isset($_POST['all_districts'])) {
+        return null;
+    }
+    $arr = $_POST['assigned_districts'] ?? [];
+    if (!is_array($arr)) {
+        return null;
+    }
+    $clean = array_values(array_filter(array_map(static fn($v) => trim((string) $v), $arr), static fn($v) => $v !== ''));
+    return $clean === [] ? null : implode(',', $clean);
+}
 
 if (is_post()) {
     $action = $_POST['action'] ?? '';
@@ -17,19 +37,20 @@ if (is_post()) {
         $email = trim($_POST['email'] ?? '');
         $address = trim($_POST['address'] ?? '');
         $active = isset($_POST['active_status']) ? 1 : 0;
+        $assignedDistricts = parse_assigned_districts();
 
         if ($action === 'add') {
             $password = $_POST['password'] ?? '';
-            $stmt = db()->prepare('INSERT INTO users (name, role, mobile_number, email, address, password_hash, active_status, created_at, updated_at, modified_by) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)');
-            $stmt->execute([$name, $role, $mobile, $email, $address, password_hash($password, PASSWORD_DEFAULT), $active, $user['id']]);
+            $stmt = db()->prepare('INSERT INTO users (name, role, mobile_number, email, address, assigned_districts, password_hash, active_status, created_at, updated_at, modified_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)');
+            $stmt->execute([$name, $role, $mobile, $email, $address, $assignedDistricts, password_hash($password, PASSWORD_DEFAULT), $active, $user['id']]);
             $flash = 'User added.';
         } else {
-            $params = [$name, $role, $mobile, $email, $address, $active, $user['id'], $id];
             if (!empty($_POST['password'])) {
-                $stmt = db()->prepare('UPDATE users SET name=?, role=?, mobile_number=?, email=?, address=?, active_status=?, password_hash=?, updated_at=NOW(), modified_by=? WHERE id=?');
-                $params = [$name, $role, $mobile, $email, $address, $active, password_hash($_POST['password'], PASSWORD_DEFAULT), $user['id'], $id];
+                $stmt = db()->prepare('UPDATE users SET name=?, role=?, mobile_number=?, email=?, address=?, assigned_districts=?, active_status=?, password_hash=?, updated_at=NOW(), modified_by=? WHERE id=?');
+                $params = [$name, $role, $mobile, $email, $address, $assignedDistricts, $active, password_hash($_POST['password'], PASSWORD_DEFAULT), $user['id'], $id];
             } else {
-                $stmt = db()->prepare('UPDATE users SET name=?, role=?, mobile_number=?, email=?, address=?, active_status=?, updated_at=NOW(), modified_by=? WHERE id=?');
+                $stmt = db()->prepare('UPDATE users SET name=?, role=?, mobile_number=?, email=?, address=?, assigned_districts=?, active_status=?, updated_at=NOW(), modified_by=? WHERE id=?');
+                $params = [$name, $role, $mobile, $email, $address, $assignedDistricts, $active, $user['id'], $id];
             }
             $stmt->execute($params);
             $flash = 'User updated.';
@@ -48,7 +69,7 @@ $filterRole = $_GET['role'] ?? '';
 $filterStatus = $_GET['active_status'] ?? '';
 $filterName = trim((string) ($_GET['name'] ?? ''));
 $filterMobile = trim((string) ($_GET['mobile_number'] ?? ''));
-$sql = 'SELECT id, name, role, mobile_number, email, address, active_status FROM users WHERE 1=1';
+$sql = 'SELECT id, name, role, mobile_number, email, address, assigned_districts, active_status FROM users WHERE 1=1';
 $params = [];
 if ($filterRole !== '') {
     $sql .= ' AND role = ?';
@@ -70,6 +91,12 @@ $sql .= ' ORDER BY id DESC';
 $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $users = $stmt->fetchAll();
+
+// Distinct candidate districts to populate the multi-select.
+$districtOptions = array_map(
+    static fn(array $row): string => (string) $row['Candidate_District'],
+    db()->query("SELECT DISTINCT Candidate_District FROM job_fair_result WHERE Candidate_District IS NOT NULL AND TRIM(Candidate_District) <> '' ORDER BY Candidate_District ASC")->fetchAll()
+);
 
 render_header('Users');
 render_page_header('User Management', [
@@ -106,16 +133,31 @@ render_page_header('User Management', [
 <div class="card table-card">
 <div class="table-responsive">
 <table class="table table-hover align-middle mb-0">
-    <thead><tr><th>Name</th><th>Role</th><th>Mobile</th><th>Email</th><th>Address</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+    <thead><tr><th>Name</th><th>Role</th><th>Mobile</th><th>Email</th><th>Districts</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
     <tbody>
     <?php if ($users === []): ?>
         <tr><td colspan="7"><div class="empty-state"><i class="bi bi-people"></i>No users found for the selected filters.</div></td></tr>
     <?php endif; ?>
     <?php foreach ($users as $u): ?>
+        <?php
+            $assigned = trim((string) ($u['assigned_districts'] ?? ''));
+            $assignedList = $assigned === '' ? [] : array_values(array_filter(array_map('trim', explode(',', $assigned))));
+        ?>
         <tr>
             <td class="fw-semibold"><?= esc($u['name']) ?></td>
             <td><span class="status-chip status-neutral"><?= esc(role_label($u['role'])) ?></span></td>
-            <td><?= esc($u['mobile_number']) ?></td><td><?= esc($u['email']) ?></td><td><?= esc($u['address']) ?></td>
+            <td><?= esc($u['mobile_number']) ?></td><td><?= esc($u['email']) ?></td>
+            <td>
+                <?php if ($assignedList === []): ?>
+                    <span class="status-chip status-info">All Districts</span>
+                <?php else: ?>
+                    <div class="d-flex flex-wrap gap-1">
+                        <?php foreach ($assignedList as $district): ?>
+                            <span class="status-chip status-neutral"><?= esc($district) ?></span>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </td>
             <td><span class="status-chip <?= $u['active_status']?'status-yes':'status-neutral' ?>"><?= $u['active_status']?'Active':'Inactive' ?></span></td>
             <td>
                 <div class="d-flex gap-1 justify-content-end">
@@ -145,21 +187,51 @@ render_page_header('User Management', [
                 <div class="col-md-6"><label class="form-label">Mobile</label><input class="form-control" name="mobile_number" id="mobile" required></div>
                 <div class="col-md-6"><label class="form-label">Email</label><input class="form-control" type="email" name="email" id="email"></div>
                 <div class="col-md-12"><label class="form-label">Address</label><textarea class="form-control" name="address" id="address"></textarea></div>
+                <div class="col-md-12">
+                    <label class="form-label d-flex justify-content-between align-items-center">
+                        <span>Districts</span>
+                        <span class="form-check m-0">
+                            <input class="form-check-input" type="checkbox" name="all_districts" id="all_districts" value="1">
+                            <label class="form-check-label small" for="all_districts">All Districts</label>
+                        </span>
+                    </label>
+                    <select class="form-select" name="assigned_districts[]" id="assigned_districts" multiple size="6">
+                        <?php foreach ($districtOptions as $district): ?>
+                            <option value="<?= esc($district) ?>"><?= esc($district) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="form-text">Hold <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> to select multiple. Tick <strong>All Districts</strong> to grant access to every district (selections below will be ignored).</div>
+                </div>
                 <div class="col-md-6"><label class="form-label">Password</label><input class="form-control" type="password" name="password" id="password"></div>
                 <div class="col-md-6 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="active_status" id="active" checked><label class="form-check-label" for="active">Active</label></div></div>
             </div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal" type="button">Cancel</button><button class="btn btn-primary" type="submit">Save</button></div>
+        <div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal" type="button">Cancel</button><button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Save</button></div>
       </form>
   </div></div>
 </div>
 <script>
+function syncDistrictControls() {
+    const allCb = document.getElementById('all_districts');
+    const select = document.getElementById('assigned_districts');
+    if (allCb.checked) {
+        Array.from(select.options).forEach((o) => o.selected = false);
+        select.disabled = true;
+    } else {
+        select.disabled = false;
+    }
+}
+document.getElementById('all_districts').addEventListener('change', syncDistrictControls);
+
 function openAddModal() {
     document.getElementById('userModalTitle').innerText = 'Add User';
     document.getElementById('formAction').value = 'add';
     document.getElementById('userId').value = '';
     document.getElementById('userForm').reset();
     document.getElementById('active').checked = true;
+    // Default to "All Districts" for a new user.
+    document.getElementById('all_districts').checked = true;
+    syncDistrictControls();
 }
 function openEditModal(user) {
     document.getElementById('userModalTitle').innerText = 'Edit User';
@@ -172,6 +244,20 @@ function openEditModal(user) {
     document.getElementById('address').value = user.address;
     document.getElementById('password').value = '';
     document.getElementById('active').checked = user.active_status == 1;
+
+    const select = document.getElementById('assigned_districts');
+    const allCb = document.getElementById('all_districts');
+    const assigned = (user.assigned_districts || '').trim();
+    if (assigned === '') {
+        allCb.checked = true;
+        Array.from(select.options).forEach((o) => o.selected = false);
+    } else {
+        allCb.checked = false;
+        const set = new Set(assigned.split(',').map((s) => s.trim()));
+        Array.from(select.options).forEach((o) => { o.selected = set.has(o.value); });
+    }
+    syncDistrictControls();
+
     bootstrap.Modal.getOrCreateInstance(document.getElementById('userModal')).show();
 }
 </script>
