@@ -47,6 +47,7 @@ function fetch_joined_candidates(array $filters): array
     $sql = "SELECT
             id,
             Job_Fair_No,
+            Job_Fair_Date,
             DWMS_ID,
             Candidate_Name,
             Employer_ID,
@@ -57,7 +58,8 @@ function fetch_joined_candidates(array $filters): array
             Candidate_Jobstation,
             SDPK,
             $selectionLabel AS selection_label,
-            Candidate_Joined_Date
+            Candidate_Joined_Date,
+            DATEDIFF(Candidate_Joined_Date, Job_Fair_Date) AS days_to_join
         FROM job_fair_result
         $whereClause
         ORDER BY Candidate_Joined_Date DESC, Candidate_Name ASC";
@@ -81,6 +83,7 @@ if (($_GET['download'] ?? '') === 'csv') {
     fwrite($out, "\xEF\xBB\xBF");
     fputcsv($out, [
         'Job Fair No',
+        'Job Fair Date',
         'DWMS ID',
         'Candidate Name',
         'Employer Code',
@@ -92,10 +95,12 @@ if (($_GET['download'] ?? '') === 'csv') {
         'SDPK Center',
         'Selection',
         'Date of Joined',
+        'Days from Job Fair',
     ]);
     foreach ($rows as $row) {
         fputcsv($out, [
             (string) ($row['Job_Fair_No'] ?? ''),
+            (string) ($row['Job_Fair_Date'] ?? ''),
             (string) ($row['DWMS_ID'] ?? ''),
             (string) ($row['Candidate_Name'] ?? ''),
             (string) ($row['Employer_ID'] ?? ''),
@@ -107,6 +112,7 @@ if (($_GET['download'] ?? '') === 'csv') {
             (string) ($row['SDPK'] ?? ''),
             (string) ($row['selection_label'] ?? ''),
             (string) ($row['Candidate_Joined_Date'] ?? ''),
+            $row['days_to_join'] !== null ? (string) (int) $row['days_to_join'] : '',
         ]);
     }
     fclose($out);
@@ -212,7 +218,16 @@ render_page_header('Joined Candidates', [
                         <td><?= esc((string) ($row['Candidate_Jobstation'] ?? '')) ?></td>
                         <td><?= esc((string) ($row['SDPK'] ?? '')) ?></td>
                         <td><?php if ($label !== ''): ?><span class="status-chip <?= esc($selectionChipClass($label)) ?>"><?= esc($label) ?></span><?php endif; ?></td>
-                        <td><?= $row['Candidate_Joined_Date'] ? esc(date('d M Y', strtotime((string) $row['Candidate_Joined_Date']))) : '<span class="text-muted">&mdash;</span>' ?></td>
+                        <td>
+                            <?php if ($row['Candidate_Joined_Date']): ?>
+                                <span class="fw-semibold"><?= esc(date('d M Y', strtotime((string) $row['Candidate_Joined_Date']))) ?></span>
+                                <?php if ($row['days_to_join'] !== null && (int) $row['days_to_join'] >= 0): ?>
+                                    <span class="text-muted small">(<?= (int) $row['days_to_join'] ?> day<?= (int) $row['days_to_join'] === 1 ? '' : 's' ?>)</span>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <span class="text-muted">&mdash;</span>
+                            <?php endif; ?>
+                        </td>
                     </tr>
                 <?php endforeach; ?>
             </tbody>

@@ -252,14 +252,13 @@ $renderMetricCell = static function (int $value, string $url, string $extraText 
         return (string) $value;
     }
 
-    return '<a href="' . esc($url) . '" target="_blank" rel="noopener noreferrer">' . $value . '</a>' . $extraText;
+    return '<a href="' . esc($url) . '">' . $value . '</a>' . $extraText;
 };
 
 $isDetailsMode = $viewMode === 'details';
-$useFluidContainer = $isDetailsMode || $isFullStretch;
 render_header('Call History Report', [
     'show_navigation' => !$isDetailsMode,
-    'main_container_class' => $useFluidContainer ? 'container-fluid px-3' : 'container',
+    'main_container_class' => 'container-fluid px-3',
 ]);
 ?>
 <?php if ($viewMode === 'details'): ?>

@@ -195,6 +195,88 @@ function render_page_header(string $title, array $options = []): void
 <?php
 }
 
+/**
+ * Standard pagination block used across listing pages. Renders a left-aligned
+ * "Showing X-Y of Z records" status and a right-aligned pagination control
+ * with First, Previous, a windowed page number list (current ± 2 with
+ * ellipses), Next and Last buttons. Preserves the supplied $baseParams (e.g.
+ * filters) in every generated URL.
+ */
+function render_pagination(
+    int $currentPage,
+    int $totalPages,
+    int $totalRecords,
+    int $perPage,
+    string $baseUrl,
+    array $baseParams = [],
+    string $ariaLabel = 'Pagination'
+): void {
+    if ($totalRecords <= 0) {
+        return;
+    }
+    $totalPages = max(1, $totalPages);
+    $currentPage = max(1, min($currentPage, $totalPages));
+    $startRecord = ($currentPage - 1) * $perPage + 1;
+    $endRecord = min($startRecord + $perPage - 1, $totalRecords);
+
+    $build = static function (int $p) use ($baseUrl, $baseParams): string {
+        unset($baseParams['page']);
+        return $baseUrl . '?' . http_build_query(array_merge($baseParams, ['page' => $p]));
+    };
+
+    $pages = [];
+    if ($totalPages <= 7) {
+        for ($p = 1; $p <= $totalPages; $p++) {
+            $pages[] = $p;
+        }
+    } else {
+        $pages[] = 1;
+        $windowStart = max(2, $currentPage - 2);
+        $windowEnd = min($totalPages - 1, $currentPage + 2);
+        if ($windowStart > 2) {
+            $pages[] = '...';
+        }
+        for ($p = $windowStart; $p <= $windowEnd; $p++) {
+            $pages[] = $p;
+        }
+        if ($windowEnd < $totalPages - 1) {
+            $pages[] = '...';
+        }
+        $pages[] = $totalPages;
+    }
+    ?>
+<nav aria-label="<?= esc($ariaLabel) ?>" class="d-flex flex-wrap justify-content-between align-items-center gap-2 my-3">
+    <div class="data-meta">
+        Showing <strong><?= number_format($startRecord) ?></strong>&ndash;<strong><?= number_format($endRecord) ?></strong> of <strong><?= number_format($totalRecords) ?></strong> records
+        &middot; page <strong><?= number_format($currentPage) ?></strong> of <strong><?= number_format($totalPages) ?></strong>
+    </div>
+    <ul class="pagination mb-0">
+        <li class="page-item <?= $currentPage <= 1 ? 'disabled' : '' ?>">
+            <a class="page-link" href="<?= $currentPage <= 1 ? '#' : esc($build(1)) ?>" aria-label="First"><i class="bi bi-chevron-double-left"></i></a>
+        </li>
+        <li class="page-item <?= $currentPage <= 1 ? 'disabled' : '' ?>">
+            <a class="page-link" href="<?= $currentPage <= 1 ? '#' : esc($build($currentPage - 1)) ?>" aria-label="Previous"><i class="bi bi-chevron-left"></i></a>
+        </li>
+        <?php foreach ($pages as $p): ?>
+            <?php if ($p === '...'): ?>
+                <li class="page-item disabled"><span class="page-link">&hellip;</span></li>
+            <?php else: ?>
+                <li class="page-item <?= $p === $currentPage ? 'active' : '' ?>">
+                    <a class="page-link" href="<?= esc($build((int) $p)) ?>"><?= (int) $p ?></a>
+                </li>
+            <?php endif; ?>
+        <?php endforeach; ?>
+        <li class="page-item <?= $currentPage >= $totalPages ? 'disabled' : '' ?>">
+            <a class="page-link" href="<?= $currentPage >= $totalPages ? '#' : esc($build($currentPage + 1)) ?>" aria-label="Next"><i class="bi bi-chevron-right"></i></a>
+        </li>
+        <li class="page-item <?= $currentPage >= $totalPages ? 'disabled' : '' ?>">
+            <a class="page-link" href="<?= $currentPage >= $totalPages ? '#' : esc($build($totalPages)) ?>" aria-label="Last"><i class="bi bi-chevron-double-right"></i></a>
+        </li>
+    </ul>
+</nav>
+<?php
+}
+
 function render_footer(bool $showFooter = true): void
 {
     ?>

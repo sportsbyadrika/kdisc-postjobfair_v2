@@ -1014,7 +1014,7 @@ $queryParams = [...$params, $perPage, $offset];
 $stmt->execute($queryParams);
 $rows = $stmt->fetchAll();
 
-render_header('Job fair result data');
+render_header('Job fair result data', ['main_container_class' => 'container-fluid']);
 $resultsActions = '<span class="status-chip status-info me-1">' . (int) $totalRecords . ' records</span>';
 if ($user['role'] === 'administrator') {
     $resultsActions .= '<a class="btn btn-light" href="/job_fair_result_upload.php"><i class="bi bi-upload me-1"></i>Upload CSV</a>';
@@ -1029,20 +1029,8 @@ render_page_header('Job Fair Result Data', [
 <?php
 $baseParams = $_GET;
 unset($baseParams['page'], $baseParams['candidate_call_history']);
+render_pagination($page, $totalPages, $totalRecords, $perPage, '/job_fair_results.php', $baseParams, 'Job fair result pagination');
 ?>
-
-<?php if ($totalPages > 1): ?>
-    <nav aria-label="Job fair result pagination" class="mb-4">
-        <ul class="pagination">
-            <?php for ($p = 1; $p <= $totalPages; $p++): ?>
-                <?php $pageUrl = '/job_fair_results.php?' . http_build_query([...$baseParams, 'page' => $p]); ?>
-                <li class="page-item <?= $p === $page ? 'active' : '' ?>">
-                    <a class="page-link" href="<?= esc($pageUrl) ?>"><?= $p ?></a>
-                </li>
-            <?php endfor; ?>
-        </ul>
-    </nav>
-<?php endif; ?>
 
 <form method="get" class="card mb-4">
     <div class="card-body">
@@ -1289,5 +1277,7 @@ unset($baseParams['page'], $baseParams['candidate_call_history']);
             </table>
         </div>
 </div>
+
+<?php render_pagination($page, $totalPages, $totalRecords, $perPage, '/job_fair_results.php', $baseParams, 'Job fair result pagination'); ?>
 
 <?php render_footer(); ?>

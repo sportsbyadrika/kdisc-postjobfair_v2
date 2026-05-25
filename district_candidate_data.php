@@ -80,31 +80,17 @@ $stmt = db()->prepare($sql);
 $stmt->execute([...$params, $perPage, $offset]);
 $rows = $stmt->fetchAll();
 
-render_header('Candidate Data');
+render_header('Candidate Data', ['main_container_class' => 'container-fluid']);
 render_page_header('Candidate Data', [
     'icon' => 'bi-people',
     'subtitle' => 'Candidate records scoped to your district.',
     'actions' => '<span class="status-chip status-info">' . (int) $totalRecords . ' records</span>',
 ]);
-?>
 
-<?php
 $baseParams = $_GET;
 unset($baseParams['page']);
+render_pagination($page, $totalPages, $totalRecords, $perPage, '/district_candidate_data.php', $baseParams, 'Candidate data pagination');
 ?>
-
-<?php if ($totalPages > 1): ?>
-    <nav aria-label="Candidate data pagination" class="mb-4">
-        <ul class="pagination">
-            <?php for ($p = 1; $p <= $totalPages; $p++): ?>
-                <?php $pageUrl = '/district_candidate_data.php?' . http_build_query([...$baseParams, 'page' => $p]); ?>
-                <li class="page-item <?= $p === $page ? 'active' : '' ?>">
-                    <a class="page-link" href="<?= esc($pageUrl) ?>"><?= $p ?></a>
-                </li>
-            <?php endfor; ?>
-        </ul>
-    </nav>
-<?php endif; ?>
 
 <form method="get" class="card mb-4">
     <div class="card-body">
@@ -252,5 +238,7 @@ unset($baseParams['page']);
         </div>
     </div>
 </div>
+
+<?php render_pagination($page, $totalPages, $totalRecords, $perPage, '/district_candidate_data.php', $baseParams, 'Candidate data pagination'); ?>
 
 <?php render_footer(); ?>
