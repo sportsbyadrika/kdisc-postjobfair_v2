@@ -277,6 +277,40 @@ function render_pagination(
 <?php
 }
 
+/**
+ * Maps a free-form status string (Yes / No / Pending / Selected / Shortlisted
+ * / Onhold / etc.) to one of the status-chip colour classes defined in
+ * assets/css/app.css. Unknown values get the neutral grey chip.
+ */
+function status_chip_class(?string $value): string
+{
+    $key = strtolower(preg_replace('/[^a-z0-9]+/i', '', (string) $value) ?? '');
+    return match ($key) {
+        'selected' => 'status-selected',
+        'shortlisted' => 'status-shortlisted',
+        'onhold' => 'status-onhold',
+        'rejected', 'candidatenotinterested', 'candidatenotwilling' => 'status-rejected',
+        'yes' => 'status-yes',
+        'no' => 'status-no',
+        'pending', 'yettobecontacted' => 'status-pending',
+        'futuredate', 'reviewinprogress', 'selectedfornextround', 'ongoing', 'completed' => 'status-info',
+        default => 'status-neutral',
+    };
+}
+
+/**
+ * Renders a status chip, or a muted dash if the value is empty.
+ */
+function render_status_chip(?string $value, ?string $prefix = null): string
+{
+    $value = trim((string) $value);
+    if ($value === '') {
+        return '<span class="text-muted">&mdash;</span>';
+    }
+    $prefixHtml = $prefix === null || $prefix === '' ? '' : '<span class="small text-muted me-1">' . esc($prefix) . '</span>';
+    return $prefixHtml . '<span class="status-chip ' . esc(status_chip_class($value)) . '">' . esc($value) . '</span>';
+}
+
 function render_footer(bool $showFooter = true): void
 {
     ?>
