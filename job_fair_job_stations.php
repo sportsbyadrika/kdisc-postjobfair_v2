@@ -121,18 +121,25 @@ render_page_header('Job Stations', [
                     <th class="text-end">Selected</th>
                     <th class="text-end">SL / OH</th>
                     <th class="text-end">Joined</th>
+                    <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($rows === []): ?>
-                    <tr><td colspan="7"><div class="empty-state"><i class="bi bi-inbox"></i>No job stations found.</div></td></tr>
+                    <tr><td colspan="8"><div class="empty-state"><i class="bi bi-inbox"></i>No job stations found.</div></td></tr>
                 <?php endif; ?>
                 <?php
                     $totals = ['candidate_count' => 0, 'selected_count' => 0, 'shortlisted_onhold_count' => 0, 'joined_count' => 0];
                     $idx = 1;
                 ?>
                 <?php foreach ($rows as $row): ?>
-                    <?php foreach (array_keys($totals) as $k) { $totals[$k] += (int) ($row[$k] ?? 0); } ?>
+                    <?php
+                        foreach (array_keys($totals) as $k) { $totals[$k] += (int) ($row[$k] ?? 0); }
+                        $viewUrl = '/job_fair_job_stations_candidates.php?' . http_build_query([
+                            'candidate_district' => (string) $row['candidate_district'],
+                            'job_station' => (string) $row['job_station'],
+                        ]);
+                    ?>
                     <tr>
                         <td><?= $idx++ ?></td>
                         <td class="fw-semibold"><?= esc((string) $row['candidate_district']) ?></td>
@@ -141,6 +148,9 @@ render_page_header('Job Stations', [
                         <td class="text-end"><?= number_format((int) $row['selected_count']) ?></td>
                         <td class="text-end"><?= number_format((int) $row['shortlisted_onhold_count']) ?></td>
                         <td class="text-end"><?= number_format((int) $row['joined_count']) ?></td>
+                        <td class="text-end">
+                            <a class="btn btn-sm btn-outline-primary" href="<?= esc($viewUrl) ?>"><i class="bi bi-people"></i> View Candidates</a>
+                        </td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if ($rows !== []): ?>
@@ -150,6 +160,7 @@ render_page_header('Job Stations', [
                         <td class="text-end"><?= number_format($totals['selected_count']) ?></td>
                         <td class="text-end"><?= number_format($totals['shortlisted_onhold_count']) ?></td>
                         <td class="text-end"><?= number_format($totals['joined_count']) ?></td>
+                        <td></td>
                     </tr>
                 <?php endif; ?>
             </tbody>
