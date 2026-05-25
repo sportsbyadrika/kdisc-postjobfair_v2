@@ -46,6 +46,8 @@ if (is_post()) {
 
 $filterRole = $_GET['role'] ?? '';
 $filterStatus = $_GET['active_status'] ?? '';
+$filterName = trim((string) ($_GET['name'] ?? ''));
+$filterMobile = trim((string) ($_GET['mobile_number'] ?? ''));
 $sql = 'SELECT id, name, role, mobile_number, email, address, active_status FROM users WHERE 1=1';
 $params = [];
 if ($filterRole !== '') {
@@ -55,6 +57,14 @@ if ($filterRole !== '') {
 if ($filterStatus !== '') {
     $sql .= ' AND active_status = ?';
     $params[] = (int) $filterStatus;
+}
+if ($filterName !== '') {
+    $sql .= ' AND name LIKE ?';
+    $params[] = '%' . $filterName . '%';
+}
+if ($filterMobile !== '') {
+    $sql .= ' AND mobile_number LIKE ?';
+    $params[] = '%' . $filterMobile . '%';
 }
 $sql .= ' ORDER BY id DESC';
 $stmt = db()->prepare($sql);
@@ -72,15 +82,23 @@ render_page_header('User Management', [
 <form class="filter-bar">
     <div class="row g-3 align-items-end">
         <div class="col-6 col-md-3">
+            <label class="form-label">Name</label>
+            <input class="form-control" name="name" value="<?= esc($filterName) ?>" placeholder="Search name">
+        </div>
+        <div class="col-6 col-md-3">
+            <label class="form-label">Mobile Number</label>
+            <input class="form-control" name="mobile_number" value="<?= esc($filterMobile) ?>" inputmode="numeric" placeholder="Search mobile">
+        </div>
+        <div class="col-6 col-md-2">
             <label class="form-label">Role</label>
             <select class="form-select" name="role"><option value="">All Roles</option><option value="administrator" <?= $filterRole==='administrator'?'selected':'' ?>>Administrator</option><option value="crm_member" <?= $filterRole==='crm_member'?'selected':'' ?>>CRM Member</option><option value="district_user" <?= $filterRole==='district_user'?'selected':'' ?>>District User</option></select>
         </div>
-        <div class="col-6 col-md-3">
+        <div class="col-6 col-md-2">
             <label class="form-label">Status</label>
             <select class="form-select" name="active_status"><option value="">All Status</option><option value="1" <?= $filterStatus==='1'?'selected':'' ?>>Active</option><option value="0" <?= $filterStatus==='0'?'selected':'' ?>>Inactive</option></select>
         </div>
-        <div class="col-12 col-md-3">
-            <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply Filters</button>
+        <div class="col-12 col-md-2 d-flex gap-2">
+            <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply</button>
             <a class="btn btn-light" href="/users.php">Reset</a>
         </div>
     </div>
