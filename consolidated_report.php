@@ -99,6 +99,18 @@ $joinedStatusCallStagePivotReport = fetch_shortlisted_onhold_joined_status_call_
 $joinedStatusCallStagePivotRows = $joinedStatusCallStagePivotReport['rows'];
 $joinedStatusCallStagePivotStages = $joinedStatusCallStagePivotReport['stages'];
 
+$districtUserActivityRows = fetch_district_user_activity_report($filters);
+$districtUserActivityTotals = [
+    'total_updates' => 0,
+    'receipt_confirm_updates' => 0,
+    'joined_status_updates' => 0,
+    'willing_to_join_updates' => 0,
+    'challenge_updates' => 0,
+    'join_remarks_updates' => 0,
+    'distinct_candidates' => 0,
+    'distinct_users' => 0,
+];
+
 render_header('Consolidated report', ['main_container_class' => 'container-fluid']);
 render_page_header('Consolidated Report', [
     'icon' => 'bi-clipboard-data',
@@ -630,6 +642,98 @@ render_page_header('Consolidated Report', [
                 </tbody>
             </table>
         </div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h2 class="h5">Seventh Section: District User Activity Review</h2>
+        <p class="data-meta mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            District wise summary of updates made by <strong>District Users</strong> on candidate records &mdash; useful to review their activity on offer letter receipt confirmation, candidate joined status and related fields. Honours the Aggregator, Job Fair No and Category filters above (Selection Status filter does not apply here). Counts reflect save events, not individual field changes.
+        </p>
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped align-middle mb-0">
+                <thead>
+                <tr>
+                    <th rowspan="2">Sl No</th>
+                    <th rowspan="2">Candidate District</th>
+                    <th rowspan="2">Distinct District Users</th>
+                    <th rowspan="2">Candidates Touched</th>
+                    <th rowspan="2">Total Updates</th>
+                    <th colspan="5" class="text-center">Updates by Field</th>
+                    <th rowspan="2">Last Activity</th>
+                </tr>
+                <tr>
+                    <th>Offer Letter Receipt Confirmed</th>
+                    <th>Candidate Joined Status</th>
+                    <th>Willing to Join</th>
+                    <th>Challenge</th>
+                    <th>Join Remarks</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php if ($districtUserActivityRows === []): ?>
+                    <tr><td colspan="11"><div class="empty-state"><i class="bi bi-inbox"></i>No district user activity recorded yet for the selected filters.</div></td></tr>
+                <?php endif; ?>
+                <?php $duIndex = 1; ?>
+                <?php foreach ($districtUserActivityRows as $duRow): ?>
+                    <?php
+                        $totalUpdates = (int) ($duRow['total_updates'] ?? 0);
+                        $receiptConfirm = (int) ($duRow['receipt_confirm_updates'] ?? 0);
+                        $joinedStatus = (int) ($duRow['joined_status_updates'] ?? 0);
+                        $willingToJoin = (int) ($duRow['willing_to_join_updates'] ?? 0);
+                        $challenge = (int) ($duRow['challenge_updates'] ?? 0);
+                        $joinRemarks = (int) ($duRow['join_remarks_updates'] ?? 0);
+                        $distinctCandidates = (int) ($duRow['distinct_candidates'] ?? 0);
+                        $distinctUsers = (int) ($duRow['distinct_users'] ?? 0);
+                        $lastActivity = $duRow['last_activity'] ?? null;
+
+                        $districtUserActivityTotals['total_updates'] += $totalUpdates;
+                        $districtUserActivityTotals['receipt_confirm_updates'] += $receiptConfirm;
+                        $districtUserActivityTotals['joined_status_updates'] += $joinedStatus;
+                        $districtUserActivityTotals['willing_to_join_updates'] += $willingToJoin;
+                        $districtUserActivityTotals['challenge_updates'] += $challenge;
+                        $districtUserActivityTotals['join_remarks_updates'] += $joinRemarks;
+                        $districtUserActivityTotals['distinct_candidates'] += $distinctCandidates;
+                        $districtUserActivityTotals['distinct_users'] += $distinctUsers;
+                    ?>
+                    <tr>
+                        <td><?= $duIndex ?></td>
+                        <td class="fw-semibold"><?= esc($duRow['district']) ?></td>
+                        <td><?= number_format($distinctUsers) ?></td>
+                        <td><?= number_format($distinctCandidates) ?></td>
+                        <td><?= number_format($totalUpdates) ?></td>
+                        <td><?= number_format($receiptConfirm) ?></td>
+                        <td><?= number_format($joinedStatus) ?></td>
+                        <td><?= number_format($willingToJoin) ?></td>
+                        <td><?= number_format($challenge) ?></td>
+                        <td><?= number_format($joinRemarks) ?></td>
+                        <td><?= $lastActivity ? esc(date('d M Y, H:i', strtotime((string) $lastActivity))) : '<span class="text-muted">&mdash;</span>' ?></td>
+                    </tr>
+                    <?php $duIndex++; ?>
+                <?php endforeach; ?>
+                <?php if ($districtUserActivityRows !== []): ?>
+                    <tr class="table-secondary fw-semibold">
+                        <td colspan="2">Total</td>
+                        <td><?= number_format($districtUserActivityTotals['distinct_users']) ?></td>
+                        <td><?= number_format($districtUserActivityTotals['distinct_candidates']) ?></td>
+                        <td><?= number_format($districtUserActivityTotals['total_updates']) ?></td>
+                        <td><?= number_format($districtUserActivityTotals['receipt_confirm_updates']) ?></td>
+                        <td><?= number_format($districtUserActivityTotals['joined_status_updates']) ?></td>
+                        <td><?= number_format($districtUserActivityTotals['willing_to_join_updates']) ?></td>
+                        <td><?= number_format($districtUserActivityTotals['challenge_updates']) ?></td>
+                        <td><?= number_format($districtUserActivityTotals['join_remarks_updates']) ?></td>
+                        <td>&mdash;</td>
+                    </tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+        <p class="data-meta mt-2 mb-0">
+            <i class="bi bi-info-circle me-1"></i>
+            <em>Note:</em> District users do not log phone calls in this system; their activity is captured as updates on candidate records via the District Candidate Data page. Distinct user totals across districts can exceed the platform user count if a user has worked on candidates in multiple districts.
+        </p>
     </div>
 </div>
 
