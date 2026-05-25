@@ -75,8 +75,8 @@ function fetch_master_rows(array $filters): array
     }
 
     if ($filters['employer'] !== '') {
-        $conditions[] = "COALESCE(NULLIF(TRIM(Employer_Name), ''), 'Unknown') = ?";
-        $params[] = $filters['employer'];
+        $conditions[] = "Employer_Name LIKE ?";
+        $params[] = '%' . $filters['employer'] . '%';
     }
 
     if ($filters['crm_member'] !== '') {
@@ -222,7 +222,6 @@ if (($_GET['download'] ?? '') === 'csv') {
 }
 
 $aggregatorOptions = fetch_master_distinct_values('Aggregator');
-$employerOptions = fetch_master_distinct_values('Employer_Name');
 $crmMemberOptions = fetch_master_distinct_values('CRM_Member');
 $rows = fetch_master_rows($filters);
 
@@ -280,12 +279,7 @@ render_page_header('Job Fair Masters', [
             </div>
             <div class="col-md-4">
                 <label for="employer" class="form-label">Employer</label>
-                <select class="form-select" id="employer" name="employer">
-                    <option value="">All Employers</option>
-                    <?php foreach ($employerOptions as $option): ?>
-                        <option value="<?= esc($option) ?>" <?= $filters['employer'] === $option ? 'selected' : '' ?>><?= esc($option) ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <input type="text" class="form-control" id="employer" name="employer" value="<?= esc($filters['employer']) ?>" placeholder="Search employer name">
             </div>
             <div class="col-md-4">
                 <label for="crm_member" class="form-label">CRM Member</label>
