@@ -38,8 +38,15 @@ $checkDefinitions = [
         'label' => 'Joined "No" · Missing Join Remarks',
         'menu_label' => 'Joined No missing remarks',
         'icon' => 'bi-chat-left-text',
-        'description' => 'Candidate Joined Status is <strong>No</strong> but <strong>Candidate Join Remarks Type</strong> or <strong>Remarks Candidate Join</strong> is missing.',
+        'description' => 'Candidate Joined Status is <strong>No</strong> for a genuinely selected candidate (Selection Status = Selected, or Shortlisted/On hold whose Final Status = Selected) but <strong>Candidate Join Remarks Type</strong> or <strong>Remarks Candidate Join</strong> is missing. Rejected, Onhold (no final selection) and other non-selected outcomes are excluded.',
         'where' => "LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'no'
+            AND (
+                LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                OR (
+                    LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                    AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                )
+            )
             AND (
                 Candidate_Join_Remarks_Type IS NULL OR TRIM(Candidate_Join_Remarks_Type) = ''
                 OR Remarks_Candidate_Join IS NULL OR TRIM(Remarks_Candidate_Join) = ''
