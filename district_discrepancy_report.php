@@ -3,6 +3,10 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_auth();
 
+$currentUser = current_user();
+$isDistrictUser = is_district_user($currentUser);
+$manageSourceMode = $isDistrictUser ? 'district_candidate_data' : '';
+
 /**
  * Each definition describes one discrepancy check: which rows it surfaces
  * (the SQL `where` clause beyond the common filters) and the extra columns
@@ -358,8 +362,9 @@ render_page_header('Discrepancy Report', [
                             </td>
                         <?php endforeach; ?>
                         <td>
+                            <?php $manageHref = '/manage_candidate.php?candidate_id=' . (int) $row['id'] . ($manageSourceMode !== '' ? '&source_mode=' . urlencode($manageSourceMode) : ''); ?>
                             <a class="btn btn-sm btn-outline-primary"
-                                href="/manage_candidate.php?candidate_id=<?= (int) $row['id'] ?>&source_mode=district_candidate_data"
+                                href="<?= esc($manageHref) ?>"
                                 aria-label="Manage candidate">
                                 <i class="bi bi-pencil-square"></i> Manage
                             </a>
