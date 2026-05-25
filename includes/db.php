@@ -87,6 +87,11 @@ class DatabaseStatement
 
         return array_values($row)[0] ?? false;
     }
+
+    public function affectedRows(): int
+    {
+        return (int) $this->statement->affected_rows;
+    }
 }
 
 class DatabaseResult
