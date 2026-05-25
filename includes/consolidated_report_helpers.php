@@ -1083,3 +1083,44 @@ function fetch_consolidated_call_history_detail_rows(string $section, string $me
 
     return $stmt->fetchAll();
 }
+
+/**
+ * Aggregates activity-log entries authored by district_user accounts so admin
+ * can do a district-wise review of district user activity on the post job
+ * fair workflow. Reuses build_common_conditions() to honour the aggregator,
+ * job_fair and category filters already on the consolidated report page.
+ *
+ * Grouped by Candidate_District (the column district users actually scope to
+ * in /district_candidate_data.php).
+ */
+function fetch_district_user_activity_report(array $filters): array
+{
+    $params = [];
+    $conditions = build_common_conditions($filters, $params);
+
+    $jfrConditionsSql = $conditions === [] ? '' : (' AND ' . implode(' AND ', $conditions));
+
+    $sql = "SELECT
+            COALESCE(NULLIF(TRIM(jfr.Candidate_District), ''), 'Unknown') AS district,
+            COUNT(cmal.id) AS total_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Confirm Offer Letter Receipt by Candidate%' THEN 1 ELSE 0 END) AS receipt_confirm_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Candidate Joined Status%' THEN 1 ELSE 0 END) AS joined_status_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Willing to Join%' THEN 1 ELSE 0 END) AS willing_to_join_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Challenge Type%' OR cmal.activity_details LIKE '%Challenge to be addressed%' THEN 1 ELSE 0 END) AS challenge_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Remarks Candidate Join%' OR cmal.activity_details LIKE '%Candidate Join Remarks Type%' THEN 1 ELSE 0 END) AS join_remarks_updates,
+            COUNT(DISTINCT cmal.candidate_id) AS distinct_candidates,
+            COUNT(DISTINCT cmal.created_by) AS distinct_users,
+            MAX(cmal.created_at) AS last_activity
+        FROM candidate_manage_activity_log cmal
+        INNER JOIN users u ON u.id = cmal.created_by
+        INNER JOIN job_fair_result jfr ON jfr.id = cmal.candidate_id
+        WHERE u.role = 'district_user'
+            $jfrConditionsSql
+        GROUP BY COALESCE(NULLIF(TRIM(jfr.Candidate_District), ''), 'Unknown')
+        ORDER BY district ASC";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+
+    return $stmt->fetchAll();
+}
