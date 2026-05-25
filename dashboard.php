@@ -28,8 +28,11 @@ $offerLetterPct = $totalSelectedCount > 0 ? round(($offerLetterCount / $totalSel
 $joinedPct = $totalSelectedCount > 0 ? round(($totalJoinedCount / $totalSelectedCount) * 100, 1) : 0;
 
 // Last 5 days call statistics (today + previous 4 days) — shown on CRM & District user dashboards.
-$last5DaysCallRows = !$isAdmin
-    ? db()->query(
+// Adds "mine_*" columns that count calls authored by the currently logged in user, so the user
+// can compare their own activity against the team total.
+$last5DaysCallRows = [];
+if (!$isAdmin) {
+    $stmt = db()->prepare(
         "SELECT
             DATE(call_datetime) AS call_date,
             COUNT(*) AS total_calls,
@@ -38,13 +41,22 @@ $last5DaysCallRows = !$isAdmin
             SUM(CASE WHEN stage = 'Aggregator Contact' THEN 1 ELSE 0 END) AS aggregator_calls,
             SUM(CASE WHEN call_status = 'Attended' THEN 1 ELSE 0 END) AS attended,
             SUM(CASE WHEN call_status = 'Not attended' THEN 1 ELSE 0 END) AS not_attended,
-            SUM(CASE WHEN call_status = 'Invalid number' THEN 1 ELSE 0 END) AS invalid_number
+            SUM(CASE WHEN call_status = 'Invalid number' THEN 1 ELSE 0 END) AS invalid_number,
+            SUM(CASE WHEN created_by = ? THEN 1 ELSE 0 END) AS mine_total,
+            SUM(CASE WHEN created_by = ? AND stage = 'Employer Connect' THEN 1 ELSE 0 END) AS mine_employer,
+            SUM(CASE WHEN created_by = ? AND stage = 'Candidate Connect' THEN 1 ELSE 0 END) AS mine_candidate,
+            SUM(CASE WHEN created_by = ? AND stage = 'Aggregator Contact' THEN 1 ELSE 0 END) AS mine_aggregator,
+            SUM(CASE WHEN created_by = ? AND call_status = 'Attended' THEN 1 ELSE 0 END) AS mine_attended,
+            SUM(CASE WHEN created_by = ? AND call_status = 'Not attended' THEN 1 ELSE 0 END) AS mine_not_attended,
+            SUM(CASE WHEN created_by = ? AND call_status = 'Invalid number' THEN 1 ELSE 0 END) AS mine_invalid_number
         FROM candidate_call_history
         WHERE DATE(call_datetime) >= DATE_SUB(CURDATE(), INTERVAL 4 DAY)
         GROUP BY DATE(call_datetime)
         ORDER BY call_date DESC"
-    )->fetchAll()
-    : [];
+    );
+    $stmt->execute(array_fill(0, 7, (int) $uid));
+    $last5DaysCallRows = $stmt->fetchAll();
+}
 $last5DaysCallByDate = [];
 foreach ($last5DaysCallRows as $r) {
     $last5DaysCallByDate[(string) $r['call_date']] = $r;
@@ -219,8 +231,9 @@ render_header('Dashboard');
 
 <?php if (!$isAdmin): ?>
 <div class="card table-card mt-3">
-    <div class="card-header d-flex justify-content-between align-items-center">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-telephone-fill text-primary me-1"></i>Last 5 Days Call Statistics</span>
+        <span class="data-meta"><strong>You</strong> / Team &mdash; each cell shows your count vs the team total.</span>
         <a class="btn btn-sm btn-outline-primary" href="/call_history_report.php">Open Call History Report</a>
     </div>
     <div class="table-responsive">
@@ -246,8 +259,19 @@ render_header('Dashboard');
                     $callTotals = [
                         'employer_calls' => 0, 'candidate_calls' => 0, 'aggregator_calls' => 0,
                         'attended' => 0, 'not_attended' => 0, 'invalid_number' => 0, 'total_calls' => 0,
+                        'mine_employer' => 0, 'mine_candidate' => 0, 'mine_aggregator' => 0,
+                        'mine_attended' => 0, 'mine_not_attended' => 0, 'mine_invalid_number' => 0, 'mine_total' => 0,
                     ];
                     $anyCalls = false;
+                    $renderCmpCell = static function (int $mine, int $total): string {
+                        if ($total === 0 && $mine === 0) {
+                            return '<span class="text-muted">0</span>';
+                        }
+                        $minePart = $mine > 0
+                            ? '<strong class="text-primary">' . number_format($mine) . '</strong>'
+                            : '<span class="text-muted">' . number_format($mine) . '</span>';
+                        return $minePart . ' <span class="text-muted">/ ' . number_format($total) . '</span>';
+                    };
                 ?>
                 <?php foreach ($last5DaysDates as $dateKey): ?>
                     <?php $r = $last5DaysCallByDate[$dateKey] ?? null; ?>
@@ -259,6 +283,13 @@ render_header('Dashboard');
                         $notAttended = (int) ($r['not_attended'] ?? 0);
                         $invalid = (int) ($r['invalid_number'] ?? 0);
                         $total = (int) ($r['total_calls'] ?? 0);
+                        $mineEmployer = (int) ($r['mine_employer'] ?? 0);
+                        $mineCandidate = (int) ($r['mine_candidate'] ?? 0);
+                        $mineAggregator = (int) ($r['mine_aggregator'] ?? 0);
+                        $mineAttended = (int) ($r['mine_attended'] ?? 0);
+                        $mineNotAttended = (int) ($r['mine_not_attended'] ?? 0);
+                        $mineInvalid = (int) ($r['mine_invalid_number'] ?? 0);
+                        $mineTotal = (int) ($r['mine_total'] ?? 0);
                         $callTotals['employer_calls'] += $employer;
                         $callTotals['candidate_calls'] += $candidate;
                         $callTotals['aggregator_calls'] += $aggregator;
@@ -266,6 +297,13 @@ render_header('Dashboard');
                         $callTotals['not_attended'] += $notAttended;
                         $callTotals['invalid_number'] += $invalid;
                         $callTotals['total_calls'] += $total;
+                        $callTotals['mine_employer'] += $mineEmployer;
+                        $callTotals['mine_candidate'] += $mineCandidate;
+                        $callTotals['mine_aggregator'] += $mineAggregator;
+                        $callTotals['mine_attended'] += $mineAttended;
+                        $callTotals['mine_not_attended'] += $mineNotAttended;
+                        $callTotals['mine_invalid_number'] += $mineInvalid;
+                        $callTotals['mine_total'] += $mineTotal;
                         if ($total > 0) { $anyCalls = true; }
                     ?>
                     <tr>
@@ -273,24 +311,24 @@ render_header('Dashboard');
                             <div class="fw-semibold"><?= esc(date('d M Y', strtotime($dateKey))) ?></div>
                             <div class="small text-muted"><?= esc(date('l', strtotime($dateKey))) ?><?= $dateKey === date('Y-m-d') ? ' · Today' : '' ?></div>
                         </td>
-                        <td class="text-end"><?= number_format($employer) ?></td>
-                        <td class="text-end"><?= number_format($candidate) ?></td>
-                        <td class="text-end"><?= number_format($aggregator) ?></td>
-                        <td class="text-end"><?= number_format($attended) ?></td>
-                        <td class="text-end"><?= number_format($notAttended) ?></td>
-                        <td class="text-end"><?= number_format($invalid) ?></td>
-                        <td class="text-end"><strong><?= number_format($total) ?></strong></td>
+                        <td class="text-end"><?= $renderCmpCell($mineEmployer, $employer) ?></td>
+                        <td class="text-end"><?= $renderCmpCell($mineCandidate, $candidate) ?></td>
+                        <td class="text-end"><?= $renderCmpCell($mineAggregator, $aggregator) ?></td>
+                        <td class="text-end"><?= $renderCmpCell($mineAttended, $attended) ?></td>
+                        <td class="text-end"><?= $renderCmpCell($mineNotAttended, $notAttended) ?></td>
+                        <td class="text-end"><?= $renderCmpCell($mineInvalid, $invalid) ?></td>
+                        <td class="text-end"><?= $renderCmpCell($mineTotal, $total) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <tr class="table-secondary fw-semibold">
                     <td>Total (last 5 days)</td>
-                    <td class="text-end"><?= number_format($callTotals['employer_calls']) ?></td>
-                    <td class="text-end"><?= number_format($callTotals['candidate_calls']) ?></td>
-                    <td class="text-end"><?= number_format($callTotals['aggregator_calls']) ?></td>
-                    <td class="text-end"><?= number_format($callTotals['attended']) ?></td>
-                    <td class="text-end"><?= number_format($callTotals['not_attended']) ?></td>
-                    <td class="text-end"><?= number_format($callTotals['invalid_number']) ?></td>
-                    <td class="text-end"><?= number_format($callTotals['total_calls']) ?></td>
+                    <td class="text-end"><?= $renderCmpCell($callTotals['mine_employer'], $callTotals['employer_calls']) ?></td>
+                    <td class="text-end"><?= $renderCmpCell($callTotals['mine_candidate'], $callTotals['candidate_calls']) ?></td>
+                    <td class="text-end"><?= $renderCmpCell($callTotals['mine_aggregator'], $callTotals['aggregator_calls']) ?></td>
+                    <td class="text-end"><?= $renderCmpCell($callTotals['mine_attended'], $callTotals['attended']) ?></td>
+                    <td class="text-end"><?= $renderCmpCell($callTotals['mine_not_attended'], $callTotals['not_attended']) ?></td>
+                    <td class="text-end"><?= $renderCmpCell($callTotals['mine_invalid_number'], $callTotals['invalid_number']) ?></td>
+                    <td class="text-end"><?= $renderCmpCell($callTotals['mine_total'], $callTotals['total_calls']) ?></td>
                 </tr>
                 <?php if (!$anyCalls): ?>
                     <tr><td colspan="8"><div class="empty-state"><i class="bi bi-telephone-x"></i>No calls logged in the last 5 days.</div></td></tr>
