@@ -165,29 +165,30 @@ render_pagination($page, $totalPages, $totalRecords, $perPage, '/district_candid
     </div>
 </form>
 
-<div class="card mb-4">
-    <div class="card-body">
+<div class="card table-card mb-4">
         <div class="table-responsive">
-            <table class="table table-bordered table-striped align-middle mb-0">
+            <table class="table table-hover align-middle mb-0">
                 <thead>
                     <tr>
-                        <th>Job Fair / Status</th>
-                        <th>Candidate</th>
-                        <th>Employer</th>
-                        <th>Job</th>
-                        <th>Days since Job Fair Date</th>
-                        <th>Offer Letter Generated</th>
-                        <th>Offer Letter Verified</th>
-                        <th>Offer Receipt Confirmed</th>
-                        <th>Candidate Joined Status</th>
-                        <th>Current Status</th>
-                        <th>Manage</th>
+                        <th rowspan="2">Job Fair / Status</th>
+                        <th rowspan="2">Candidate</th>
+                        <th rowspan="2">Employer</th>
+                        <th rowspan="2">Job</th>
+                        <th rowspan="2">Days since Job Fair Date</th>
+                        <th colspan="3" class="text-center">Offer Letter</th>
+                        <th rowspan="2">Candidate Joined Status</th>
+                        <th rowspan="2">Manage</th>
+                    </tr>
+                    <tr>
+                        <th>Generated</th>
+                        <th>Verified</th>
+                        <th>Receipt Confirmed</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if ($rows === []): ?>
                         <tr>
-                            <td colspan="11" class="text-center text-muted">No results found for the selected filters.</td>
+                            <td colspan="10"><div class="empty-state"><i class="bi bi-search"></i>No results found for the selected filters.</div></td>
                         </tr>
                     <?php endif; ?>
                     <?php foreach ($rows as $row): ?>
@@ -198,11 +199,16 @@ render_pagination($page, $totalPages, $totalRecords, $perPage, '/district_candid
                             $today = new DateTime();
                             $daySinceJobFair = (int) $jobFairDate->diff($today)->format('%a');
                         }
+                        $selKey = strtolower(str_replace(' ', '', (string) ($row['Selection_Status'] ?? '')));
+                        $isShortlistOrOnhold = in_array($selKey, ['shortlisted', 'onhold'], true);
                         ?>
                         <tr>
                             <td>
-                                <div><?= esc($row['Job_Fair_No'] ?: 'N/A') ?></div>
-                                <div class="small text-muted"><?= esc($row['Selection_Status'] ?: 'N/A') ?></div>
+                                <div class="fw-semibold"><?= esc($row['Job_Fair_No'] ?: 'N/A') ?></div>
+                                <div class="mt-1"><?= render_status_chip($row['Selection_Status']) ?></div>
+                                <?php if ($isShortlistOrOnhold && !empty($row['Shortlist_Candidate_Status'])): ?>
+                                    <div class="mt-1"><?= render_status_chip($row['Shortlist_Candidate_Status'], 'Final:') ?></div>
+                                <?php endif; ?>
                             </td>
                             <td>
                                 <div><?= esc($row['DWMS_ID'] ?: 'N/A') ?></div>
@@ -216,12 +222,11 @@ render_pagination($page, $totalPages, $totalRecords, $perPage, '/district_candid
                                 <div><?= esc($row['Job_Id'] ?: 'N/A') ?></div>
                                 <div class="small text-muted"><?= esc($row['Job_Title_Name'] ?: 'N/A') ?></div>
                             </td>
-                            <td><?= $daySinceJobFair !== null ? $daySinceJobFair : 'N/A' ?></td>
-                            <td><?= esc($row['Offer_Letter_Generated'] ?: 'N/A') ?></td>
-                            <td><?= esc($row['Link_to_Offer_letter_verified'] ?: 'N/A') ?></td>
-                            <td><?= esc($row['Confirm_Offer_Letter_Receipt_by_Candidate'] ?: 'N/A') ?></td>
-                            <td><?= esc($row['Candidate_Joined_Status'] ?: 'N/A') ?></td>
-                            <td><?= esc($row['Shortlist_Candidate_Status'] ?: 'N/A') ?></td>
+                            <td><?= $daySinceJobFair !== null ? $daySinceJobFair : '<span class="text-muted">&mdash;</span>' ?></td>
+                            <td><?= render_status_chip($row['Offer_Letter_Generated']) ?></td>
+                            <td><?= render_status_chip($row['Link_to_Offer_letter_verified']) ?></td>
+                            <td><?= render_status_chip($row['Confirm_Offer_Letter_Receipt_by_Candidate']) ?></td>
+                            <td><?= render_status_chip($row['Candidate_Joined_Status']) ?></td>
                             <td>
                                 <a
                                     class="btn btn-sm btn-outline-primary"
@@ -236,7 +241,6 @@ render_pagination($page, $totalPages, $totalRecords, $perPage, '/district_candid
                 </tbody>
             </table>
         </div>
-    </div>
 </div>
 
 <?php render_pagination($page, $totalPages, $totalRecords, $perPage, '/district_candidate_data.php', $baseParams, 'Candidate data pagination'); ?>
