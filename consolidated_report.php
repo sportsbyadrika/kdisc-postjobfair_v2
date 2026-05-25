@@ -554,10 +554,10 @@ foreach ($joinRemarksPivotRows as $r) {
 ?>
 <div class="card mb-4">
     <div class="card-body">
-        <h2 class="h5">Candidate Join Remarks Type &times; Candidate Joined Status (Shortlisted / On hold)</h2>
+        <h2 class="h5">Candidate Join Remarks Type &times; Candidate Joined Status (Selected &amp; Shortlist Final Selected)</h2>
         <p class="data-meta mb-3">
             <i class="bi bi-info-circle me-1"></i>
-            Pivot of <strong>Candidate Join Remarks Type</strong> by <strong>Candidate Joined Status</strong> across all Shortlisted / On hold candidates matching the filters above.
+            Pivot of <strong>Candidate Join Remarks Type</strong> by <strong>Candidate Joined Status</strong> across candidates who were genuinely selected &mdash; <strong>Selection Status = Selected</strong> or <strong>Shortlisted/On hold with Final Status = Selected</strong>. Honours the Aggregator / Job Fair / Category filters above.
         </p>
         <div class="table-responsive">
             <table class="table table-bordered table-striped align-middle mb-0">

@@ -1425,7 +1425,13 @@ function fetch_shortlisted_join_remarks_pivot(array $filters): array
 {
     $params = [];
     $conditions = build_common_conditions($filters, $params);
-    $conditions[] = "LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')";
+    $conditions[] = "(
+        LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+        OR (
+            LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+            AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+        )
+    )";
     $whereClause = 'WHERE ' . implode(' AND ', $conditions);
 
     $sql = "SELECT
