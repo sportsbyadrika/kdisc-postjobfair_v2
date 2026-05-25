@@ -95,7 +95,14 @@ function fetch_master_rows(array $filters): array
             COALESCE(NULLIF(TRIM(Aggregator_SPOC_Name), ''), 'Unknown') AS aggregator_spoc_name,
             COALESCE(NULLIF(TRIM(Aggregator_SPOC_Mobile), ''), 'Unknown') AS aggregator_spoc_mobile,
             COALESCE(NULLIF(TRIM(CRM_Member), ''), 'Unknown') AS crm_member,
-            COUNT(*) AS candidate_count
+            COUNT(*) AS candidate_count,
+            COUNT(DISTINCT NULLIF(TRIM(Job_Title_Name), '')) AS job_title_count,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected' THEN 1 ELSE 0 END) AS selected_count,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold') THEN 1 ELSE 0 END) AS shortlisted_onhold_count,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                THEN 1 ELSE 0 END) AS shortlist_final_selected_count,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS joined_count
         FROM job_fair_result
         $whereClause
         GROUP BY
@@ -185,7 +192,12 @@ if (($_GET['download'] ?? '') === 'csv') {
         'Aggregator SPOC Name',
         'Aggregator SPOC Mobile',
         'CRM Member',
-        'Candidate Count',
+        'Job Titles',
+        'Candidates',
+        'Selected',
+        'Shortlisted/Onhold',
+        'Shortlist Final Selected',
+        'Candidates Joined',
     ]);
     foreach ($rows as $row) {
         fputcsv($out, [
@@ -197,7 +209,12 @@ if (($_GET['download'] ?? '') === 'csv') {
             (string) $row['aggregator_spoc_name'],
             (string) $row['aggregator_spoc_mobile'],
             (string) $row['crm_member'],
+            (int) ($row['job_title_count'] ?? 0),
             (int) ($row['candidate_count'] ?? 0),
+            (int) ($row['selected_count'] ?? 0),
+            (int) ($row['shortlisted_onhold_count'] ?? 0),
+            (int) ($row['shortlist_final_selected_count'] ?? 0),
+            (int) ($row['joined_count'] ?? 0),
         ]);
     }
     fclose($out);
@@ -233,7 +250,7 @@ $buildCandidatesUrl = static function (array $row): string {
     ]);
 };
 
-render_header('Job fair masters');
+render_header('Job fair masters', ['main_container_class' => 'container-fluid']);
 render_page_header('Job Fair Masters', [
     'icon' => 'bi-sliders',
     'subtitle' => 'Employer and SPOC mapping derived from job fair result data.',
@@ -296,36 +313,84 @@ render_page_header('Job Fair Masters', [
         <table class="table table-hover align-middle mb-0">
             <thead>
             <tr>
-                <th>Aggregator</th>
-                <th>Employer Code</th>
-                <th>Employer Name</th>
-                <th>Employer SPOC Name</th>
-                <th>Employer SPOC Mobile</th>
-                <th>Aggregator SPOC Name</th>
-                <th>Aggregator SPOC Mobile</th>
-                <th>CRM Member</th>
+                <th rowspan="2">Aggregator</th>
+                <th rowspan="2">Employer Code</th>
+                <th rowspan="2">Employer Name</th>
+                <th rowspan="2">Employer SPOC</th>
+                <th rowspan="2">Aggregator SPOC</th>
+                <th rowspan="2">CRM Member</th>
+                <th colspan="6" class="text-center">Counts</th>
+                <th rowspan="2" class="text-end">Actions</th>
+            </tr>
+            <tr>
+                <th class="text-end">Job Titles</th>
                 <th class="text-end">Candidates</th>
-                <th class="text-end">Actions</th>
+                <th class="text-end">Selected</th>
+                <th class="text-end">SL / OH</th>
+                <th class="text-end">SL Final Selected</th>
+                <th class="text-end">Joined</th>
             </tr>
             </thead>
             <tbody>
             <?php if ($rows === []): ?>
-                <tr><td colspan="10"><div class="empty-state"><i class="bi bi-inbox"></i>No records found for selected filters.</div></td></tr>
+                <tr><td colspan="13"><div class="empty-state"><i class="bi bi-inbox"></i>No records found for selected filters.</div></td></tr>
             <?php endif; ?>
+            <?php
+                $totalsAcrossRows = [
+                    'job_title_count' => 0,
+                    'candidate_count' => 0,
+                    'selected_count' => 0,
+                    'shortlisted_onhold_count' => 0,
+                    'shortlist_final_selected_count' => 0,
+                    'joined_count' => 0,
+                ];
+            ?>
             <?php foreach ($rows as $row): ?>
+                <?php
+                    $empSpocName = (string) $row['employer_spoc_name'];
+                    $empSpocMobile = (string) $row['employer_spoc_mobile'];
+                    $aggSpocName = (string) $row['aggregator_spoc_name'];
+                    $aggSpocMobile = (string) $row['aggregator_spoc_mobile'];
+                    $jobTitles = (int) ($row['job_title_count'] ?? 0);
+                    $candidates = (int) ($row['candidate_count'] ?? 0);
+                    $selected = (int) ($row['selected_count'] ?? 0);
+                    $slOh = (int) ($row['shortlisted_onhold_count'] ?? 0);
+                    $slFinal = (int) ($row['shortlist_final_selected_count'] ?? 0);
+                    $joined = (int) ($row['joined_count'] ?? 0);
+                    foreach (array_keys($totalsAcrossRows) as $k) {
+                        $totalsAcrossRows[$k] += (int) ($row[$k] ?? 0);
+                    }
+                ?>
                 <tr>
                     <td class="fw-semibold"><?= esc((string) $row['aggregator']) ?></td>
                     <td><?= esc((string) $row['employer_code']) ?></td>
                     <td><?= esc((string) $row['employer_name']) ?></td>
-                    <td><?= esc((string) $row['employer_spoc_name']) ?></td>
-                    <td><?= esc((string) $row['employer_spoc_mobile']) ?></td>
-                    <td><?= esc((string) $row['aggregator_spoc_name']) ?></td>
-                    <td><?= esc((string) $row['aggregator_spoc_mobile']) ?></td>
-                    <td><?= esc((string) $row['crm_member']) ?></td>
-                    <td class="text-end"><?= number_format((int) ($row['candidate_count'] ?? 0)) ?></td>
                     <td>
-                        <div class="d-flex gap-1 justify-content-end">
-                            <a class="btn btn-sm btn-outline-primary" href="<?= esc($buildCandidatesUrl($row)) ?>" target="_blank" rel="noopener noreferrer"><i class="bi bi-people"></i> View Candidates</a>
+                        <?php if ($empSpocName === 'Unknown' && $empSpocMobile === 'Unknown'): ?>
+                            <span class="text-muted">&mdash;</span>
+                        <?php else: ?>
+                            <div class="fw-semibold"><?= esc($empSpocName) ?></div>
+                            <div class="small text-muted"><?= esc($empSpocMobile) ?></div>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <?php if ($aggSpocName === 'Unknown' && $aggSpocMobile === 'Unknown'): ?>
+                            <span class="text-muted">&mdash;</span>
+                        <?php else: ?>
+                            <div class="fw-semibold"><?= esc($aggSpocName) ?></div>
+                            <div class="small text-muted"><?= esc($aggSpocMobile) ?></div>
+                        <?php endif; ?>
+                    </td>
+                    <td><?= esc((string) $row['crm_member']) ?></td>
+                    <td class="text-end"><?= number_format($jobTitles) ?></td>
+                    <td class="text-end"><?= number_format($candidates) ?></td>
+                    <td class="text-end"><?= number_format($selected) ?></td>
+                    <td class="text-end"><?= number_format($slOh) ?></td>
+                    <td class="text-end"><?= number_format($slFinal) ?></td>
+                    <td class="text-end"><?= number_format($joined) ?></td>
+                    <td>
+                        <div class="d-flex gap-1 justify-content-end flex-wrap">
+                            <a class="btn btn-sm btn-outline-primary" href="<?= esc($buildCandidatesUrl($row)) ?>"><i class="bi bi-people"></i> View Candidates</a>
                             <?php if ($canEdit): ?>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editMappingModal" data-row='<?= esc(json_encode($row, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT)) ?>'><i class="bi bi-pencil"></i> Edit</button>
                             <?php endif; ?>
@@ -333,6 +398,18 @@ render_page_header('Job Fair Masters', [
                     </td>
                 </tr>
             <?php endforeach; ?>
+            <?php if ($rows !== []): ?>
+                <tr class="table-secondary fw-semibold">
+                    <td colspan="6">Total</td>
+                    <td class="text-end"><?= number_format($totalsAcrossRows['job_title_count']) ?></td>
+                    <td class="text-end"><?= number_format($totalsAcrossRows['candidate_count']) ?></td>
+                    <td class="text-end"><?= number_format($totalsAcrossRows['selected_count']) ?></td>
+                    <td class="text-end"><?= number_format($totalsAcrossRows['shortlisted_onhold_count']) ?></td>
+                    <td class="text-end"><?= number_format($totalsAcrossRows['shortlist_final_selected_count']) ?></td>
+                    <td class="text-end"><?= number_format($totalsAcrossRows['joined_count']) ?></td>
+                    <td></td>
+                </tr>
+            <?php endif; ?>
             </tbody>
         </table>
     </div>

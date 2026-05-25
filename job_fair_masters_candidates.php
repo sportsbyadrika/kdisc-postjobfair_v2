@@ -137,7 +137,7 @@ render_page_header('Candidates for Selected Mapping', [
                         <td><?= esc((string) ($row['Category'] ?? '')) ?></td>
                         <td><?php $j = (string) ($row['Candidate_Joined_Status'] ?? ''); ?><?php if ($j !== ''): ?><span class="status-chip <?= esc($statusChipClass($j)) ?>"><?= esc($j) ?></span><?php endif; ?></td>
                         <td><?php $f = (string) ($row['Shortlist_Candidate_Status'] ?? ''); ?><?php if ($f !== ''): ?><span class="status-chip <?= esc($statusChipClass($f)) ?>"><?= esc($f) ?></span><?php endif; ?></td>
-                        <td><a class="btn btn-sm btn-outline-primary" href="/manage_candidate.php?candidate_id=<?= (int) $row['id'] ?>" target="_blank" rel="noopener noreferrer"><i class="bi bi-pencil-square"></i> Manage</a></td>
+                        <td><a class="btn btn-sm btn-outline-primary" href="/manage_candidate.php?candidate_id=<?= (int) $row['id'] ?>"><i class="bi bi-pencil-square"></i> Manage</a></td>
                     </tr>
                 <?php endforeach; ?>
             </tbody>
