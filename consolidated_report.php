@@ -27,7 +27,7 @@ function render_metric_link(int $value, string $section, string $metric, ?string
     $url = consolidated_metric_url($section, $metric, $jobFairRow, $filters, $extraParams);
 
     return sprintf(
-        '<a href="%s" target="_blank" rel="noopener noreferrer">%d</a>',
+        '<a href="%s">%d</a>',
         esc($url),
         $value
     );
@@ -930,14 +930,14 @@ render_page_header('Consolidated Report', [
                     <tr>
                         <td><?= $duIndex ?></td>
                         <td class="fw-semibold"><?= esc($duRow['district']) ?></td>
-                        <td><?php if ($distinctUsers > 0): ?><a href="<?= esc($usersUrl) ?>" target="_blank" rel="noopener noreferrer"><?= number_format($distinctUsers) ?></a><?php else: ?>0<?php endif; ?></td>
+                        <td><?php if ($distinctUsers > 0): ?><a href="<?= esc($usersUrl) ?>"><?= number_format($distinctUsers) ?></a><?php else: ?>0<?php endif; ?></td>
                         <td><?= number_format($distinctCandidates) ?></td>
                         <td><?= number_format($totalUpdates) ?></td>
                         <td><?= number_format($receiptConfirm) ?></td>
                         <td><?= number_format($joinedStatus) ?></td>
                         <td><?= number_format($willingToJoin) ?></td>
-                        <td><?php if ($challenge > 0): ?><a href="<?= esc($challengeUrl) ?>" target="_blank" rel="noopener noreferrer"><?= number_format($challenge) ?></a><?php else: ?>0<?php endif; ?></td>
-                        <td><?php if ($joinRemarks > 0): ?><a href="<?= esc($remarksUrl) ?>" target="_blank" rel="noopener noreferrer"><?= number_format($joinRemarks) ?></a><?php else: ?>0<?php endif; ?></td>
+                        <td><?php if ($challenge > 0): ?><a href="<?= esc($challengeUrl) ?>"><?= number_format($challenge) ?></a><?php else: ?>0<?php endif; ?></td>
+                        <td><?php if ($joinRemarks > 0): ?><a href="<?= esc($remarksUrl) ?>"><?= number_format($joinRemarks) ?></a><?php else: ?>0<?php endif; ?></td>
                         <td><?= $lastActivity ? esc(date('d M Y, H:i', strtotime((string) $lastActivity))) : '<span class="text-muted">&mdash;</span>' ?></td>
                     </tr>
                     <?php $duIndex++; ?>
