@@ -111,6 +111,46 @@ $districtUserActivityTotals = [
     'distinct_users' => 0,
 ];
 
+$crmUserActivityRows = fetch_crm_user_activity_report($filters);
+$crmUserActivityTotals = [
+    'total_updates' => 0,
+    'shortlist_updates' => 0,
+    'first_part_updates' => 0,
+    'offer_generated_updates' => 0,
+    'receipt_confirm_updates' => 0,
+    'field_level_updates' => 0,
+    'joined_status_updates' => 0,
+    'calls_count' => 0,
+    'distinct_candidates' => 0,
+];
+
+$districtDrillUrl = static function (string $district, string $view) use ($filters): string {
+    return '/district_user_activity_detail.php?' . http_build_query(array_filter([
+        'district' => $district,
+        'view' => $view,
+        'aggregator' => $filters['aggregator'] ?? '',
+        'job_fair' => $filters['job_fair'] ?? '',
+        'category' => $filters['category'] ?? '',
+    ], static fn ($value): bool => $value !== ''));
+};
+
+// Over all summary tiles
+$overallSelected = (int) ($selectedTotals['total_selected_candidate'] ?? 0);
+$overallShortlisted = (int) ($shortlistedTotals['total_shortlisted_onhold_candidate'] ?? 0);
+$overallShortlistSelected = (int) ($shortlistedTotals['shortlist_status_selected'] ?? 0);
+$overallOfferGenerated = (int) ($selectedTotals['offer_generated_yes'] ?? 0) + (int) ($shortlistedTotals['offer_generated_yes'] ?? 0);
+$overallReceiptYes = (int) ($selectedTotals['receipt_confirmed_yes'] ?? 0) + (int) ($shortlistedTotals['receipt_confirmed_yes'] ?? 0);
+$overallJoinedYes = (int) ($selectedTotals['joined_yes'] ?? 0) + (int) ($shortlistedTotals['joined_yes'] ?? 0);
+foreach ($crmUserActivityRows as $cr) {
+    $crmUserActivityTotals['total_updates'] += (int) $cr['total_updates'];
+    $crmUserActivityTotals['calls_count'] += (int) $cr['calls_count'];
+}
+$overallCrmUsers = count($crmUserActivityRows);
+$overallDuUsers = 0;
+foreach ($districtUserActivityRows as $dr) {
+    $overallDuUsers += (int) $dr['distinct_users'];
+}
+
 render_header('Consolidated report', ['main_container_class' => 'container-fluid']);
 render_page_header('Consolidated Report', [
     'icon' => 'bi-clipboard-data',
@@ -159,12 +199,87 @@ render_page_header('Consolidated Report', [
                 </select>
             </div>
             <div class="col-12 d-flex gap-2">
-                <button type="submit" class="btn btn-primary">Apply filters</button>
-                <a href="consolidated_report.php" class="btn btn-outline-secondary">Reset</a>
+                <button type="submit" class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply Filters</button>
+                <a href="consolidated_report.php" class="btn btn-light">Reset</a>
             </div>
         </form>
     </div>
 </div>
+
+<ul class="nav nav-tabs mb-3" id="reportTabs" role="tablist">
+    <li class="nav-item" role="presentation"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-overall" type="button" role="tab"><i class="bi bi-bar-chart-line me-1"></i>Over all</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-selected" type="button" role="tab"><i class="bi bi-check-circle me-1"></i>Selected</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-shortlisted" type="button" role="tab"><i class="bi bi-list-check me-1"></i>Shortlisted / On hold</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-crm" type="button" role="tab"><i class="bi bi-headset me-1"></i>CRM</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-district" type="button" role="tab"><i class="bi bi-geo-alt me-1"></i>District User</button></li>
+</ul>
+<div class="tab-content">
+
+<div class="tab-pane fade show active" id="tab-overall" role="tabpanel">
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card card-stat accent-primary h-100"><div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div><p class="stat-label">Total Selected</p><p class="stat-value"><?= number_format($overallSelected) ?></p></div>
+                <span class="stat-icon-box tone-primary"><i class="bi bi-person-badge-fill"></i></span>
+            </div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card card-stat accent-info h-100"><div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div><p class="stat-label">Shortlisted / On hold</p><p class="stat-value"><?= number_format($overallShortlisted) ?></p></div>
+                <span class="stat-icon-box tone-info"><i class="bi bi-list-check"></i></span>
+            </div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card card-stat accent-purple h-100"><div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div><p class="stat-label">Shortlist Selected</p><p class="stat-value"><?= number_format($overallShortlistSelected) ?></p></div>
+                <span class="stat-icon-box tone-purple"><i class="bi bi-person-check-fill"></i></span>
+            </div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card card-stat accent-info h-100"><div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div><p class="stat-label">Offer Letters Generated</p><p class="stat-value"><?= number_format($overallOfferGenerated) ?></p></div>
+                <span class="stat-icon-box tone-info"><i class="bi bi-envelope-paper-fill"></i></span>
+            </div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card card-stat accent-success h-100"><div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div><p class="stat-label">Offer Receipt Confirmed</p><p class="stat-value"><?= number_format($overallReceiptYes) ?></p></div>
+                <span class="stat-icon-box tone-success"><i class="bi bi-check2-circle"></i></span>
+            </div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card card-stat accent-success h-100"><div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div><p class="stat-label">Candidates Joined</p><p class="stat-value"><?= number_format($overallJoinedYes) ?></p></div>
+                <span class="stat-icon-box tone-success"><i class="bi bi-door-open-fill"></i></span>
+            </div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card card-stat accent-danger h-100"><div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div><p class="stat-label">CRM Calls Logged</p><p class="stat-value"><?= number_format($crmUserActivityTotals['calls_count']) ?></p></div>
+                <span class="stat-icon-box tone-danger"><i class="bi bi-telephone-fill"></i></span>
+            </div></div>
+        </div>
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card card-stat accent-slate h-100"><div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div><p class="stat-label">Active Users (CRM &middot; DU)</p><p class="stat-value"><?= number_format($overallCrmUsers) ?> &middot; <?= number_format($overallDuUsers) ?></p></div>
+                <span class="stat-icon-box tone-slate"><i class="bi bi-people-fill"></i></span>
+            </div></div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-body">
+            <h2 class="h5 mb-2"><i class="bi bi-info-circle text-primary me-1"></i>How this report is organised</h2>
+            <ul class="mb-0 small">
+                <li><strong>Selected</strong> &mdash; section 1: Selected candidate funnel from offer letter generation to joining.</li>
+                <li><strong>Shortlisted / On hold</strong> &mdash; sections 2&ndash;4: Shortlist conversion, interview rounds, and rounds of converted-selected candidates.</li>
+                <li><strong>CRM</strong> &mdash; sections 5&ndash;6 plus CRM team activity review: Calls logged and per-CRM-member updates split by first part (up to receipt confirmed) vs field level.</li>
+                <li><strong>District User</strong> &mdash; section 7: District-wise breakdown of updates done by District User accounts, with drill-down on users, challenges and join remarks.</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="tab-pane fade" id="tab-selected" role="tabpanel">
 
 <div class="card mb-4">
     <div class="card-body">
@@ -244,6 +359,10 @@ render_page_header('Consolidated Report', [
         </div>
     </div>
 </div>
+
+</div><!-- /#tab-selected -->
+
+<div class="tab-pane fade" id="tab-shortlisted" role="tabpanel">
 
 <div class="card mb-4">
     <div class="card-body">
@@ -506,6 +625,10 @@ render_page_header('Consolidated Report', [
     </div>
 </div>
 
+</div><!-- /#tab-shortlisted -->
+
+<div class="tab-pane fade" id="tab-crm" role="tabpanel">
+
 <div class="card mb-4">
     <div class="card-body">
         <h2 class="h5">Fifth Section: CRM Call count based on Shortlisted/On hold candidates</h2>
@@ -647,6 +770,107 @@ render_page_header('Consolidated Report', [
 
 <div class="card mb-4">
     <div class="card-body">
+        <h2 class="h5">CRM Team Activity Review</h2>
+        <p class="data-meta mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            Per-CRM-member breakdown of updates and calls logged. <strong>First part</strong> covers fields up to <em>Confirm Offer Letter Receipt by Candidate</em> (First Call Done, Offer Letter Generated, Link to Offer Letter, Receipt Confirmed). <strong>Field level</strong> covers the joining workflow that follows (Willing to Join, Challenge, Candidate Joined Status / Date, Join Remarks, Employer Response). Honours the Aggregator, Job Fair No and Category filters above.
+        </p>
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped align-middle mb-0">
+                <thead>
+                <tr>
+                    <th rowspan="2">Sl No</th>
+                    <th rowspan="2">CRM Member</th>
+                    <th rowspan="2">Mobile</th>
+                    <th rowspan="2">Calls Logged</th>
+                    <th rowspan="2">Candidates Touched</th>
+                    <th rowspan="2">Total Updates</th>
+                    <th rowspan="2">Shortlist Updates</th>
+                    <th colspan="3" class="text-center">First Part (up to Offer Letter Receipt)</th>
+                    <th colspan="3" class="text-center">Field Level (post Receipt)</th>
+                    <th rowspan="2">Last Activity</th>
+                </tr>
+                <tr>
+                    <th>Total</th>
+                    <th>Offer Letter Generated</th>
+                    <th>Receipt Confirmed</th>
+                    <th>Total</th>
+                    <th>Joined Status</th>
+                    <th>% Reached Field Level</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php if ($crmUserActivityRows === []): ?>
+                    <tr><td colspan="13"><div class="empty-state"><i class="bi bi-inbox"></i>No CRM activity recorded yet for the selected filters.</div></td></tr>
+                <?php endif; ?>
+                <?php $crmIndex = 1; ?>
+                <?php foreach ($crmUserActivityRows as $crmRow): ?>
+                    <?php
+                        $crmTotal = (int) ($crmRow['total_updates'] ?? 0);
+                        $crmShortlist = (int) ($crmRow['shortlist_updates'] ?? 0);
+                        $crmFirstPart = (int) ($crmRow['first_part_updates'] ?? 0);
+                        $crmOfferGen = (int) ($crmRow['offer_generated_updates'] ?? 0);
+                        $crmReceipt = (int) ($crmRow['receipt_confirm_updates'] ?? 0);
+                        $crmFieldLevel = (int) ($crmRow['field_level_updates'] ?? 0);
+                        $crmJoinedStatus = (int) ($crmRow['joined_status_updates'] ?? 0);
+                        $crmCalls = (int) ($crmRow['calls_count'] ?? 0);
+                        $crmDistinctCandidates = (int) ($crmRow['distinct_candidates'] ?? 0);
+                        $crmLast = $crmRow['last_activity'] ?? null;
+                        $fieldLevelPct = $crmTotal > 0 ? round(($crmFieldLevel / $crmTotal) * 100, 1) : 0;
+
+                        $crmUserActivityTotals['shortlist_updates'] += $crmShortlist;
+                        $crmUserActivityTotals['first_part_updates'] += $crmFirstPart;
+                        $crmUserActivityTotals['offer_generated_updates'] += $crmOfferGen;
+                        $crmUserActivityTotals['receipt_confirm_updates'] += $crmReceipt;
+                        $crmUserActivityTotals['field_level_updates'] += $crmFieldLevel;
+                        $crmUserActivityTotals['joined_status_updates'] += $crmJoinedStatus;
+                        $crmUserActivityTotals['distinct_candidates'] += $crmDistinctCandidates;
+                    ?>
+                    <tr>
+                        <td><?= $crmIndex++ ?></td>
+                        <td class="fw-semibold"><?= esc($crmRow['user_name']) ?></td>
+                        <td><?= esc($crmRow['mobile_number']) ?></td>
+                        <td><?= number_format($crmCalls) ?></td>
+                        <td><?= number_format($crmDistinctCandidates) ?></td>
+                        <td><?= number_format($crmTotal) ?></td>
+                        <td><?= number_format($crmShortlist) ?></td>
+                        <td><?= number_format($crmFirstPart) ?></td>
+                        <td><?= number_format($crmOfferGen) ?></td>
+                        <td><?= number_format($crmReceipt) ?></td>
+                        <td><?= number_format($crmFieldLevel) ?></td>
+                        <td><?= number_format($crmJoinedStatus) ?></td>
+                        <td><?php if ($crmFieldLevel > 0): ?><span class="status-chip status-yes"><?= $fieldLevelPct ?>%</span><?php else: ?><span class="status-chip status-neutral">0%</span><?php endif; ?></td>
+                        <td><?= $crmLast ? esc(date('d M Y, H:i', strtotime((string) $crmLast))) : '<span class="text-muted">&mdash;</span>' ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                <?php if ($crmUserActivityRows !== []): ?>
+                    <tr class="table-secondary fw-semibold">
+                        <td colspan="3">Total</td>
+                        <td><?= number_format($crmUserActivityTotals['calls_count']) ?></td>
+                        <td><?= number_format($crmUserActivityTotals['distinct_candidates']) ?></td>
+                        <td><?= number_format($crmUserActivityTotals['total_updates']) ?></td>
+                        <td><?= number_format($crmUserActivityTotals['shortlist_updates']) ?></td>
+                        <td><?= number_format($crmUserActivityTotals['first_part_updates']) ?></td>
+                        <td><?= number_format($crmUserActivityTotals['offer_generated_updates']) ?></td>
+                        <td><?= number_format($crmUserActivityTotals['receipt_confirm_updates']) ?></td>
+                        <td><?= number_format($crmUserActivityTotals['field_level_updates']) ?></td>
+                        <td><?= number_format($crmUserActivityTotals['joined_status_updates']) ?></td>
+                        <td>&mdash;</td>
+                        <td>&mdash;</td>
+                    </tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+</div><!-- /#tab-crm -->
+
+<div class="tab-pane fade" id="tab-district" role="tabpanel">
+
+<div class="card mb-4">
+    <div class="card-body">
         <h2 class="h5">Seventh Section: District User Activity Review</h2>
         <p class="data-meta mb-3">
             <i class="bi bi-info-circle me-1"></i>
@@ -698,17 +922,22 @@ render_page_header('Consolidated Report', [
                         $districtUserActivityTotals['distinct_candidates'] += $distinctCandidates;
                         $districtUserActivityTotals['distinct_users'] += $distinctUsers;
                     ?>
+                    <?php
+                        $usersUrl = $districtDrillUrl((string) $duRow['district'], 'users');
+                        $challengeUrl = $districtDrillUrl((string) $duRow['district'], 'challenge');
+                        $remarksUrl = $districtDrillUrl((string) $duRow['district'], 'join_remarks');
+                    ?>
                     <tr>
                         <td><?= $duIndex ?></td>
                         <td class="fw-semibold"><?= esc($duRow['district']) ?></td>
-                        <td><?= number_format($distinctUsers) ?></td>
+                        <td><?php if ($distinctUsers > 0): ?><a href="<?= esc($usersUrl) ?>" target="_blank" rel="noopener noreferrer"><?= number_format($distinctUsers) ?></a><?php else: ?>0<?php endif; ?></td>
                         <td><?= number_format($distinctCandidates) ?></td>
                         <td><?= number_format($totalUpdates) ?></td>
                         <td><?= number_format($receiptConfirm) ?></td>
                         <td><?= number_format($joinedStatus) ?></td>
                         <td><?= number_format($willingToJoin) ?></td>
-                        <td><?= number_format($challenge) ?></td>
-                        <td><?= number_format($joinRemarks) ?></td>
+                        <td><?php if ($challenge > 0): ?><a href="<?= esc($challengeUrl) ?>" target="_blank" rel="noopener noreferrer"><?= number_format($challenge) ?></a><?php else: ?>0<?php endif; ?></td>
+                        <td><?php if ($joinRemarks > 0): ?><a href="<?= esc($remarksUrl) ?>" target="_blank" rel="noopener noreferrer"><?= number_format($joinRemarks) ?></a><?php else: ?>0<?php endif; ?></td>
                         <td><?= $lastActivity ? esc(date('d M Y, H:i', strtotime((string) $lastActivity))) : '<span class="text-muted">&mdash;</span>' ?></td>
                     </tr>
                     <?php $duIndex++; ?>
@@ -732,9 +961,57 @@ render_page_header('Consolidated Report', [
         </div>
         <p class="data-meta mt-2 mb-0">
             <i class="bi bi-info-circle me-1"></i>
-            <em>Note:</em> District users do not log phone calls in this system; their activity is captured as updates on candidate records via the District Candidate Data page. Distinct user totals across districts can exceed the platform user count if a user has worked on candidates in multiple districts.
+            <em>Note:</em> Click on the <strong>Distinct District Users</strong>, <strong>Challenge</strong> or <strong>Join Remarks</strong> values above to drill into the underlying records for that district. District users do not log phone calls in this system; their activity is captured as updates on candidate records via the District Candidate Data page.
         </p>
     </div>
 </div>
+
+</div><!-- /#tab-district -->
+</div><!-- /.tab-content -->
+
+<script>
+(function () {
+    const tabIds = ['#tab-overall', '#tab-selected', '#tab-shortlisted', '#tab-crm', '#tab-district'];
+
+    function activateFromHash() {
+        const hash = window.location.hash;
+        if (hash && tabIds.includes(hash)) {
+            const trigger = document.querySelector('[data-bs-target="' + hash + '"]');
+            if (trigger) {
+                bootstrap.Tab.getOrCreateInstance(trigger).show();
+            }
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        activateFromHash();
+
+        document.querySelectorAll('#reportTabs [data-bs-toggle="tab"]').forEach((btn) => {
+            btn.addEventListener('shown.bs.tab', (event) => {
+                const target = event.target.getAttribute('data-bs-target');
+                if (target && window.history.replaceState) {
+                    window.history.replaceState(null, '', window.location.pathname + window.location.search + target);
+                }
+            });
+        });
+
+        // Preserve active tab when applying / resetting filters via GET form.
+        const filterForm = document.querySelector('form[method="get"]');
+        if (filterForm) {
+            filterForm.addEventListener('submit', () => {
+                const active = document.querySelector('#reportTabs .nav-link.active');
+                if (active) {
+                    const target = active.getAttribute('data-bs-target');
+                    if (target) {
+                        filterForm.action = filterForm.action ? filterForm.action.split('#')[0] + target : window.location.pathname + target;
+                    }
+                }
+            });
+        }
+    });
+
+    window.addEventListener('hashchange', activateFromHash);
+})();
+</script>
 
 <?php render_footer(); ?>

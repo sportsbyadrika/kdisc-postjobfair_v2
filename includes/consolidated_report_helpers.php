@@ -1124,3 +1124,231 @@ function fetch_district_user_activity_report(array $filters): array
 
     return $stmt->fetchAll();
 }
+
+/**
+ * Drill-down for the District User Activity Review table: lists the
+ * district_user accounts active in a given Candidate_District with their
+ * per-field activity counts.
+ */
+function fetch_district_user_activity_users(string $district, array $filters): array
+{
+    $params = [$district];
+    $conditions = build_common_conditions($filters, $params);
+    $jfrConditionsSql = $conditions === [] ? '' : (' AND ' . implode(' AND ', $conditions));
+
+    $sql = "SELECT
+            u.id AS user_id,
+            u.name AS user_name,
+            u.mobile_number,
+            u.email,
+            COUNT(cmal.id) AS total_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Confirm Offer Letter Receipt by Candidate%' THEN 1 ELSE 0 END) AS receipt_confirm_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Candidate Joined Status%' THEN 1 ELSE 0 END) AS joined_status_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Willing to Join%' THEN 1 ELSE 0 END) AS willing_to_join_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Challenge Type%' OR cmal.activity_details LIKE '%Challenge to be addressed%' THEN 1 ELSE 0 END) AS challenge_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Remarks Candidate Join%' OR cmal.activity_details LIKE '%Candidate Join Remarks Type%' THEN 1 ELSE 0 END) AS join_remarks_updates,
+            COUNT(DISTINCT cmal.candidate_id) AS distinct_candidates,
+            MAX(cmal.created_at) AS last_activity
+        FROM candidate_manage_activity_log cmal
+        INNER JOIN users u ON u.id = cmal.created_by
+        INNER JOIN job_fair_result jfr ON jfr.id = cmal.candidate_id
+        WHERE u.role = 'district_user'
+            AND COALESCE(NULLIF(TRIM(jfr.Candidate_District), ''), 'Unknown') = ?
+            $jfrConditionsSql
+        GROUP BY u.id, u.name, u.mobile_number, u.email
+        ORDER BY total_updates DESC, u.name ASC";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+
+    return $stmt->fetchAll();
+}
+
+/**
+ * Drill-down: distribution of Challenge_Type values among candidates in a
+ * district touched by district users.
+ */
+function fetch_district_user_activity_challenges(string $district, array $filters): array
+{
+    $params = [$district];
+    $conditions = build_common_conditions($filters, $params);
+    $jfrConditionsSql = $conditions === [] ? '' : (' AND ' . implode(' AND ', $conditions));
+
+    $sql = "SELECT
+            COALESCE(NULLIF(TRIM(jfr.Challenge_Type), ''), '(No Challenge Recorded)') AS challenge_type,
+            COUNT(DISTINCT jfr.id) AS candidate_count,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(jfr.Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS joined_yes,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(jfr.Candidate_Joined_Status, ''))) = 'no' THEN 1 ELSE 0 END) AS joined_no,
+            MAX(cmal.created_at) AS last_update
+        FROM candidate_manage_activity_log cmal
+        INNER JOIN users u ON u.id = cmal.created_by
+        INNER JOIN job_fair_result jfr ON jfr.id = cmal.candidate_id
+        WHERE u.role = 'district_user'
+            AND COALESCE(NULLIF(TRIM(jfr.Candidate_District), ''), 'Unknown') = ?
+            $jfrConditionsSql
+        GROUP BY COALESCE(NULLIF(TRIM(jfr.Challenge_Type), ''), '(No Challenge Recorded)')
+        ORDER BY candidate_count DESC, challenge_type ASC";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+
+    return $stmt->fetchAll();
+}
+
+/**
+ * Drill-down: distribution of Candidate_Join_Remarks_Type among candidates
+ * in a district touched by district users.
+ */
+function fetch_district_user_activity_join_remarks(string $district, array $filters): array
+{
+    $params = [$district];
+    $conditions = build_common_conditions($filters, $params);
+    $jfrConditionsSql = $conditions === [] ? '' : (' AND ' . implode(' AND ', $conditions));
+
+    $sql = "SELECT
+            COALESCE(NULLIF(TRIM(jfr.Candidate_Join_Remarks_Type), ''), '(No Remark Recorded)') AS remark_type,
+            COUNT(DISTINCT jfr.id) AS candidate_count,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(jfr.Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS joined_yes,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(jfr.Candidate_Joined_Status, ''))) = 'no' THEN 1 ELSE 0 END) AS joined_no,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(jfr.Candidate_Joined_Status, ''))) IN ('pending', 'future date') OR TRIM(COALESCE(jfr.Candidate_Joined_Status, '')) = '' THEN 1 ELSE 0 END) AS joined_pending,
+            MAX(cmal.created_at) AS last_update
+        FROM candidate_manage_activity_log cmal
+        INNER JOIN users u ON u.id = cmal.created_by
+        INNER JOIN job_fair_result jfr ON jfr.id = cmal.candidate_id
+        WHERE u.role = 'district_user'
+            AND COALESCE(NULLIF(TRIM(jfr.Candidate_District), ''), 'Unknown') = ?
+            $jfrConditionsSql
+        GROUP BY COALESCE(NULLIF(TRIM(jfr.Candidate_Join_Remarks_Type), ''), '(No Remark Recorded)')
+        ORDER BY candidate_count DESC, remark_type ASC";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+
+    return $stmt->fetchAll();
+}
+
+/**
+ * Aggregates activity by CRM team users so admin can review who is doing
+ * "first part" updates (up to offer letter receipt confirmed) versus
+ * "field level" updates (joining, challenges, join remarks). Calls logged
+ * by the CRM user are pulled from candidate_call_history and merged.
+ *
+ * Returns one row per CRM user with both activity-log and call counts.
+ */
+function fetch_crm_user_activity_report(array $filters): array
+{
+    // Activity-log aggregation.
+    $params = [];
+    $conditions = build_common_conditions($filters, $params);
+    $jfrConditionsSql = $conditions === [] ? '' : (' AND ' . implode(' AND ', $conditions));
+
+    $sql = "SELECT
+            u.id AS user_id,
+            u.name AS user_name,
+            u.mobile_number,
+            COUNT(cmal.id) AS total_updates,
+            SUM(CASE WHEN cmal.activity_section = 'shortlist_onhold' THEN 1 ELSE 0 END) AS shortlist_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%First Call Done%'
+                  OR cmal.activity_details LIKE '%Offer Letter Generated%'
+                  OR cmal.activity_details LIKE '%Link to Offer letter%'
+                  OR cmal.activity_details LIKE '%Confirm Offer Letter Receipt by Candidate%'
+                  OR cmal.activity_details LIKE '%confirmation date%'
+                THEN 1 ELSE 0 END) AS first_part_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Offer Letter Generated%' THEN 1 ELSE 0 END) AS offer_generated_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Confirm Offer Letter Receipt by Candidate%' THEN 1 ELSE 0 END) AS receipt_confirm_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Willing to Join%'
+                  OR cmal.activity_details LIKE '%Challenge Type%'
+                  OR cmal.activity_details LIKE '%Challenge to be addressed%'
+                  OR cmal.activity_details LIKE '%Candidate Joined Status%'
+                  OR cmal.activity_details LIKE '%Candidate Joined Date%'
+                  OR cmal.activity_details LIKE '%Candidate Joining Future Date%'
+                  OR cmal.activity_details LIKE '%Offer Letter Join Date%'
+                  OR cmal.activity_details LIKE '%Remarks Candidate Join%'
+                  OR cmal.activity_details LIKE '%Candidate Join Remarks Type%'
+                  OR cmal.activity_details LIKE '%response from employer%'
+                THEN 1 ELSE 0 END) AS field_level_updates,
+            SUM(CASE WHEN cmal.activity_details LIKE '%Candidate Joined Status%' THEN 1 ELSE 0 END) AS joined_status_updates,
+            COUNT(DISTINCT cmal.candidate_id) AS distinct_candidates,
+            MAX(cmal.created_at) AS last_activity
+        FROM candidate_manage_activity_log cmal
+        INNER JOIN users u ON u.id = cmal.created_by
+        INNER JOIN job_fair_result jfr ON jfr.id = cmal.candidate_id
+        WHERE u.role = 'crm_member'
+            $jfrConditionsSql
+        GROUP BY u.id, u.name, u.mobile_number";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+
+    $byUser = [];
+    foreach ($stmt->fetchAll() as $r) {
+        $uid = (int) $r['user_id'];
+        $r['calls_count'] = 0;
+        $r['distinct_call_candidates'] = 0;
+        $byUser[$uid] = $r;
+    }
+
+    // Calls aggregation.
+    $callParams = [];
+    $callConditions = build_common_conditions($filters, $callParams);
+    $callJfrConditionsSql = $callConditions === [] ? '' : (' AND ' . implode(' AND ', $callConditions));
+
+    $callSql = "SELECT
+            u.id AS user_id,
+            u.name AS user_name,
+            u.mobile_number,
+            COUNT(cch.id) AS calls_count,
+            COUNT(DISTINCT cch.candidate_id) AS distinct_call_candidates,
+            MAX(cch.created_at) AS last_call
+        FROM candidate_call_history cch
+        INNER JOIN users u ON u.id = cch.created_by
+        INNER JOIN job_fair_result jfr ON jfr.id = cch.candidate_id
+        WHERE u.role = 'crm_member'
+            $callJfrConditionsSql
+        GROUP BY u.id, u.name, u.mobile_number";
+
+    $stmtCalls = db()->prepare($callSql);
+    $stmtCalls->execute($callParams);
+
+    foreach ($stmtCalls->fetchAll() as $r) {
+        $uid = (int) $r['user_id'];
+        if (!isset($byUser[$uid])) {
+            $byUser[$uid] = [
+                'user_id' => $uid,
+                'user_name' => $r['user_name'],
+                'mobile_number' => $r['mobile_number'],
+                'total_updates' => 0,
+                'shortlist_updates' => 0,
+                'first_part_updates' => 0,
+                'offer_generated_updates' => 0,
+                'receipt_confirm_updates' => 0,
+                'field_level_updates' => 0,
+                'joined_status_updates' => 0,
+                'distinct_candidates' => 0,
+                'last_activity' => null,
+                'calls_count' => (int) $r['calls_count'],
+                'distinct_call_candidates' => (int) $r['distinct_call_candidates'],
+            ];
+        } else {
+            $byUser[$uid]['calls_count'] = (int) $r['calls_count'];
+            $byUser[$uid]['distinct_call_candidates'] = (int) $r['distinct_call_candidates'];
+        }
+        $lastActivity = $byUser[$uid]['last_activity'] ?? null;
+        $lastCall = $r['last_call'] ?? null;
+        if ($lastCall && (!$lastActivity || strtotime((string) $lastCall) > strtotime((string) $lastActivity))) {
+            $byUser[$uid]['last_activity'] = $lastCall;
+        }
+    }
+
+    $rows = array_values($byUser);
+    usort($rows, static function (array $a, array $b): int {
+        $aScore = (int) ($a['total_updates'] ?? 0) + (int) ($a['calls_count'] ?? 0);
+        $bScore = (int) ($b['total_updates'] ?? 0) + (int) ($b['calls_count'] ?? 0);
+        if ($aScore === $bScore) {
+            return strcasecmp((string) ($a['user_name'] ?? ''), (string) ($b['user_name'] ?? ''));
+        }
+        return $bScore <=> $aScore;
+    });
+
+    return $rows;
+}
