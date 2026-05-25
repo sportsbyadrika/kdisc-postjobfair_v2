@@ -3,6 +3,49 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_auth();
 
+$currentUser = current_user();
+$canEdit = is_admin($currentUser);
+
+/**
+ * The eight columns that together identify a single row in the Job Fair
+ * Masters table. Displayed value "Unknown" maps back to NULL/empty in the
+ * underlying job_fair_result data.
+ */
+const MASTERS_SIGNATURE_COLUMNS = [
+    'aggregator' => 'Aggregator',
+    'employer_code' => 'Employer_ID',
+    'employer_name' => 'Employer_Name',
+    'employer_spoc_name' => 'Employer_SPOC_Name',
+    'employer_spoc_mobile' => 'Employer_SPOC_Mobile',
+    'aggregator_spoc_name' => 'Aggregator_SPOC_Name',
+    'aggregator_spoc_mobile' => 'Aggregator_SPOC_Mobile',
+    'crm_member' => 'CRM_Member',
+];
+
+function masters_signature_from_request(array $source): array
+{
+    $signature = [];
+    foreach (array_keys(MASTERS_SIGNATURE_COLUMNS) as $key) {
+        $signature[$key] = trim((string) ($source[$key] ?? ''));
+    }
+    return $signature;
+}
+
+function masters_row_conditions(array $signature, array &$params): array
+{
+    $conditions = [];
+    foreach (MASTERS_SIGNATURE_COLUMNS as $key => $column) {
+        $value = (string) ($signature[$key] ?? '');
+        if ($value === '' || $value === 'Unknown') {
+            $conditions[] = "($column IS NULL OR TRIM($column) = '')";
+        } else {
+            $conditions[] = "TRIM(COALESCE($column, '')) = ?";
+            $params[] = $value;
+        }
+    }
+    return $conditions;
+}
+
 function fetch_master_distinct_values(string $column): array
 {
     $sql = "SELECT DISTINCT COALESCE(NULLIF(TRIM($column), ''), 'Unknown') AS value
@@ -51,7 +94,8 @@ function fetch_master_rows(array $filters): array
             COALESCE(NULLIF(TRIM(Employer_SPOC_Mobile), ''), 'Unknown') AS employer_spoc_mobile,
             COALESCE(NULLIF(TRIM(Aggregator_SPOC_Name), ''), 'Unknown') AS aggregator_spoc_name,
             COALESCE(NULLIF(TRIM(Aggregator_SPOC_Mobile), ''), 'Unknown') AS aggregator_spoc_mobile,
-            COALESCE(NULLIF(TRIM(CRM_Member), ''), 'Unknown') AS crm_member
+            COALESCE(NULLIF(TRIM(CRM_Member), ''), 'Unknown') AS crm_member,
+            COUNT(*) AS candidate_count
         FROM job_fair_result
         $whereClause
         GROUP BY
@@ -72,6 +116,57 @@ function fetch_master_rows(array $filters): array
 }
 
 $filters = build_master_filters();
+$flash = null;
+$flashType = 'success';
+
+if (is_post() && ($_POST['action'] ?? '') === 'update_row') {
+    if (!$canEdit) {
+        http_response_code(403);
+        exit('Forbidden.');
+    }
+
+    $signature = masters_signature_from_request($_POST['sig'] ?? []);
+    $newEmployerSpocName = trim((string) ($_POST['new_employer_spoc_name'] ?? ''));
+    $newEmployerSpocMobile = trim((string) ($_POST['new_employer_spoc_mobile'] ?? ''));
+    $newAggregatorSpocName = trim((string) ($_POST['new_aggregator_spoc_name'] ?? ''));
+    $newAggregatorSpocMobile = trim((string) ($_POST['new_aggregator_spoc_mobile'] ?? ''));
+    $newCrmMember = trim((string) ($_POST['new_crm_member'] ?? ''));
+
+    $params = [
+        $newEmployerSpocName === '' ? null : $newEmployerSpocName,
+        $newEmployerSpocMobile === '' ? null : $newEmployerSpocMobile,
+        $newAggregatorSpocName === '' ? null : $newAggregatorSpocName,
+        $newAggregatorSpocMobile === '' ? null : $newAggregatorSpocMobile,
+        $newCrmMember === '' ? null : $newCrmMember,
+    ];
+
+    $whereConditions = masters_row_conditions($signature, $params);
+    $whereSql = 'WHERE ' . implode(' AND ', $whereConditions);
+
+    $updateSql = "UPDATE job_fair_result
+        SET Employer_SPOC_Name = ?,
+            Employer_SPOC_Mobile = ?,
+            Aggregator_SPOC_Name = ?,
+            Aggregator_SPOC_Mobile = ?,
+            CRM_Member = ?
+        $whereSql";
+
+    $stmt = db()->prepare($updateSql);
+    $stmt->execute($params);
+    $affected = $stmt->affectedRows();
+
+    $redirectUrl = '/job_fair_masters.php?' . http_build_query(array_filter([
+        'aggregator' => $filters['aggregator'],
+        'employer' => $filters['employer'],
+        'crm_member' => $filters['crm_member'],
+        'flash' => $affected === 0
+            ? 'No matching records were found to update.'
+            : sprintf('Updated SPOC / CRM details on %d candidate record(s).', $affected),
+        'flash_type' => $affected === 0 ? 'warning' : 'success',
+    ], static fn ($v): bool => $v !== ''));
+    header('Location: ' . $redirectUrl);
+    exit;
+}
 
 if (($_GET['download'] ?? '') === 'csv') {
     $rows = fetch_master_rows($filters);
@@ -90,6 +185,7 @@ if (($_GET['download'] ?? '') === 'csv') {
         'Aggregator SPOC Name',
         'Aggregator SPOC Mobile',
         'CRM Member',
+        'Candidate Count',
     ]);
     foreach ($rows as $row) {
         fputcsv($out, [
@@ -101,6 +197,7 @@ if (($_GET['download'] ?? '') === 'csv') {
             (string) $row['aggregator_spoc_name'],
             (string) $row['aggregator_spoc_mobile'],
             (string) $row['crm_member'],
+            (int) ($row['candidate_count'] ?? 0),
         ]);
     }
     fclose($out);
@@ -112,12 +209,29 @@ $employerOptions = fetch_master_distinct_values('Employer_Name');
 $crmMemberOptions = fetch_master_distinct_values('CRM_Member');
 $rows = fetch_master_rows($filters);
 
+$flashMessage = isset($_GET['flash']) ? (string) $_GET['flash'] : null;
+$flashTypeIn = (string) ($_GET['flash_type'] ?? 'success');
+$flashType = in_array($flashTypeIn, ['success', 'warning', 'danger', 'info'], true) ? $flashTypeIn : 'info';
+
 $downloadUrl = '/job_fair_masters.php?' . http_build_query(array_filter([
     'download' => 'csv',
     'aggregator' => $filters['aggregator'],
     'employer' => $filters['employer'],
     'crm_member' => $filters['crm_member'],
 ], static fn($value): bool => $value !== ''));
+
+$buildCandidatesUrl = static function (array $row): string {
+    return '/job_fair_masters_candidates.php?' . http_build_query([
+        'aggregator' => $row['aggregator'],
+        'employer_code' => $row['employer_code'],
+        'employer_name' => $row['employer_name'],
+        'employer_spoc_name' => $row['employer_spoc_name'],
+        'employer_spoc_mobile' => $row['employer_spoc_mobile'],
+        'aggregator_spoc_name' => $row['aggregator_spoc_name'],
+        'aggregator_spoc_mobile' => $row['aggregator_spoc_mobile'],
+        'crm_member' => $row['crm_member'],
+    ]);
+};
 
 render_header('Job fair masters');
 render_page_header('Job Fair Masters', [
@@ -126,6 +240,13 @@ render_page_header('Job Fair Masters', [
     'actions' => '<a class="btn btn-primary" href="' . esc($downloadUrl) . '"><i class="bi bi-download me-1"></i>Download CSV</a>',
 ]);
 ?>
+
+<?php if ($flashMessage !== null): ?>
+    <div class="alert alert-<?= esc($flashType) ?> d-flex align-items-center gap-2">
+        <i class="bi bi-<?= $flashType === 'success' ? 'check-circle-fill' : ($flashType === 'warning' ? 'exclamation-triangle-fill' : 'info-circle-fill') ?>"></i>
+        <span><?= esc($flashMessage) ?></span>
+    </div>
+<?php endif; ?>
 
 <div class="card mb-4">
     <div class="card-body">
@@ -183,11 +304,13 @@ render_page_header('Job Fair Masters', [
                 <th>Aggregator SPOC Name</th>
                 <th>Aggregator SPOC Mobile</th>
                 <th>CRM Member</th>
+                <th class="text-end">Candidates</th>
+                <th class="text-end">Actions</th>
             </tr>
             </thead>
             <tbody>
             <?php if ($rows === []): ?>
-                <tr><td colspan="8"><div class="empty-state"><i class="bi bi-inbox"></i>No records found for selected filters.</div></td></tr>
+                <tr><td colspan="10"><div class="empty-state"><i class="bi bi-inbox"></i>No records found for selected filters.</div></td></tr>
             <?php endif; ?>
             <?php foreach ($rows as $row): ?>
                 <tr>
@@ -199,11 +322,140 @@ render_page_header('Job Fair Masters', [
                     <td><?= esc((string) $row['aggregator_spoc_name']) ?></td>
                     <td><?= esc((string) $row['aggregator_spoc_mobile']) ?></td>
                     <td><?= esc((string) $row['crm_member']) ?></td>
+                    <td class="text-end"><?= number_format((int) ($row['candidate_count'] ?? 0)) ?></td>
+                    <td>
+                        <div class="d-flex gap-1 justify-content-end">
+                            <a class="btn btn-sm btn-outline-primary" href="<?= esc($buildCandidatesUrl($row)) ?>" target="_blank" rel="noopener noreferrer"><i class="bi bi-people"></i> View Candidates</a>
+                            <?php if ($canEdit): ?>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editMappingModal" data-row='<?= esc(json_encode($row, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT)) ?>'><i class="bi bi-pencil"></i> Edit</button>
+                            <?php endif; ?>
+                        </div>
+                    </td>
                 </tr>
             <?php endforeach; ?>
             </tbody>
         </table>
     </div>
 </div>
+
+<?php if ($canEdit): ?>
+<div class="modal fade" id="editMappingModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <form method="post" id="editMappingForm">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-pencil-square me-1"></i>Edit SPOC / CRM Mapping</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="action" value="update_row">
+                    <?php foreach (array_keys(MASTERS_SIGNATURE_COLUMNS) as $key): ?>
+                        <input type="hidden" name="sig[<?= esc($key) ?>]" data-sig="<?= esc($key) ?>">
+                    <?php endforeach; ?>
+
+                    <div class="alert alert-info d-flex align-items-start gap-2">
+                        <i class="bi bi-info-circle-fill mt-1"></i>
+                        <div>
+                            <div class="fw-semibold">This update affects <span id="editAffectCount">all</span> candidate record(s) that share the current mapping.</div>
+                            <div class="small">Aggregator, Employer Code and Employer Name are part of the row identity and cannot be edited here. Leaving a field blank stores it as empty (shown as <em>Unknown</em>) for those records.</div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Aggregator <span class="text-muted small">(read-only)</span></label>
+                            <input type="text" class="form-control" id="editAggregator" disabled>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Employer Code <span class="text-muted small">(read-only)</span></label>
+                            <input type="text" class="form-control" id="editEmployerCode" disabled>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Employer Name <span class="text-muted small">(read-only)</span></label>
+                            <input type="text" class="form-control" id="editEmployerName" disabled>
+                        </div>
+                    </div>
+
+                    <hr class="my-3">
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label" for="new_employer_spoc_name">Employer SPOC Name</label>
+                            <input type="text" class="form-control" id="new_employer_spoc_name" name="new_employer_spoc_name" maxlength="255">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="new_employer_spoc_mobile">Employer SPOC Mobile</label>
+                            <input type="text" class="form-control" id="new_employer_spoc_mobile" name="new_employer_spoc_mobile" maxlength="50">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="new_aggregator_spoc_name">Aggregator SPOC Name</label>
+                            <input type="text" class="form-control" id="new_aggregator_spoc_name" name="new_aggregator_spoc_name" maxlength="255">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="new_aggregator_spoc_mobile">Aggregator SPOC Mobile</label>
+                            <input type="text" class="form-control" id="new_aggregator_spoc_mobile" name="new_aggregator_spoc_mobile" maxlength="50">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="new_crm_member">CRM Member</label>
+                            <input type="text" class="form-control" id="new_crm_member" name="new_crm_member" maxlength="255">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="editMappingSubmit"><i class="bi bi-save me-1"></i>Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    const modalEl = document.getElementById('editMappingModal');
+    if (!modalEl) return;
+
+    function sanitize(value) {
+        return value === 'Unknown' ? '' : (value ?? '');
+    }
+
+    modalEl.addEventListener('show.bs.modal', (event) => {
+        const trigger = event.relatedTarget;
+        if (!trigger) return;
+        let row;
+        try {
+            row = JSON.parse(trigger.getAttribute('data-row') || '{}');
+        } catch (e) {
+            row = {};
+        }
+
+        modalEl.querySelectorAll('[data-sig]').forEach((input) => {
+            input.value = row[input.getAttribute('data-sig')] ?? '';
+        });
+
+        document.getElementById('editAggregator').value = row.aggregator ?? '';
+        document.getElementById('editEmployerCode').value = row.employer_code ?? '';
+        document.getElementById('editEmployerName').value = row.employer_name ?? '';
+
+        document.getElementById('new_employer_spoc_name').value = sanitize(row.employer_spoc_name);
+        document.getElementById('new_employer_spoc_mobile').value = sanitize(row.employer_spoc_mobile);
+        document.getElementById('new_aggregator_spoc_name').value = sanitize(row.aggregator_spoc_name);
+        document.getElementById('new_aggregator_spoc_mobile').value = sanitize(row.aggregator_spoc_mobile);
+        document.getElementById('new_crm_member').value = sanitize(row.crm_member);
+
+        document.getElementById('editAffectCount').textContent = row.candidate_count ?? 'all';
+    });
+
+    document.getElementById('editMappingForm').addEventListener('submit', (event) => {
+        const confirmed = window.confirm('This will update SPOC / CRM details on all candidate records matching this mapping. Continue?');
+        if (!confirmed) {
+            event.preventDefault();
+        } else {
+            document.getElementById('editMappingSubmit').disabled = true;
+        }
+    });
+})();
+</script>
+<?php endif; ?>
 
 <?php render_footer();
