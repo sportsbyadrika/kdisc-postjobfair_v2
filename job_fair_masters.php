@@ -86,6 +86,10 @@ function fetch_master_rows(array $filters): array
 
     $whereClause = $conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions);
 
+    // Raise the GROUP_CONCAT limit so very large master rows (thousands of
+    // candidates) still get a complete ID snapshot bundled with the row.
+    db()->query('SET SESSION group_concat_max_len = 4194304');
+
     $sql = "SELECT
             COALESCE(NULLIF(TRIM(Aggregator), ''), 'Unknown') AS aggregator,
             COALESCE(NULLIF(TRIM(Employer_ID), ''), 'Unknown') AS employer_code,
@@ -102,7 +106,8 @@ function fetch_master_rows(array $filters): array
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
                      AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
                 THEN 1 ELSE 0 END) AS shortlist_final_selected_count,
-            SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS joined_count
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS joined_count,
+            GROUP_CONCAT(id ORDER BY id) AS record_ids
         FROM job_fair_result
         $whereClause
         GROUP BY
@@ -132,14 +137,40 @@ if (is_post() && ($_POST['action'] ?? '') === 'update_row') {
         exit('Forbidden.');
     }
 
-    $signature = masters_signature_from_request($_POST['sig'] ?? []);
+    // ID snapshot captured when the modal opened. The update is scoped strictly to
+    // these record IDs, so any change to identity fields (Aggregator / Employer
+    // Code / Employer Name) only affects the records the admin actually saw.
+    $rawIds = (string) ($_POST['target_ids'] ?? '');
+    $targetIds = array_values(array_filter(array_map(
+        static fn ($v) => (int) $v,
+        explode(',', $rawIds)
+    ), static fn (int $v): bool => $v > 0));
+
+    $newAggregator = trim((string) ($_POST['new_aggregator'] ?? ''));
+    $newEmployerCode = trim((string) ($_POST['new_employer_code'] ?? ''));
+    $newEmployerName = trim((string) ($_POST['new_employer_name'] ?? ''));
     $newEmployerSpocName = trim((string) ($_POST['new_employer_spoc_name'] ?? ''));
     $newEmployerSpocMobile = trim((string) ($_POST['new_employer_spoc_mobile'] ?? ''));
     $newAggregatorSpocName = trim((string) ($_POST['new_aggregator_spoc_name'] ?? ''));
     $newAggregatorSpocMobile = trim((string) ($_POST['new_aggregator_spoc_mobile'] ?? ''));
     $newCrmMember = trim((string) ($_POST['new_crm_member'] ?? ''));
 
-    $params = [
+    if ($targetIds === []) {
+        $redirectUrl = '/job_fair_masters.php?' . http_build_query(array_filter([
+            'aggregator' => $filters['aggregator'],
+            'employer' => $filters['employer'],
+            'crm_member' => $filters['crm_member'],
+            'flash' => 'No target records were selected. Reopen the row and try again.',
+            'flash_type' => 'warning',
+        ], static fn ($v): bool => $v !== ''));
+        header('Location: ' . $redirectUrl);
+        exit;
+    }
+
+    $setParams = [
+        $newAggregator === '' ? null : $newAggregator,
+        $newEmployerCode === '' ? null : $newEmployerCode,
+        $newEmployerName === '' ? null : $newEmployerName,
         $newEmployerSpocName === '' ? null : $newEmployerSpocName,
         $newEmployerSpocMobile === '' ? null : $newEmployerSpocMobile,
         $newAggregatorSpocName === '' ? null : $newAggregatorSpocName,
@@ -147,29 +178,29 @@ if (is_post() && ($_POST['action'] ?? '') === 'update_row') {
         $newCrmMember === '' ? null : $newCrmMember,
     ];
 
-    $whereConditions = masters_row_conditions($signature, $params);
-    $whereSql = 'WHERE ' . implode(' AND ', $whereConditions);
-
+    $placeholders = implode(',', array_fill(0, count($targetIds), '?'));
     $updateSql = "UPDATE job_fair_result
-        SET Employer_SPOC_Name = ?,
+        SET Aggregator = ?,
+            Employer_ID = ?,
+            Employer_Name = ?,
+            Employer_SPOC_Name = ?,
             Employer_SPOC_Mobile = ?,
             Aggregator_SPOC_Name = ?,
             Aggregator_SPOC_Mobile = ?,
             CRM_Member = ?
-        $whereSql";
+        WHERE id IN ($placeholders)";
 
+    $execParams = array_merge($setParams, $targetIds);
     $stmt = db()->prepare($updateSql);
-    $stmt->execute($params);
+    $stmt->execute($execParams);
     $affected = $stmt->affectedRows();
 
     $redirectUrl = '/job_fair_masters.php?' . http_build_query(array_filter([
         'aggregator' => $filters['aggregator'],
         'employer' => $filters['employer'],
         'crm_member' => $filters['crm_member'],
-        'flash' => $affected === 0
-            ? 'No matching records were found to update.'
-            : sprintf('Updated SPOC / CRM details on %d candidate record(s).', $affected),
-        'flash_type' => $affected === 0 ? 'warning' : 'success',
+        'flash' => sprintf('Updated %d of %d candidate record(s). Records may now appear under a different mapping if Aggregator, Employer Code or Employer Name was changed.', $affected, count($targetIds)),
+        'flash_type' => 'success',
     ], static fn ($v): bool => $v !== ''));
     header('Location: ' . $redirectUrl);
     exit;
@@ -415,40 +446,47 @@ render_page_header('Job Fair Masters', [
         <div class="modal-content">
             <form method="post" id="editMappingForm">
                 <div class="modal-header">
-                    <h5 class="modal-title"><i class="bi bi-pencil-square me-1"></i>Edit SPOC / CRM Mapping</h5>
+                    <h5 class="modal-title"><i class="bi bi-pencil-square me-1"></i>Edit Mapping</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     <input type="hidden" name="action" value="update_row">
-                    <?php foreach (array_keys(MASTERS_SIGNATURE_COLUMNS) as $key): ?>
-                        <input type="hidden" name="sig[<?= esc($key) ?>]" data-sig="<?= esc($key) ?>">
-                    <?php endforeach; ?>
+                    <input type="hidden" name="target_ids" id="editTargetIds">
 
                     <div class="alert alert-info d-flex align-items-start gap-2">
                         <i class="bi bi-info-circle-fill mt-1"></i>
                         <div>
-                            <div class="fw-semibold">This update affects <span id="editAffectCount">all</span> candidate record(s) that share the current mapping.</div>
-                            <div class="small">Aggregator, Employer Code and Employer Name are part of the row identity and cannot be edited here. Leaving a field blank stores it as empty (shown as <em>Unknown</em>) for those records.</div>
+                            <div class="fw-semibold">
+                                This update affects <span id="editAffectCount">all</span> candidate record(s).
+                                Record IDs were captured when you opened this dialog; only those records will be modified.
+                            </div>
+                            <div class="small">
+                                Changing <strong>Aggregator</strong>, <strong>Employer Code</strong> or <strong>Employer Name</strong>
+                                will move these records into a different master mapping &mdash; useful for correcting spelling
+                                variants (e.g. <em>"sureshkumar"</em> &rarr; <em>"suresh kumar"</em>) so all variants
+                                merge under a single master row. Leaving a field blank stores it as empty (shown as
+                                <em>Unknown</em>).
+                            </div>
                         </div>
                     </div>
 
-                    <div class="row g-3">
+                    <h6 class="text-uppercase text-muted small mb-2">Identity</h6>
+                    <div class="row g-3 mb-3">
                         <div class="col-md-6">
-                            <label class="form-label">Aggregator <span class="text-muted small">(read-only)</span></label>
-                            <input type="text" class="form-control" id="editAggregator" disabled>
+                            <label class="form-label" for="new_aggregator">Aggregator</label>
+                            <input type="text" class="form-control" id="new_aggregator" name="new_aggregator" maxlength="255">
                         </div>
                         <div class="col-md-3">
-                            <label class="form-label">Employer Code <span class="text-muted small">(read-only)</span></label>
-                            <input type="text" class="form-control" id="editEmployerCode" disabled>
+                            <label class="form-label" for="new_employer_code">Employer Code</label>
+                            <input type="text" class="form-control" id="new_employer_code" name="new_employer_code" maxlength="100">
                         </div>
                         <div class="col-md-3">
-                            <label class="form-label">Employer Name <span class="text-muted small">(read-only)</span></label>
-                            <input type="text" class="form-control" id="editEmployerName" disabled>
+                            <label class="form-label" for="new_employer_name">Employer Name</label>
+                            <input type="text" class="form-control" id="new_employer_name" name="new_employer_name" maxlength="255">
                         </div>
                     </div>
 
-                    <hr class="my-3">
-
+                    <h6 class="text-uppercase text-muted small mb-2">SPOC &amp; CRM</h6>
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label" for="new_employer_spoc_name">Employer SPOC Name</label>
@@ -500,14 +538,14 @@ render_page_header('Job Fair Masters', [
             row = {};
         }
 
-        modalEl.querySelectorAll('[data-sig]').forEach((input) => {
-            input.value = row[input.getAttribute('data-sig')] ?? '';
-        });
+        // Snapshot the candidate IDs at modal-open time so the update is scoped
+        // to exactly the records the admin saw, regardless of later edits to
+        // the identity fields.
+        document.getElementById('editTargetIds').value = row.record_ids ?? '';
 
-        document.getElementById('editAggregator').value = row.aggregator ?? '';
-        document.getElementById('editEmployerCode').value = row.employer_code ?? '';
-        document.getElementById('editEmployerName').value = row.employer_name ?? '';
-
+        document.getElementById('new_aggregator').value = sanitize(row.aggregator);
+        document.getElementById('new_employer_code').value = sanitize(row.employer_code);
+        document.getElementById('new_employer_name').value = sanitize(row.employer_name);
         document.getElementById('new_employer_spoc_name').value = sanitize(row.employer_spoc_name);
         document.getElementById('new_employer_spoc_mobile').value = sanitize(row.employer_spoc_mobile);
         document.getElementById('new_aggregator_spoc_name').value = sanitize(row.aggregator_spoc_name);
@@ -518,7 +556,8 @@ render_page_header('Job Fair Masters', [
     });
 
     document.getElementById('editMappingForm').addEventListener('submit', (event) => {
-        const confirmed = window.confirm('This will update SPOC / CRM details on all candidate records matching this mapping. Continue?');
+        const count = document.getElementById('editAffectCount').textContent;
+        const confirmed = window.confirm('This will update ' + count + ' candidate record(s). Continue?');
         if (!confirmed) {
             event.preventDefault();
         } else {
