@@ -34,28 +34,22 @@ if ($employerFilter !== '') {
 $whereClause = $conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions);
 
 $sql = "SELECT
+        id,
         COALESCE(NULLIF(TRIM(Aggregator), ''), 'Unknown') AS aggregator,
         COALESCE(NULLIF(TRIM(Employer_Name), ''), 'Unknown') AS employer_name,
         COALESCE(NULLIF(TRIM(Employer_ID), ''), 'Unknown') AS employer_code,
         COALESCE(NULLIF(TRIM(Job_Title_Name), ''), 'Unknown') AS job_title,
         COALESCE(NULLIF(TRIM(Job_Id), ''), 'Unknown') AS job_id,
         COALESCE(NULLIF(TRIM(Job_Fair_No), ''), 'Unknown') AS job_fair_no,
-        COUNT(*) AS candidates,
-        SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected' THEN 1 ELSE 0 END) AS selected,
-        SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted','onhold') THEN 1 ELSE 0 END) AS shortlisted_onhold,
-        SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
-                 OR (LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted','onhold')
-                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected')
-            THEN 1 ELSE 0 END) AS total_selected,
-        SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS joined
+        DWMS_ID, Candidate_Name,
+        Selection_Status, Shortlist_Candidate_Status, Candidate_Joined_Status
     FROM job_fair_result
     $whereClause
-    GROUP BY aggregator, employer_name, employer_code, job_title, job_id, job_fair_no
-    ORDER BY aggregator ASC, employer_name ASC, job_title ASC, job_fair_no ASC";
+    ORDER BY aggregator ASC, employer_name ASC, job_title ASC, job_fair_no ASC, Candidate_Name ASC";
 
 $stmt = db()->prepare($sql);
 $stmt->execute($params);
-$leafRows = $stmt->fetchAll();
+$candidateRows = $stmt->fetchAll();
 
 if (($_GET['download'] ?? '') === 'csv') {
     $filename = 'job_titles_tree_' . date('Ymd_His') . '.csv';
@@ -65,9 +59,9 @@ if (($_GET['download'] ?? '') === 'csv') {
     fwrite($out, "\xEF\xBB\xBF");
     fputcsv($out, [
         'Aggregator', 'Employer Name', 'Employer Code', 'Job Title', 'Job ID', 'Job Fair No',
-        'Candidates', 'Selected', 'Shortlisted/Onhold', 'Total Selected', 'Joined',
+        'DWMS ID', 'Candidate Name', 'Selection Status', 'Final (Shortlist) Status', 'Candidate Joined Status',
     ]);
-    foreach ($leafRows as $row) {
+    foreach ($candidateRows as $row) {
         fputcsv($out, [
             (string) $row['aggregator'],
             (string) $row['employer_name'],
@@ -75,26 +69,40 @@ if (($_GET['download'] ?? '') === 'csv') {
             (string) $row['job_title'],
             (string) $row['job_id'],
             (string) $row['job_fair_no'],
-            (int) $row['candidates'],
-            (int) $row['selected'],
-            (int) $row['shortlisted_onhold'],
-            (int) $row['total_selected'],
-            (int) $row['joined'],
+            (string) ($row['DWMS_ID'] ?? ''),
+            (string) ($row['Candidate_Name'] ?? ''),
+            (string) ($row['Selection_Status'] ?? ''),
+            (string) ($row['Shortlist_Candidate_Status'] ?? ''),
+            (string) ($row['Candidate_Joined_Status'] ?? ''),
         ]);
     }
     fclose($out);
     exit;
 }
 
-// Build the nested tree and roll up metrics from leaves upward.
+// Build the nested tree from individual candidate rows and roll up metrics.
 $metricKeys = ['candidates', 'selected', 'shortlisted_onhold', 'total_selected', 'joined'];
 $zero = array_fill_keys($metricKeys, 0);
 $tree = [];
-foreach ($leafRows as $row) {
+foreach ($candidateRows as $row) {
     $aKey = (string) $row['aggregator'];
     $eKey = (string) $row['employer_name'] . '|' . (string) $row['employer_code'];
     $jKey = (string) $row['job_title'] . '|' . (string) $row['job_id'];
     $fKey = (string) $row['job_fair_no'];
+    $cKey = (int) $row['id'];
+
+    $selKey = strtolower(preg_replace('/[^a-z0-9]+/i', '', (string) ($row['Selection_Status'] ?? '')) ?? '');
+    $shortKey = strtolower(preg_replace('/[^a-z0-9]+/i', '', (string) ($row['Shortlist_Candidate_Status'] ?? '')) ?? '');
+    $joinKey = strtolower(trim((string) ($row['Candidate_Joined_Status'] ?? '')));
+
+    $leafMetrics = [
+        'candidates' => 1,
+        'selected' => $selKey === 'selected' ? 1 : 0,
+        'shortlisted_onhold' => in_array($selKey, ['shortlisted', 'onhold'], true) ? 1 : 0,
+        'total_selected' => ($selKey === 'selected'
+            || (in_array($selKey, ['shortlisted', 'onhold'], true) && $shortKey === 'selected')) ? 1 : 0,
+        'joined' => $joinKey === 'yes' ? 1 : 0,
+    ];
 
     if (!isset($tree[$aKey])) {
         $tree[$aKey] = ['label' => $aKey, 'metrics' => $zero, 'children' => []];
@@ -115,18 +123,28 @@ foreach ($leafRows as $row) {
             'children' => [],
         ];
     }
-    $leafMetrics = [];
-    foreach ($metricKeys as $k) {
-        $leafMetrics[$k] = (int) ($row[$k] ?? 0);
+    if (!isset($tree[$aKey]['children'][$eKey]['children'][$jKey]['children'][$fKey])) {
+        $tree[$aKey]['children'][$eKey]['children'][$jKey]['children'][$fKey] = [
+            'label' => $fKey,
+            'metrics' => $zero,
+            'children' => [],
+        ];
     }
-    $tree[$aKey]['children'][$eKey]['children'][$jKey]['children'][$fKey] = [
-        'label' => $fKey,
+    $tree[$aKey]['children'][$eKey]['children'][$jKey]['children'][$fKey]['children'][$cKey] = [
+        'label' => (string) ($row['Candidate_Name'] ?? '(unnamed)'),
+        'candidate_id' => $cKey,
+        'dwms_id' => (string) ($row['DWMS_ID'] ?? ''),
+        'selection_status' => (string) ($row['Selection_Status'] ?? ''),
+        'shortlist_status' => (string) ($row['Shortlist_Candidate_Status'] ?? ''),
+        'joined_status' => (string) ($row['Candidate_Joined_Status'] ?? ''),
         'metrics' => $leafMetrics,
     ];
+
     foreach ($metricKeys as $k) {
         $tree[$aKey]['metrics'][$k] += $leafMetrics[$k];
         $tree[$aKey]['children'][$eKey]['metrics'][$k] += $leafMetrics[$k];
         $tree[$aKey]['children'][$eKey]['children'][$jKey]['metrics'][$k] += $leafMetrics[$k];
+        $tree[$aKey]['children'][$eKey]['children'][$jKey]['children'][$fKey]['metrics'][$k] += $leafMetrics[$k];
     }
 }
 
@@ -197,11 +215,12 @@ render_page_header('Job Titles', [
                     <th class="text-end">SL / OH</th>
                     <th class="text-end">Total Selected</th>
                     <th class="text-end">Joined</th>
+                    <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($tree === []): ?>
-                    <tr><td colspan="6"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
+                    <tr><td colspan="7"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
                 <?php else: ?>
                     <?php
                     $nodeCounter = 0;
@@ -217,19 +236,21 @@ render_page_header('Job Titles', [
                             'employer' => 'bi-shop',
                             'job_title' => 'bi-briefcase',
                             'job_fair' => 'bi-calendar-event',
+                            'candidate' => 'bi-person-circle',
                         ];
                         $kindLabelMap = [
                             'aggregator' => 'Aggregator',
                             'employer' => 'Employer',
                             'job_title' => 'Job Title',
                             'job_fair' => 'Job Fair',
+                            'candidate' => 'Candidate',
                         ];
                         $rowClasses = 'tree-row tree-row-level-' . $level;
                         $isHidden = $level > 0;
                         ?>
                         <tr class="<?= $rowClasses ?>" data-node-id="<?= esc($nodeId) ?>" data-parent="<?= esc($parentId) ?>" data-level="<?= $level ?>" <?= $isHidden ? 'style="display:none;"' : '' ?>>
                             <td>
-                                <div class="d-flex align-items-center" style="padding-left: <?= esc($indent) ?>;">
+                                <div class="d-flex align-items-center flex-wrap" style="padding-left: <?= esc($indent) ?>;">
                                     <?php if ($hasChildren): ?>
                                         <button type="button" class="btn btn-link p-0 me-2 tree-toggle text-decoration-none" data-target="<?= esc($nodeId) ?>" data-expanded="false" aria-label="Toggle">
                                             <i class="bi bi-caret-right-fill"></i>
@@ -246,11 +267,28 @@ render_page_header('Job Titles', [
                                     <?php if ($kind === 'job_title' && $jobId !== null && $jobId !== ''): ?>
                                         <span class="status-chip status-neutral ms-2">Job ID: <?= esc($jobId) ?></span>
                                     <?php endif; ?>
+                                    <?php if ($kind === 'candidate'): ?>
+                                        <?php $dwms = (string) ($node['dwms_id'] ?? ''); ?>
+                                        <?php if ($dwms !== ''): ?>
+                                            <span class="status-chip status-neutral ms-2">DWMS: <?= esc($dwms) ?></span>
+                                        <?php endif; ?>
+                                        <?php if (($node['selection_status'] ?? '') !== ''): ?>
+                                            <span class="ms-2"><?= render_status_chip($node['selection_status']) ?></span>
+                                        <?php endif; ?>
+                                        <?php if (($node['joined_status'] ?? '') !== ''): ?>
+                                            <span class="ms-1"><?= render_status_chip($node['joined_status'], 'Joined:') ?></span>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
                                 </div>
                             </td>
                             <?php foreach ($metricKeys as $k): ?>
                                 <td class="text-end"><?= number_format((int) ($node['metrics'][$k] ?? 0)) ?></td>
                             <?php endforeach; ?>
+                            <td class="text-end">
+                                <?php if ($kind === 'candidate' && !empty($node['candidate_id'])): ?>
+                                    <a class="btn btn-sm btn-outline-primary" href="/manage_candidate.php?candidate_id=<?= (int) $node['candidate_id'] ?>"><i class="bi bi-pencil-square"></i> Manage</a>
+                                <?php endif; ?>
+                            </td>
                         </tr>
                         <?php if ($hasChildren) {
                             foreach ($node['children'] as $child) {
@@ -258,7 +296,8 @@ render_page_header('Job Titles', [
                                     'aggregator' => 'employer',
                                     'employer' => 'job_title',
                                     'job_title' => 'job_fair',
-                                    default => 'job_fair',
+                                    'job_fair' => 'candidate',
+                                    default => 'candidate',
                                 };
                                 $childCode = $childKind === 'employer' ? ($child['code'] ?? null) : null;
                                 $childJobId = $childKind === 'job_title' ? ($child['job_id'] ?? null) : null;
@@ -275,6 +314,7 @@ render_page_header('Job Titles', [
                         <?php foreach ($metricKeys as $k): ?>
                             <td class="text-end"><?= number_format($grandTotals[$k]) ?></td>
                         <?php endforeach; ?>
+                        <td></td>
                     </tr>
                 <?php endif; ?>
             </tbody>
