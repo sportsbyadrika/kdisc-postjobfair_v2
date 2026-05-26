@@ -105,11 +105,12 @@ function render_header(string $title, array $options = []): void
                                 </ul>
                             </li>
                             <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['phone_directory.php', 'job_fair_masters.php', 'job_fair_sdpk_centers.php', 'job_fair_job_stations.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-sliders me-1"></i>Masters</a>
+                                <a class="nav-link dropdown-toggle<?= $isActive(['phone_directory.php', 'job_fair_masters.php', 'job_fair_job_titles.php', 'job_fair_sdpk_centers.php', 'job_fair_job_stations.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-sliders me-1"></i>Masters</a>
                                 <ul class="dropdown-menu">
                                     <li><a class="dropdown-item" href="/phone_directory.php"><i class="bi bi-person-rolodex me-2"></i>Phone Directory</a></li>
                                     <li><a class="dropdown-item" href="/job_fair_masters.php"><i class="bi bi-diagram-3 me-2"></i>Employer and SPOC Mapping</a></li>
                                     <?php if (is_admin($user)): ?>
+                                        <li><a class="dropdown-item" href="/job_fair_job_titles.php"><i class="bi bi-diagram-2 me-2"></i>Job Titles</a></li>
                                         <li><a class="dropdown-item" href="/job_fair_sdpk_centers.php"><i class="bi bi-buildings me-2"></i>SDPK Centers</a></li>
                                         <li><a class="dropdown-item" href="/job_fair_job_stations.php"><i class="bi bi-geo-alt-fill me-2"></i>Job Stations</a></li>
                                     <?php endif; ?>
