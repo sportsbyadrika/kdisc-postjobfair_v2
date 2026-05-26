@@ -94,7 +94,7 @@ function render_header(string $title, array $options = []): void
                                 <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'activities.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'manage_candidate.php', 'crm_process.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
                                 <ul class="dropdown-menu">
                                     <li><a class="dropdown-item" href="/job_fair_results.php"><i class="bi bi-table me-2"></i>Job Fair Result Data</a></li>
-                                    <li><a class="dropdown-item" href="/crm_process.php"><i class="bi bi-kanban me-2"></i>CRM Process</a></li>
+                                    <li><a class="dropdown-item" href="/crm_process.php"><i class="bi bi-kanban me-2"></i>CRM Process (Employer)</a></li>
                                     <li><a class="dropdown-item" href="/activities.php"><i class="bi bi-list-task me-2"></i>Activities</a></li>
                                     <?php if (is_admin($user)): ?>
                                         <li><hr class="dropdown-divider"></li>
