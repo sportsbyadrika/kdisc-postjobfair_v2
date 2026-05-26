@@ -11,7 +11,16 @@ function fetch_candidate_district_options(): array
     return array_map(static fn(array $row): string => (string) $row['value'], db()->query($sql)->fetchAll());
 }
 
-function fetch_job_stations(string $districtFilter): array
+function fetch_job_station_job_fair_options(): array
+{
+    $sql = "SELECT DISTINCT Job_Fair_No AS value
+        FROM job_fair_result
+        WHERE Job_Fair_No IS NOT NULL AND TRIM(Job_Fair_No) <> ''
+        ORDER BY value ASC";
+    return array_map(static fn(array $row): string => (string) $row['value'], db()->query($sql)->fetchAll());
+}
+
+function fetch_job_stations(string $districtFilter, string $jobFairFilter): array
 {
     $conditions = [];
     $params = [];
@@ -23,6 +32,11 @@ function fetch_job_stations(string $districtFilter): array
             $conditions[] = "TRIM(COALESCE(Candidate_District, '')) = ?";
             $params[] = $districtFilter;
         }
+    }
+
+    if ($jobFairFilter !== '') {
+        $conditions[] = "TRIM(COALESCE(Job_Fair_No, '')) = ?";
+        $params[] = $jobFairFilter;
     }
 
     $whereClause = $conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions);
@@ -45,9 +59,10 @@ function fetch_job_stations(string $districtFilter): array
 }
 
 $districtFilter = trim((string) ($_GET['candidate_district'] ?? ''));
+$jobFairFilter = trim((string) ($_GET['job_fair'] ?? ''));
 
 if (($_GET['download'] ?? '') === 'csv') {
-    $rows = fetch_job_stations($districtFilter);
+    $rows = fetch_job_stations($districtFilter, $jobFairFilter);
     $filename = 'job_stations_' . date('Ymd_His') . '.csv';
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
@@ -69,11 +84,13 @@ if (($_GET['download'] ?? '') === 'csv') {
 }
 
 $districtOptions = fetch_candidate_district_options();
-$rows = fetch_job_stations($districtFilter);
+$jobFairOptions = fetch_job_station_job_fair_options();
+$rows = fetch_job_stations($districtFilter, $jobFairFilter);
 
 $downloadUrl = '/job_fair_job_stations.php?' . http_build_query(array_filter([
     'download' => 'csv',
     'candidate_district' => $districtFilter,
+    'job_fair' => $jobFairFilter,
 ], static fn($v): bool => $v !== ''));
 
 render_header('Job Stations', ['main_container_class' => 'container-fluid']);
@@ -94,6 +111,15 @@ render_page_header('Job Stations', [
                     <option value="">All Candidate Districts</option>
                     <?php foreach ($districtOptions as $option): ?>
                         <option value="<?= esc($option) ?>" <?= $districtFilter === $option ? 'selected' : '' ?>><?= esc($option) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="job_fair" class="form-label">Job Fair</label>
+                <select class="form-select" id="job_fair" name="job_fair">
+                    <option value="">All Job Fairs</option>
+                    <?php foreach ($jobFairOptions as $option): ?>
+                        <option value="<?= esc($option) ?>" <?= $jobFairFilter === $option ? 'selected' : '' ?>><?= esc($option) ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
