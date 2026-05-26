@@ -134,7 +134,8 @@ $whereClause = 'WHERE ' . implode(' AND ', $conditions);
 $sql = "SELECT id, Job_Fair_No, Job_Fair_Date, DWMS_ID, Candidate_Name, Mobile_Number,
         Candidate_District, SDPK_District, SDPK, Selection_Status, Shortlist_Candidate_Status,
         Candidate_Joined_Status, Candidate_Joined_Date, Candidate_Joining_Future_Date,
-        Candidate_Join_Remarks_Type, Remarks_Candidate_Join, Confirm_Offer_Letter_Receipt_by_Candidate
+        Candidate_Join_Remarks_Type, Remarks_Candidate_Join, Confirm_Offer_Letter_Receipt_by_Candidate,
+        Employer_ID, Employer_Name, Job_Id, Job_Title_Name, CRM_Member
     FROM job_fair_result
     $whereClause
     ORDER BY Candidate_District ASC, Job_Fair_Date DESC, Candidate_Name ASC";
@@ -184,25 +185,52 @@ if (($_GET['download'] ?? '') === 'csv') {
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     $out = fopen('php://output', 'w');
     fwrite($out, "\xEF\xBB\xBF");
-    $csvHeader = ['Sl No', 'DWMS ID', 'Candidate Name', 'Mobile', 'Job Fair No', 'Job Fair Date', 'Candidate District', 'SDPK District', 'Selection Status', 'Final Status'];
+    if ($check === 2) {
+        // Joined Yes missing date: extended employer / job / CRM columns, no Mobile,
+        // Candidate and SDPK districts merged into a single CSV column.
+        $csvHeader = ['Sl No', 'DWMS ID', 'Candidate Name', 'Job Fair No', 'Job Fair Date',
+            'Employer Code', 'Employer Name', 'Job ID', 'Job Title', 'CRM Member',
+            'Candidate District', 'SDPK District', 'Selection Status', 'Final Status'];
+    } else {
+        $csvHeader = ['Sl No', 'DWMS ID', 'Candidate Name', 'Mobile', 'Job Fair No', 'Job Fair Date', 'Candidate District', 'SDPK District', 'Selection Status', 'Final Status'];
+    }
     foreach ($activeDef['extra_columns'] as $label => $_) {
         $csvHeader[] = $label;
     }
     fputcsv($out, $csvHeader);
     $i = 1;
     foreach ($rows as $row) {
-        $line = [
-            $i++,
-            (string) ($row['DWMS_ID'] ?? ''),
-            (string) ($row['Candidate_Name'] ?? ''),
-            (string) ($row['Mobile_Number'] ?? ''),
-            (string) ($row['Job_Fair_No'] ?? ''),
-            (string) ($row['Job_Fair_Date'] ?? ''),
-            (string) ($row['Candidate_District'] ?? ''),
-            (string) ($row['SDPK_District'] ?? ''),
-            (string) ($row['Selection_Status'] ?? ''),
-            (string) ($row['Shortlist_Candidate_Status'] ?? ''),
-        ];
+        if ($check === 2) {
+            $line = [
+                $i++,
+                (string) ($row['DWMS_ID'] ?? ''),
+                (string) ($row['Candidate_Name'] ?? ''),
+                (string) ($row['Job_Fair_No'] ?? ''),
+                (string) ($row['Job_Fair_Date'] ?? ''),
+                (string) ($row['Employer_ID'] ?? ''),
+                (string) ($row['Employer_Name'] ?? ''),
+                (string) ($row['Job_Id'] ?? ''),
+                (string) ($row['Job_Title_Name'] ?? ''),
+                (string) ($row['CRM_Member'] ?? ''),
+                (string) ($row['Candidate_District'] ?? ''),
+                (string) ($row['SDPK_District'] ?? ''),
+                (string) ($row['Selection_Status'] ?? ''),
+                (string) ($row['Shortlist_Candidate_Status'] ?? ''),
+            ];
+        } else {
+            $line = [
+                $i++,
+                (string) ($row['DWMS_ID'] ?? ''),
+                (string) ($row['Candidate_Name'] ?? ''),
+                (string) ($row['Mobile_Number'] ?? ''),
+                (string) ($row['Job_Fair_No'] ?? ''),
+                (string) ($row['Job_Fair_Date'] ?? ''),
+                (string) ($row['Candidate_District'] ?? ''),
+                (string) ($row['SDPK_District'] ?? ''),
+                (string) ($row['Selection_Status'] ?? ''),
+                (string) ($row['Shortlist_Candidate_Status'] ?? ''),
+            ];
+        }
         foreach ($activeDef['extra_columns'] as $col) {
             $line[] = (string) ($row[$col['field']] ?? '');
         }
@@ -300,14 +328,25 @@ render_page_header('Discrepancy Report', [
     </div>
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
+            <?php $isJoinedYesCheck = $check === 2; ?>
             <thead>
                 <tr>
                     <th>Sl No</th>
                     <th>Candidate</th>
-                    <th>Mobile</th>
+                    <?php if ($isJoinedYesCheck): ?>
+                        <th>Employer</th>
+                        <th>Job</th>
+                        <th>CRM Member</th>
+                    <?php else: ?>
+                        <th>Mobile</th>
+                    <?php endif; ?>
                     <th>Job Fair</th>
-                    <th>Candidate District</th>
-                    <th>SDPK District</th>
+                    <?php if ($isJoinedYesCheck): ?>
+                        <th>Districts</th>
+                    <?php else: ?>
+                        <th>Candidate District</th>
+                        <th>SDPK District</th>
+                    <?php endif; ?>
                     <th>Selection Status</th>
                     <th>Final Status</th>
                     <?php foreach ($activeDef['extra_columns'] as $label => $_): ?>
@@ -317,7 +356,7 @@ render_page_header('Discrepancy Report', [
                 </tr>
             </thead>
             <tbody>
-                <?php $colCount = 9 + count($activeDef['extra_columns']); ?>
+                <?php $colCount = ($isJoinedYesCheck ? 10 : 9) + count($activeDef['extra_columns']); ?>
                 <?php if ($rows === []): ?>
                     <tr><td colspan="<?= $colCount ?>"><div class="empty-state"><i class="bi bi-check2-circle"></i>No discrepancies found for this check with the selected filters.</div></td></tr>
                 <?php endif; ?>
@@ -328,13 +367,32 @@ render_page_header('Discrepancy Report', [
                             <div class="fw-semibold"><?= esc((string) $row['Candidate_Name']) ?></div>
                             <div class="small text-muted"><?= esc((string) $row['DWMS_ID']) ?></div>
                         </td>
-                        <td><?= esc((string) $row['Mobile_Number']) ?></td>
+                        <?php if ($isJoinedYesCheck): ?>
+                            <td>
+                                <div class="fw-semibold"><?= esc((string) ($row['Employer_ID'] ?? '')) ?></div>
+                                <div class="small text-muted"><?= esc((string) ($row['Employer_Name'] ?? '')) ?></div>
+                            </td>
+                            <td>
+                                <div class="fw-semibold"><?= esc((string) ($row['Job_Id'] ?? '')) ?></div>
+                                <div class="small text-muted"><?= esc((string) ($row['Job_Title_Name'] ?? '')) ?></div>
+                            </td>
+                            <td><?= esc((string) ($row['CRM_Member'] ?? '')) ?></td>
+                        <?php else: ?>
+                            <td><?= esc((string) $row['Mobile_Number']) ?></td>
+                        <?php endif; ?>
                         <td>
                             <div><?= esc((string) ($row['Job_Fair_No'] ?: 'N/A')) ?></div>
                             <div class="small text-muted"><?= $row['Job_Fair_Date'] ? esc(date('d M Y', strtotime((string) $row['Job_Fair_Date']))) : '' ?></div>
                         </td>
-                        <td><?= esc((string) ($row['Candidate_District'] ?? '')) ?></td>
-                        <td><?= esc((string) ($row['SDPK_District'] ?? '')) ?></td>
+                        <?php if ($isJoinedYesCheck): ?>
+                            <td>
+                                <div><span class="small text-muted">Cand:</span> <?= esc((string) ($row['Candidate_District'] ?? '')) ?></div>
+                                <div><span class="small text-muted">SDPK:</span> <?= esc((string) ($row['SDPK_District'] ?? '')) ?></div>
+                            </td>
+                        <?php else: ?>
+                            <td><?= esc((string) ($row['Candidate_District'] ?? '')) ?></td>
+                            <td><?= esc((string) ($row['SDPK_District'] ?? '')) ?></td>
+                        <?php endif; ?>
                         <td><?= render_status_chip($row['Selection_Status']) ?></td>
                         <td><?= render_status_chip($row['Shortlist_Candidate_Status']) ?></td>
                         <?php foreach ($activeDef['extra_columns'] as $col): ?>
