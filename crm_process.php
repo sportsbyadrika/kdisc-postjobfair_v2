@@ -4,7 +4,7 @@ require_once __DIR__ . '/includes/layout.php';
 require_auth();
 
 $currentUser = current_user();
-if (is_district_user($currentUser)) {
+if (!is_admin($currentUser)) {
     http_response_code(403);
     exit('Forbidden');
 }
