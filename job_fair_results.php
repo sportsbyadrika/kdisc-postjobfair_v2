@@ -114,6 +114,7 @@ $jobFairResultColumnDefinitions = [
     'Shortlist_remarks' => "VARCHAR(1000) AFTER Shortlist_Candidate_Status",
     'Candidate_Joining_Future_Date' => "DATE AFTER Candidate_Joined_Date",
     'Candidate_Join_Remarks_Type' => "VARCHAR(255) AFTER Remarks_Candidate_Join",
+    'Offer_Letter_Salary' => "VARCHAR(255) AFTER Offer_Letter_Join_Date",
 ];
 foreach ($jobFairResultColumnDefinitions as $columnName => $columnDefinition) {
     $escapedColumnName = str_replace("'", "\\'", $columnName);
@@ -121,6 +122,12 @@ foreach ($jobFairResultColumnDefinitions as $columnName => $columnDefinition) {
     if ($columnStmt->fetchAll() === []) {
         db()->query("ALTER TABLE job_fair_result ADD COLUMN {$columnName} {$columnDefinition}");
     }
+}
+
+$willingToJoinColumnRows = db()->query("SHOW COLUMNS FROM job_fair_result LIKE 'Willing_to_Join'")->fetchAll();
+$willingToJoinType = strtolower((string) ($willingToJoinColumnRows[0]['Type'] ?? ''));
+if ($willingToJoinType !== '' && (!str_contains($willingToJoinType, "'may be'") || !str_contains($willingToJoinType, "'future date'"))) {
+    db()->query("ALTER TABLE job_fair_result MODIFY COLUMN Willing_to_Join ENUM('Yes','No','May be','Future date')");
 }
 
 $candidateJoinedStatusColumnRows = db()->query("SHOW COLUMNS FROM job_fair_result LIKE 'Candidate_Joined_Status'")->fetchAll();
@@ -336,7 +343,7 @@ $editableFieldConfig = [
     [
         'panel_label' => 'Selected',
         'field_name' => 'First_Call_Date',
-        'field_type' => 'label',
+        'field_type' => 'Date textbox',
         'group_label' => 'Employer First Call',
         'row_position' => 1,
         'column_position' => 1,
@@ -423,11 +430,19 @@ $editableFieldConfig = [
     ],
     [
         'panel_label' => 'Selected',
-        'field_name' => 'Willing_to_Join',
-        'field_type' => "enum('Yes','No')",
+        'field_name' => 'Offer_Letter_Salary',
+        'field_type' => 'varchar(255)',
         'group_label' => 'Offer Letter Link',
         'row_position' => 5,
         'column_position' => 3,
+    ],
+    [
+        'panel_label' => 'Selected',
+        'field_name' => 'Willing_to_Join',
+        'field_type' => "enum('Yes','No','May be','Future date')",
+        'group_label' => 'Offer Letter Link',
+        'row_position' => 6,
+        'column_position' => 0,
     ],
     [
         'panel_label' => 'Selected',

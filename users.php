@@ -118,7 +118,7 @@ render_page_header('User Management', [
         </div>
         <div class="col-6 col-md-2">
             <label class="form-label">Role</label>
-            <select class="form-select" name="role"><option value="">All Roles</option><option value="administrator" <?= $filterRole==='administrator'?'selected':'' ?>>Administrator</option><option value="crm_member" <?= $filterRole==='crm_member'?'selected':'' ?>>CRM Member</option><option value="district_user" <?= $filterRole==='district_user'?'selected':'' ?>>District User</option></select>
+            <select class="form-select" name="role"><option value="">All Roles</option><option value="administrator" <?= $filterRole==='administrator'?'selected':'' ?>>Administrator</option><option value="state_dsm" <?= $filterRole==='state_dsm'?'selected':'' ?>>State DSM</option><option value="crm_member" <?= $filterRole==='crm_member'?'selected':'' ?>>CRM Member</option><option value="district_user" <?= $filterRole==='district_user'?'selected':'' ?>>District User</option></select>
         </div>
         <div class="col-6 col-md-2">
             <label class="form-label">Status</label>
@@ -183,7 +183,7 @@ render_page_header('User Management', [
             <input type="hidden" name="id" id="userId">
             <div class="row g-2">
                 <div class="col-md-6"><label class="form-label">Name</label><input class="form-control" name="name" id="name" required></div>
-                <div class="col-md-6"><label class="form-label">Role</label><select class="form-select" name="role" id="role"><option value="administrator">Administrator</option><option value="crm_member">CRM Member</option><option value="district_user">District User</option></select></div>
+                <div class="col-md-6"><label class="form-label">Role</label><select class="form-select" name="role" id="role"><option value="administrator">Administrator</option><option value="state_dsm">State DSM</option><option value="crm_member">CRM Member</option><option value="district_user">District User</option></select></div>
                 <div class="col-md-6"><label class="form-label">Mobile</label><input class="form-control" name="mobile_number" id="mobile" required></div>
                 <div class="col-md-6"><label class="form-label">Email</label><input class="form-control" type="email" name="email" id="email"></div>
                 <div class="col-md-12"><label class="form-label">Address</label><textarea class="form-control" name="address" id="address"></textarea></div>
