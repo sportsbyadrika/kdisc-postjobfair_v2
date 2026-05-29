@@ -67,7 +67,6 @@ function notifications_user_in_target_audience(array $user, ?string $toWhom, ?in
 
 function notifications_can_view(int $activityId, array $user, array $rolesByToWhom): bool
 {
-    if (is_admin($user)) return true;
     $s = db()->prepare('SELECT owner_user_id, to_whom, read_by, target_user_id FROM activities WHERE id = ?');
     $s->execute([$activityId]);
     $row = $s->fetch();
@@ -190,18 +189,20 @@ $sql = 'SELECT a.*, u.name AS owner_name, t.name AS target_user_name,
     WHERE 1=1';
 $params = [];
 
-// Visibility: admins (incl. State DSM) see everything; others see notifications
-// either they own, or that are addressed to their role group with read_by =
-// "any" or specifically to their user id.
-if (!is_admin($user)) {
-    $role = (string) ($user['role'] ?? '');
-    $uid = (int) ($user['id'] ?? 0);
-    $roleToWhom = array_search($role, $rolesByToWhom, true) ?: '';
-    $sql .= ' AND (a.owner_user_id = ? OR (a.to_whom = ? AND (a.read_by = ' . "'any'" . ' OR a.target_user_id = ?)))';
-    $params[] = $uid;
-    $params[] = $roleToWhom;
-    $params[] = $uid;
-}
+// Strict audience visibility. Everyone (including administrators and State
+// DSM) sees only:
+//   - notifications they own (so the sender always sees their own thread)
+//   - notifications addressed to their role group with read_by = 'any'
+//   - notifications specifically targeted at their user id
+// Anything outside this is hidden, so specific notifications stay private to
+// the named recipient and group messages stay inside that group.
+$role = (string) ($user['role'] ?? '');
+$uid = (int) ($user['id'] ?? 0);
+$roleToWhom = array_search($role, $rolesByToWhom, true) ?: '';
+$sql .= ' AND (a.owner_user_id = ? OR (a.to_whom = ? AND (a.read_by = ' . "'any'" . ' OR a.target_user_id = ?)))';
+$params[] = $uid;
+$params[] = $roleToWhom;
+$params[] = $uid;
 if ($filterModule !== '') {
     $sql .= ' AND a.module_name = ?';
     $params[] = $filterModule;
@@ -281,7 +282,7 @@ $replyCount = (int) ($r['reply_count'] ?? 0);
     <td>
         <div class="d-flex gap-1 justify-content-end">
             <button class="btn btn-sm btn-outline-primary" onclick="openViewModal(<?= (int) $r['id'] ?>)"><i class="bi bi-eye"></i> View</button>
-            <?php if (((int) $r['owner_user_id'] === (int) $user['id']) || is_admin($user)): ?>
+            <?php if ((int) $r['owner_user_id'] === (int) $user['id']): ?>
                 <button class="btn btn-sm btn-outline-secondary" onclick='openEditModal(<?= json_encode($r, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'><i class="bi bi-pencil"></i> Edit</button>
                 <?php if ($r['active_status']): ?>
                     <form method="post" class="d-inline"><input type="hidden" name="action" value="deactivate"><input type="hidden" name="id" value="<?= (int) $r['id'] ?>"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-x-circle"></i> Close</button></form>

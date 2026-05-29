@@ -122,22 +122,20 @@ $districtTotals = [
 ];
 
 /* ---- Role-tailored KPI definitions ---- */
-// Count notifications visible to the logged-in user (mirrors the visibility
-// logic in notifications.php). Used as a dashboard KPI.
+// Count notifications visible to the logged-in user (mirrors the strict
+// visibility logic in notifications.php). Same rule for every role - admin
+// included - so specific notifications stay with the named recipient and
+// group messages stay inside the group.
 $rolesByToWhom = ['State CRM' => 'crm_member', 'State DSM' => 'state_dsm', 'District User' => 'district_user'];
 $myNotificationCount = 0;
 try {
-    if (is_admin($user)) {
-        $myNotificationCount = (int) db()->query("SELECT COUNT(*) FROM activities WHERE active_status = 1 AND status <> 'closed'")->fetchColumn();
-    } else {
-        $roleToWhom = array_search((string) ($user['role'] ?? ''), $rolesByToWhom, true) ?: '';
-        $cs = db()->prepare(
-            "SELECT COUNT(*) FROM activities WHERE active_status = 1 AND status <> 'closed'
-             AND (owner_user_id = ? OR (to_whom = ? AND (read_by = 'any' OR target_user_id = ?)))"
-        );
-        $cs->execute([(int) $user['id'], $roleToWhom, (int) $user['id']]);
-        $myNotificationCount = (int) $cs->fetchColumn();
-    }
+    $roleToWhom = array_search((string) ($user['role'] ?? ''), $rolesByToWhom, true) ?: '';
+    $cs = db()->prepare(
+        "SELECT COUNT(*) FROM activities WHERE active_status = 1 AND status <> 'closed'
+         AND (owner_user_id = ? OR (to_whom = ? AND (read_by = 'any' OR target_user_id = ?)))"
+    );
+    $cs->execute([(int) $user['id'], $roleToWhom, (int) $user['id']]);
+    $myNotificationCount = (int) $cs->fetchColumn();
 } catch (Throwable $e) {
     $myNotificationCount = 0;
 }
