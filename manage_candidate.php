@@ -810,10 +810,6 @@ function renderCallHistoryFloater(row) {
     closeBtn?.addEventListener('click', () => floater.classList.remove('show'));
     minBtn?.addEventListener('click', () => floater.classList.toggle('minimised'));
 
-    // Open Call History floater automatically on page load so the CRM
-    // member starts with both panels visible.
-    floater.classList.add('show');
-
     let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
     header.addEventListener('mousedown', (e) => {
         if (e.target.closest('button')) return;
@@ -853,6 +849,52 @@ function dlLine(label, value, extraChip) {
 
 function dlLineRaw(label, htmlValue) {
     return `<div class="detail-line"><span class="dl-label">${escapeHtml(label)}</span><span class="dl-value">${htmlValue}</span></div>`;
+}
+
+/**
+ * Maps each panel group to the field that best represents its overall
+ * completion, then translates that field's value into a coloured status
+ * indicator (tick / hourglass / cross / dot) on the group card header.
+ * Mirrors the post job fair milestone colour logic.
+ */
+const GROUP_PRIMARY_FIELD = {
+    'Employer First Call': 'First_Call_Done',
+    'Offer Letter Generation': 'Offer_Letter_Generated',
+    'Offer Letter Link': 'Link_to_Offer_letter_verified',
+    'Offer Confirmation': 'Confirm_Offer_Letter_Receipt_by_Candidate',
+    'Employer Response': 'response_from_employer',
+    'Challenges to report': 'Challenge_to_be_addressed',
+    'Candidate Joined details': 'Candidate_Joined_Status',
+    'Shortlist Process': 'Shortlist_Candidate_Status',
+};
+
+function groupHeaderStatus(groupLabel, row) {
+    const primaryField = GROUP_PRIMARY_FIELD[groupLabel];
+    if (!primaryField) return '';
+    let state;
+    const value = row[primaryField];
+    // Free-text groups: any non-empty value counts as complete.
+    if (groupLabel === 'Employer Response' || groupLabel === 'Challenges to report') {
+        state = String(value || '').trim() !== '' ? 'done' : 'pending';
+    } else if (groupLabel === 'Offer Confirmation') {
+        // Done only when both receipt confirmed AND willing to join are Yes.
+        const recv = String(row.Confirm_Offer_Letter_Receipt_by_Candidate || '').toLowerCase().trim();
+        const wtj = String(row.Willing_to_Join || '').toLowerCase().trim();
+        if (recv === 'yes' && wtj === 'yes') state = 'done';
+        else if (recv === 'no' || wtj === 'no') state = 'failed';
+        else if (recv === '' && wtj === '') state = 'pending';
+        else state = 'inprogress';
+    } else {
+        state = milestoneState(value, '');
+    }
+    const cfg = {
+        done:       { icon: 'bi-check-circle-fill', cls: 'text-success', label: 'Done' },
+        failed:     { icon: 'bi-x-circle-fill',     cls: 'text-danger',  label: 'Closed - No' },
+        inprogress: { icon: 'bi-hourglass-split',   cls: 'text-warning', label: 'In progress' },
+        current:    { icon: 'bi-circle-fill',       cls: 'text-primary', label: 'Current' },
+        pending:    { icon: 'bi-circle',            cls: 'text-muted',   label: 'Pending' },
+    }[state] || { icon: 'bi-circle', cls: 'text-muted', label: 'Pending' };
+    return `<span class="d-inline-flex align-items-center small" title="${escapeHtml(cfg.label)}"><i class="bi ${cfg.icon} ${cfg.cls}"></i></span>`;
 }
 
 function renderPanels(row) {
@@ -963,10 +1005,13 @@ function renderPanels(row) {
         const groupHtml = groups.map((g) => {
             const fields = panelFields.filter((f) => f.group_label === g).sort((a,b) => (a.row_position-b.row_position) || (a.column_position-b.column_position));
             const isChallenges = String(g || '').toLowerCase().includes('challenge');
-            const headerExtra = isChallenges
-                ? `<button type="button" class="btn btn-sm btn-outline-warning ms-auto" onclick="openCandidateNotificationModal(${row.id})"><i class="bi bi-bell me-1"></i>Notification</button>`
+            const statusChip = groupHeaderStatus(g, row);
+            const notifBtn = isChallenges
+                ? `<button type="button" class="btn btn-sm btn-outline-warning" onclick="openCandidateNotificationModal(${row.id})"><i class="bi bi-bell me-1"></i>Notification</button>`
                 : '';
-            return `<div class="card mb-3"><div class="card-header d-flex align-items-center">${escapeHtml(g)}${headerExtra}</div><div class="card-body"><div class="row g-3">${fields.map((f) => `<div class="col-12 col-md-4">${renderFieldControl(f,row)}</div>`).join('')}</div></div></div>`;
+            // Two-column layout for the new Offer Letter Link / Offer Confirmation pair so they sit side by side.
+            const colCls = (g === 'Offer Letter Link' || g === 'Offer Confirmation') ? 'col-12 col-md-6' : 'col-12 col-md-4';
+            return `<div class="card mb-3"><div class="card-header d-flex align-items-center"><span>${escapeHtml(g)}</span><div class="ms-auto d-flex align-items-center gap-2">${statusChip}${notifBtn}</div></div><div class="card-body"><div class="row g-3">${fields.map((f) => `<div class="${colCls}">${renderFieldControl(f,row)}</div>`).join('')}</div></div></div>`;
         }).join('');
         const updateSection = panel === 'Shortlist/Onhold' ? 'shortlist_onhold' : 'selected';
         const shortlistRoundsHtml = panel === 'Shortlist/Onhold' ? '<div id="shortlistRoundsSection" data-editing-id=""></div>' : '';
