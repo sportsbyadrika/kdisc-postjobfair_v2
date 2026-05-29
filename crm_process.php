@@ -109,6 +109,27 @@ if (is_post() && ($_POST['action'] ?? '') === 'update_status') {
 }
 
 /* ------------------------------------------------------------------------- *
+ * First-load defaults: when the page is opened fresh (no filter params in
+ * the URL), pre-select the latest Job Fair and Selection Status = Selected.
+ * AJAX and POST flows above are unaffected; they only run when their own
+ * params are present.
+ * ------------------------------------------------------------------------- */
+$noFilterParams = !array_key_exists('job_fair', $_GET)
+    && !array_key_exists('selection_status', $_GET)
+    && !array_key_exists('final_status', $_GET);
+if ($noFilterParams) {
+    $latestJobFair = (string) (db()->query(
+        "SELECT Job_Fair_No FROM job_fair_result
+         WHERE Job_Fair_No IS NOT NULL AND TRIM(Job_Fair_No) <> ''
+         ORDER BY Job_Fair_No DESC LIMIT 1"
+    )->fetchColumn() ?: '');
+    if ($latestJobFair !== '') {
+        $jobFair = $latestJobFair;
+    }
+    $selectionStatusFilter = 'Selected';
+}
+
+/* ------------------------------------------------------------------------- *
  * Page render: filter form, left tree (Aggregator -> Employer), right
  * kanban board area populated on demand by JS.
  * ------------------------------------------------------------------------- */
