@@ -894,6 +894,7 @@ if (isset($_GET['manage_candidate_meta'])) {
     exit;
 }
 
+$selectionStatusParamProvided = array_key_exists('selection_status', $_GET);
 $rawSelectionStatusFilter = $_GET['selection_status'] ?? [];
 if (!is_array($rawSelectionStatusFilter)) {
     $rawSelectionStatusFilter = $rawSelectionStatusFilter === '' ? [] : [$rawSelectionStatusFilter];
@@ -928,6 +929,19 @@ $page = max((int) ($_GET['page'] ?? 1), 1);
 $perPage = 25;
 
 $selectionStatuses = db()->query("SELECT DISTINCT Selection_Status FROM job_fair_result WHERE Selection_Status IS NOT NULL AND Selection_Status <> '' ORDER BY Selection_Status")->fetchAll();
+
+// First load (no selection_status param in URL): pre-tick "Selected",
+// "Shortlisted" and any On Hold variant (matched case-insensitively against
+// the distinct list so whichever spelling exists in the data wins).
+if (!$selectionStatusParamProvided) {
+    foreach ($selectionStatuses as $statusRow) {
+        $value = (string) $statusRow['Selection_Status'];
+        $key = strtolower(str_replace(' ', '', $value));
+        if (in_array($key, ['selected', 'shortlisted', 'onhold'], true)) {
+            $selectionStatusFilters[] = $value;
+        }
+    }
+}
 $jobFairNos = db()->query("SELECT DISTINCT Job_Fair_No FROM job_fair_result WHERE Job_Fair_No IS NOT NULL AND Job_Fair_No <> '' ORDER BY Job_Fair_No DESC")->fetchAll();
 $employerNames = db()->query("SELECT DISTINCT Employer_Name FROM job_fair_result WHERE Employer_Name IS NOT NULL AND Employer_Name <> '' ORDER BY Employer_Name")->fetchAll();
 $aggregators = db()->query("SELECT DISTINCT Aggregator FROM job_fair_result WHERE Aggregator IS NOT NULL AND Aggregator <> '' ORDER BY Aggregator")->fetchAll();
