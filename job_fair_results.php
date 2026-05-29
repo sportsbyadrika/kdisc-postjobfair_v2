@@ -879,7 +879,14 @@ if (isset($_GET['manage_candidate_meta'])) {
     exit;
 }
 
-$selectionStatusFilter = trim($_GET['selection_status'] ?? '');
+$rawSelectionStatusFilter = $_GET['selection_status'] ?? [];
+if (!is_array($rawSelectionStatusFilter)) {
+    $rawSelectionStatusFilter = $rawSelectionStatusFilter === '' ? [] : [$rawSelectionStatusFilter];
+}
+$selectionStatusFilters = array_values(array_filter(
+    array_map(static fn($v): string => trim((string) $v), $rawSelectionStatusFilter),
+    static fn(string $v): bool => $v !== ''
+));
 $jobFairNoFilter = trim($_GET['job_fair_no'] ?? '');
 $dwmsIdFilter = trim($_GET['dwms_id'] ?? '');
 $candidateNameFilter = trim($_GET['candidate_name'] ?? '');
@@ -941,9 +948,12 @@ $categories = db()->query("SELECT DISTINCT Category FROM job_fair_result WHERE C
 $whereSql = ' FROM job_fair_result WHERE 1=1';
 $params = [];
 
-if ($selectionStatusFilter !== '') {
-    $whereSql .= ' AND Selection_Status = ?';
-    $params[] = $selectionStatusFilter;
+if ($selectionStatusFilters !== []) {
+    $placeholders = implode(',', array_fill(0, count($selectionStatusFilters), '?'));
+    $whereSql .= " AND Selection_Status IN ($placeholders)";
+    foreach ($selectionStatusFilters as $sv) {
+        $params[] = $sv;
+    }
 }
 if ($jobFairNoFilter !== '') {
     $whereSql .= ' AND Job_Fair_No = ?';
@@ -1063,16 +1073,19 @@ $advancedFiltersActive = ($dsmMember1Filter !== '')
                 <i class="bi bi-sliders me-1"></i>Advanced filters
             </button>
         </div>
-        <div class="row g-3">
-            <div class="col-12 col-md-4 col-lg-2">
-                <label class="form-label">Selection Status</label>
-                <select class="form-select" name="selection_status">
-                    <option value="">All</option>
-                    <?php foreach ($selectionStatuses as $status): ?>
-                        <option value="<?= esc($status['Selection_Status']) ?>" <?= $selectionStatusFilter === $status['Selection_Status'] ? 'selected' : '' ?>><?= esc($status['Selection_Status']) ?></option>
-                    <?php endforeach; ?>
-                </select>
+        <div class="border rounded p-2 mb-3 bg-light-subtle">
+            <div class="d-flex flex-wrap align-items-center gap-3">
+                <span class="form-label mb-0 me-1"><i class="bi bi-ui-checks me-1"></i>Selection Status</span>
+                <?php foreach ($selectionStatuses as $status): ?>
+                    <?php $sv = (string) $status['Selection_Status']; $cbId = 'selstat-' . md5($sv); ?>
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input" type="checkbox" name="selection_status[]" value="<?= esc($sv) ?>" id="<?= esc($cbId) ?>" <?= in_array($sv, $selectionStatusFilters, true) ? 'checked' : '' ?>>
+                        <label class="form-check-label" for="<?= esc($cbId) ?>"><?= esc($sv) ?></label>
+                    </div>
+                <?php endforeach; ?>
             </div>
+        </div>
+        <div class="row g-3">
             <div class="col-12 col-md-4 col-lg-2">
                 <label class="form-label">Shortlist Candidate Status</label>
                 <select class="form-select" name="shortlist_candidate_status">

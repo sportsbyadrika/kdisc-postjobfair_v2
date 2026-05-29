@@ -32,7 +32,8 @@ render_header('Manage Candidate');
 render_page_header('Manage Candidate', [
     'icon' => 'bi-person-vcard',
     'subtitle' => ($candidate['Candidate_Name'] ?: 'N/A') . ' · DWMS ID ' . ($candidate['DWMS_ID'] ?: 'N/A'),
-    'actions' => '<a class="btn btn-light" href="' . esc($returnUrl) . '"><i class="bi bi-arrow-left me-1"></i>Back to Results</a>',
+    'actions' => '<button type="button" class="btn btn-outline-primary me-1" id="openCallHistoryFloaterBtn"><i class="bi bi-telephone-fill me-1"></i>Call History</button>'
+        . '<a class="btn btn-light" href="' . esc($returnUrl) . '"><i class="bi bi-arrow-left me-1"></i>Back to Results</a>',
 ]);
 ?>
 
@@ -56,6 +57,37 @@ render_page_header('Manage Candidate', [
 
     <div id="dynamicPanels"></div>
 </form>
+
+<div id="callHistoryFloater" aria-hidden="true">
+    <div class="ch-header" id="callHistoryFloaterHeader">
+        <span class="fw-semibold"><i class="bi bi-telephone-fill me-1 text-primary"></i>Call History</span>
+        <div class="d-flex gap-1">
+            <button type="button" class="btn btn-sm btn-link p-0 text-muted" id="callHistoryFloaterMinimise" aria-label="Minimise" title="Minimise"><i class="bi bi-dash-square"></i></button>
+            <button type="button" class="btn btn-sm btn-link p-0 text-muted" id="callHistoryFloaterClose" aria-label="Close" title="Close"><i class="bi bi-x-square"></i></button>
+        </div>
+    </div>
+    <div class="ch-body" id="callHistoryFloaterBody">
+        <div class="text-muted small">Loading...</div>
+    </div>
+</div>
+
+<style>
+.detail-group { padding: .25rem .5rem; height: 100%; }
+.detail-group-title { font-size: .7rem; text-transform: uppercase; color: var(--pjf-muted, #64748b); letter-spacing: .04em; font-weight: 600; margin-bottom: .35rem; padding-bottom: .25rem; border-bottom: 1px solid var(--pjf-border, #e2e8f0); }
+.detail-line { display: flex; justify-content: space-between; gap: .5rem; padding: 3px 0; }
+.detail-line + .detail-line { border-top: 1px dashed var(--pjf-border, #e2e8f0); }
+.dl-label { font-size: .72rem; color: var(--pjf-muted, #64748b); flex: 0 0 auto; }
+.dl-value { font-size: .82rem; font-weight: 500; text-align: right; word-break: break-word; }
+.dl-value .small-chip { font-size: .65rem; padding: 1px 6px; border-radius: 10px; background: var(--pjf-primary-soft, #eff4ff); color: var(--pjf-primary-dark, #1d4ed8); margin-left: .35rem; }
+#callHistoryFloater { position: fixed; top: 110px; right: 20px; width: 520px; max-width: 95vw; max-height: 78vh; background: #fff; border: 1px solid var(--pjf-border, #e2e8f0); border-radius: 10px; box-shadow: 0 12px 32px rgba(15, 23, 42, .18); z-index: 1055; display: none; flex-direction: column; }
+#callHistoryFloater.show { display: flex; }
+#callHistoryFloater.minimised .ch-body { display: none; }
+#callHistoryFloater .ch-header { padding: .5rem .75rem; background: var(--pjf-surface-alt, #f8fafc); border-bottom: 1px solid var(--pjf-border, #e2e8f0); border-radius: 10px 10px 0 0; cursor: move; user-select: none; display: flex; justify-content: space-between; align-items: center; }
+#callHistoryFloater .ch-body { padding: .75rem; overflow-y: auto; flex: 1 1 auto; }
+@media (max-width: 575.98px) {
+    #callHistoryFloater { left: 10px; right: 10px; width: auto; }
+}
+</style>
 
 <script>
 const candidateId = <?= json_encode($candidateId) ?>;
@@ -348,48 +380,147 @@ function loadShortlistRounds() {
         });
 }
 
+function renderCallHistoryFloater(row) {
+    const body = document.getElementById('callHistoryFloaterBody');
+    if (!body) return;
+    body.innerHTML = `
+        <div class="card mb-2"><div class="card-header py-2 small">Add Call Detail</div><div class="card-body p-2"><div class="row g-2">
+            <div class="col-md-6"><label class="form-label small mb-1">Stage</label><select class="form-select form-select-sm" name="call_history_stage" form="manageCandidateForm"><option value="">Select</option><option>Employer Connect</option><option>Candidate Connect</option><option>Aggregator Contact</option></select></div>
+            <div class="col-md-6"><label class="form-label small mb-1">Purpose</label><select class="form-select form-select-sm" name="call_history_purpose_id" form="manageCandidateForm"><option value="">Select</option>${callHistoryPurposeOptions.map((o) => `<option value="${o.id}">${escapeHtml(o.purpose_name)}</option>`).join('')}</select></div>
+            <div class="col-md-6"><label class="form-label small mb-1">Call Date Time</label><input type="datetime-local" class="form-control form-control-sm" name="call_history_call_datetime" value="${nowIstInput()}" readonly form="manageCandidateForm"></div>
+            <div class="col-md-6"><label class="form-label small mb-1">Call Status</label><select class="form-select form-select-sm" name="call_history_call_status" form="manageCandidateForm"><option value="">Select</option><option>Attended</option><option>Not attended</option><option>Invalid number</option></select></div>
+            <div class="col-12"><label class="form-label small mb-1">Call Remarks</label><textarea class="form-control form-control-sm" name="call_history_call_remarks" rows="2" form="manageCandidateForm"></textarea></div>
+        </div>
+        <div class="d-flex justify-content-end mt-2"><button type="submit" class="btn btn-primary btn-sm" name="update_section" value="call_history" formnovalidate form="manageCandidateForm"><i class="bi bi-plus-lg me-1"></i>Add Call History</button></div>
+        </div></div>
+
+        <div class="card mb-2"><div class="card-header py-2 small">Call History</div><div class="card-body p-0"><div class="table-responsive" style="max-height: 22vh;"><table class="table table-sm mb-0"><thead class="sticky-top bg-light"><tr><th>#</th><th>Stage</th><th>Purpose</th><th>Date</th><th>Status</th><th>Remarks</th></tr></thead><tbody id="callHistoryBody"></tbody></table></div></div></div>
+
+        <div class="card"><div class="card-header py-2 small">Activity Log</div><div class="card-body p-0"><div class="table-responsive" style="max-height: 22vh;"><table class="table table-sm mb-0"><thead class="sticky-top bg-light"><tr><th>#</th><th>Section</th><th>Type</th><th>Details</th><th>By</th><th>At</th></tr></thead><tbody id="activityLogBody"></tbody></table></div></div></div>
+    `;
+}
+
+(function initCallHistoryFloater() {
+    const floater = document.getElementById('callHistoryFloater');
+    const header = document.getElementById('callHistoryFloaterHeader');
+    const openBtn = document.getElementById('openCallHistoryFloaterBtn');
+    const closeBtn = document.getElementById('callHistoryFloaterClose');
+    const minBtn = document.getElementById('callHistoryFloaterMinimise');
+    if (!floater || !header) return;
+
+    openBtn?.addEventListener('click', () => {
+        floater.classList.add('show');
+        floater.classList.remove('minimised');
+    });
+    closeBtn?.addEventListener('click', () => floater.classList.remove('show'));
+    minBtn?.addEventListener('click', () => floater.classList.toggle('minimised'));
+
+    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    header.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button')) return;
+        dragging = true;
+        const rect = floater.getBoundingClientRect();
+        sx = e.clientX; sy = e.clientY; ox = rect.left; oy = rect.top;
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        floater.style.left = (ox + e.clientX - sx) + 'px';
+        floater.style.top = Math.max(0, oy + e.clientY - sy) + 'px';
+        floater.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', () => { dragging = false; });
+})();
+
+function daysFromTodayLabel(dateStr) {
+    if (!dateStr) return '';
+    const text = String(dateStr).replace(' ', 'T');
+    const d = new Date(text);
+    if (Number.isNaN(d.getTime())) return '';
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.round((target - today) / (24 * 60 * 60 * 1000));
+    if (diffDays === 0) return 'Today';
+    if (diffDays > 0) return `in ${diffDays} day${diffDays === 1 ? '' : 's'}`;
+    return `${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? '' : 's'} ago`;
+}
+
+function dlLine(label, value, extraChip) {
+    const v = value == null || String(value).trim() === '' ? '<span class="text-muted">N/A</span>' : escapeHtml(String(value));
+    const c = extraChip ? `<span class="small-chip">${escapeHtml(extraChip)}</span>` : '';
+    return `<div class="detail-line"><span class="dl-label">${escapeHtml(label)}</span><span class="dl-value">${v}${c}</span></div>`;
+}
+
+function dlLineRaw(label, htmlValue) {
+    return `<div class="detail-line"><span class="dl-label">${escapeHtml(label)}</span><span class="dl-value">${htmlValue}</span></div>`;
+}
+
 function renderPanels(row) {
-    const details = ['Job_Fair_No','Selection_Status','DWMS_ID','Employer_ID','Job_Id','Job_Title_Name','CRM_Member','DSM_Member_1','DSM_Member_2','Category','Job_Fair_Date'];
     const candidateMobile = row.Mobile_Number || row.Mobile_number || '';
-    const candidateContact = candidateMobile ? `<a href="tel:${escapeHtml(candidateMobile)}" class="small text-primary text-decoration-none">${escapeHtml(candidateMobile)}</a>` : '<span class="small text-muted">N/A</span>';
-    const employerContact = `<span class="small text-info">${escapeHtml(row.Employer_SPOC_Name || 'N/A')} • ${row.Employer_SPOC_Mobile ? `<a href="tel:${escapeHtml(row.Employer_SPOC_Mobile)}" class="small text-primary text-decoration-none">${escapeHtml(row.Employer_SPOC_Mobile)}</a>` : '<span class="small text-muted">N/A</span>'}</span>`;
+    const employerSpocMobile = row.Employer_SPOC_Mobile || '';
     const aggregatorSpocMobile = row.Aggregator_SPOC_Mobile || row.Aggregator_Spoc_mobile || '';
-    const aggregatorContact = `<span class="small text-success">${escapeHtml(row.Aggregator_SPOC_Name || 'N/A')} • ${aggregatorSpocMobile ? `<a href="tel:${escapeHtml(aggregatorSpocMobile)}" class="small text-primary text-decoration-none">${escapeHtml(aggregatorSpocMobile)}</a>` : '<span class="small text-muted">N/A</span>'}</span>`;
+    const telLink = (m) => m ? `<a href="tel:${escapeHtml(m)}" class="text-decoration-none">${escapeHtml(m)}</a>` : '<span class="text-muted">N/A</span>';
+    const jobFairDateValue = row.Job_Fair_Date || '';
+    const jobFairDaysLabel = daysFromTodayLabel(jobFairDateValue);
 
     candidateDetailStatuses.innerHTML = [
         statusChip('Job Fair Status', row.Selection_Status),
-        statusChip('Final Status', row.Shortlist_Candidate_Status)
+        statusChip('Final Status', row.Shortlist_Candidate_Status),
+        statusChip('Joined Status', row.Candidate_Joined_Status)
     ].join('');
 
-    detailPanel.innerHTML = `
-        <div class="col-12 col-md-4"><label class="form-label text-muted small">Candidate Name <span class="ms-1">${candidateContact}</span></label><div class="form-control bg-light">${escapeHtml(row.Candidate_Name || 'N/A')}</div></div>
-        <div class="col-12 col-md-4"><label class="form-label text-muted small">Employer Name <span class="ms-1">${employerContact}</span></label><div class="form-control bg-light">${escapeHtml(row.Employer_Name || 'N/A')}</div></div>
-        <div class="col-12 col-md-4"><label class="form-label text-muted small">Aggregator <span class="ms-1">${aggregatorContact}</span></label><div class="form-control bg-light">${escapeHtml(row.Aggregator || 'N/A')}</div></div>
-        ${details.map((name) => `<div class="col-12 col-md-4"><label class="form-label text-muted small">${formatLabel(name)}</label><div class="form-control bg-light">${escapeHtml(row[name] || 'N/A')}</div></div>`).join('')}
-    `;
+    const candidateGroup = `
+        <div class="col-12 col-md-6 col-lg-3"><div class="detail-group">
+            <div class="detail-group-title"><i class="bi bi-person-circle me-1"></i>Candidate</div>
+            ${dlLine('Name', row.Candidate_Name)}
+            ${dlLine('DWMS ID', row.DWMS_ID)}
+            ${dlLineRaw('Mobile', telLink(candidateMobile))}
+        </div></div>`;
+
+    const jobFairGroup = `
+        <div class="col-12 col-md-6 col-lg-3"><div class="detail-group">
+            <div class="detail-group-title"><i class="bi bi-calendar-event me-1"></i>Job Fair</div>
+            ${dlLine('Job Fair No', row.Job_Fair_No)}
+            ${dlLine('Job Fair Date', jobFairDateValue, jobFairDaysLabel || null)}
+            ${dlLine('CRM Member', row.CRM_Member)}
+            ${dlLine('DSM Member 1', row.DSM_Member_1)}
+            ${dlLine('DSM Member 2', row.DSM_Member_2)}
+            ${dlLine('Category', row.Category)}
+        </div></div>`;
+
+    const employerGroup = `
+        <div class="col-12 col-md-6 col-lg-3"><div class="detail-group">
+            <div class="detail-group-title"><i class="bi bi-shop me-1"></i>Employer</div>
+            ${dlLine('Employer', row.Employer_Name)}
+            ${dlLine('Employer Code', row.Employer_ID)}
+            ${dlLine('Job ID', row.Job_Id)}
+            ${dlLine('Job Title', row.Job_Title_Name)}
+            ${dlLine('SPOC Name', row.Employer_SPOC_Name)}
+            ${dlLineRaw('SPOC Mobile', telLink(employerSpocMobile))}
+        </div></div>`;
+
+    const aggregatorGroup = `
+        <div class="col-12 col-md-6 col-lg-3"><div class="detail-group">
+            <div class="detail-group-title"><i class="bi bi-diagram-3 me-1"></i>Aggregator</div>
+            ${dlLine('Aggregator', row.Aggregator)}
+            ${dlLine('SPOC Name', row.Aggregator_SPOC_Name)}
+            ${dlLineRaw('SPOC Mobile', telLink(aggregatorSpocMobile))}
+        </div></div>`;
+
+    detailPanel.innerHTML = candidateGroup + jobFairGroup + employerGroup + aggregatorGroup;
+
+    // Render the Call History floating panel (outside the tab content so it
+    // stays available while working on Selected / Shortlisted tabs).
+    renderCallHistoryFloater(row);
 
     const panelNames = isDistrictCandidateDataMode
-        ? ['Selected', 'Call History']
-        : (row.Selection_Status === 'Selected' ? ['Selected', 'Call History'] : ['Shortlist/Onhold', 'Selected', 'Call History']);
+        ? ['Selected']
+        : (row.Selection_Status === 'Selected' ? ['Selected'] : ['Shortlist/Onhold', 'Selected']);
     const tabs = panelNames.map((p, i) => `<li class="nav-item"><button class="nav-link ${i===0?'active':''}" data-bs-toggle="tab" data-bs-target="#panel-${p.replace(/[^a-zA-Z0-9]/g,'')}" type="button">${p}</button></li>`).join('');
 
     const tabBodies = panelNames.map((panel, i) => {
         const panelKey = panel.replace(/[^a-zA-Z0-9]/g,'');
-        if (panel === 'Call History') {
-            return `<div class="tab-pane fade ${i===0?'show active':''}" id="panel-${panelKey}">
-                <div class="card mb-3"><div class="card-header">Add Call Detail</div><div class="card-body"><div class="row g-3">
-                    <div class="col-md-4"><label class="form-label">Stage</label><select class="form-select" name="call_history_stage"><option value="">Select</option><option>Employer Connect</option><option>Candidate Connect</option><option>Aggregator Contact</option></select></div>
-                    <div class="col-md-4"><label class="form-label">Purpose</label><select class="form-select" name="call_history_purpose_id"><option value="">Select</option>${callHistoryPurposeOptions.map((o) => `<option value="${o.id}">${escapeHtml(o.purpose_name)}</option>`).join('')}</select></div>
-                    <div class="col-md-4"><label class="form-label">Call Date time</label><input type="datetime-local" class="form-control" name="call_history_call_datetime" value="${nowIstInput()}" readonly></div>
-                    <div class="col-md-4"><label class="form-label">Call Status</label><select class="form-select" name="call_history_call_status"><option value="">Select</option><option>Attended</option><option>Not attended</option><option>Invalid number</option></select></div>
-                    <div class="col-12"><label class="form-label">Call Remarks</label><textarea class="form-control" name="call_history_call_remarks" rows="2"></textarea></div>
-                </div></div></div>
-                <div class="d-flex justify-content-end mb-3"><button type="submit" class="btn btn-primary btn-sm" name="update_section" value="call_history" formnovalidate>Add Call History</button></div>
-                <div class="card mb-3"><div class="card-header">Call History</div><div class="card-body"><div class="table-responsive"><table class="table table-bordered table-striped mb-0"><thead><tr><th>Sl no</th><th>Stage</th><th>Purpose</th><th>Date time</th><th>Status</th><th>Remarks</th></tr></thead><tbody id="callHistoryBody"></tbody></table></div></div></div>
-                <div class="card"><div class="card-header">Activity Log</div><div class="card-body"><div class="table-responsive"><table class="table table-bordered table-striped mb-0"><thead><tr><th>Sl no</th><th>Section</th><th>Type</th><th>Details</th><th>Updated By</th><th>Updated At</th></tr></thead><tbody id="activityLogBody"></tbody></table></div></div></div>
-            </div>`;
-        }
-
         let panelFields = fieldConfig.filter((f) => f.panel_label === panel);
         if (isDistrictCandidateDataMode && panel === 'Selected') {
             const districtEditableFieldNames = new Set([
