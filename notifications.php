@@ -93,9 +93,10 @@ if (($_GET['details_id'] ?? '') !== '') {
     $s = db()->prepare('SELECT a.*, u.name AS owner_name, t.name AS target_user_name FROM activities a JOIN users u ON u.id = a.owner_user_id LEFT JOIN users t ON t.id = a.target_user_id WHERE a.id = ?');
     $s->execute([$activityId]);
     $note = $s->fetch();
-    // Insert seen for non-owner viewers (ignore duplicates).
+    // Insert seen for non-owner viewers (or refresh seen_at to track "last
+    // viewed" so new replies after that point can be detected).
     if ($note && (int) $note['owner_user_id'] !== (int) $user['id']) {
-        $ins = db()->prepare('INSERT IGNORE INTO activity_seen (activity_id, user_id) VALUES (?, ?)');
+        $ins = db()->prepare('INSERT INTO activity_seen (activity_id, user_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE seen_at = CURRENT_TIMESTAMP');
         $ins->execute([$activityId, (int) $user['id']]);
     }
     $seenStmt = db()->prepare('SELECT s.user_id, s.seen_at, u.name FROM activity_seen s JOIN users u ON u.id = s.user_id WHERE s.activity_id = ? ORDER BY s.seen_at ASC');
