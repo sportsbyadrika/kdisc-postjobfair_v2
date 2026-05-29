@@ -110,6 +110,10 @@ render_page_header('Manage Candidate', [
 .milestone.section-break { flex: 0 0 6px; min-width: 6px; }
 .milestone.section-break::after { display: none; }
 .milestone.section-break .m-icon { width: 6px; height: 22px; border-radius: 0; background: transparent; border: 0; border-left: 2px dashed var(--pjf-border, #e2e8f0); }
+.x-small { font-size: .68rem; line-height: 1.25; }
+.ch-card, .al-card { background: #fff; }
+.required-asterisk { color: #b91c1c; font-weight: 700; margin-left: 2px; }
+.form-control.is-required-pending, .form-select.is-required-pending { border-color: #b91c1c !important; box-shadow: 0 0 0 1px rgba(185, 28, 28, .15); }
 </style>
 
 <script>
@@ -246,20 +250,57 @@ function renderCallHistoryRows(rows) {
     const body = document.getElementById('callHistoryBody');
     if (!body) return;
     if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No call history found.</td></tr>';
+        body.innerHTML = '<div class="text-center text-muted small py-3"><i class="bi bi-telephone-x me-1"></i>No call history found.</div>';
         return;
     }
-    body.innerHTML = rows.map((r, i) => `<tr><td>${i+1}</td><td>${escapeHtml(r.stage || 'N/A')}</td><td>${escapeHtml(r.purpose_name || 'N/A')}</td><td>${escapeHtml(formatDisplayDatetime(r.call_datetime || ''))}</td><td>${escapeHtml(r.call_status || 'N/A')}</td><td>${escapeHtml(r.call_remarks || 'N/A')}</td></tr>`).join('');
+    body.innerHTML = rows.map((r, i) => {
+        const stage = escapeHtml(r.stage || 'N/A');
+        const status = escapeHtml(r.call_status || 'N/A');
+        const purpose = escapeHtml(r.purpose_name || 'N/A');
+        const when = escapeHtml(formatDisplayDatetime(r.call_datetime || ''));
+        const remarks = escapeHtml(r.call_remarks || '');
+        const statusKey = String(r.call_status || '').toLowerCase().replace(/\s+/g, '');
+        const statusCls = statusKey === 'attended' ? 'status-yes' : (statusKey === 'notattended' ? 'status-pending' : (statusKey === 'invalidnumber' ? 'status-no' : 'status-neutral'));
+        return `<div class="ch-card mb-2 p-2 border rounded">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                    <div class="fw-semibold small">${stage}</div>
+                    <div class="text-muted x-small">${purpose}</div>
+                </div>
+                <span class="status-chip ${statusCls}">${status}</span>
+            </div>
+            <div class="text-muted x-small mt-1"><i class="bi bi-clock me-1"></i>${when}</div>
+            ${remarks ? `<div class="x-small mt-1"><i class="bi bi-chat-left-text me-1 text-muted"></i>${remarks}</div>` : ''}
+            <div class="x-small text-muted mt-1">#${i+1}</div>
+        </div>`;
+    }).join('');
 }
 
 function renderActivityRows(rows) {
     const body = document.getElementById('activityLogBody');
     if (!body) return;
     if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No activity log found.</td></tr>';
+        body.innerHTML = '<div class="text-center text-muted small py-3"><i class="bi bi-journal-x me-1"></i>No activity log found.</div>';
         return;
     }
-    body.innerHTML = rows.map((r, i) => `<tr><td>${i+1}</td><td>${escapeHtml(r.activity_section || 'N/A')}</td><td>${escapeHtml(r.activity_type || 'N/A')}</td><td>${escapeHtml(String(r.activity_details || 'N/A')).replaceAll('\n','<br>')}</td><td>${escapeHtml(r.created_by_name || 'N/A')}</td><td>${escapeHtml(formatDisplayDatetime(r.created_at || ''))}</td></tr>`).join('');
+    body.innerHTML = rows.map((r, i) => {
+        const sec = escapeHtml(r.activity_section || 'N/A');
+        const type = escapeHtml(r.activity_type || 'N/A');
+        const details = escapeHtml(String(r.activity_details || '')).replaceAll('\n','<br>');
+        const by = escapeHtml(r.created_by_name || 'N/A');
+        const when = escapeHtml(formatDisplayDatetime(r.created_at || ''));
+        return `<div class="al-card mb-2 p-2 border rounded">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                    <span class="status-chip status-neutral">${sec}</span>
+                    <span class="status-chip status-info ms-1">${type}</span>
+                </div>
+                <span class="x-small text-muted">#${i+1}</span>
+            </div>
+            ${details ? `<div class="x-small mt-1">${details}</div>` : ''}
+            <div class="x-small text-muted mt-1"><i class="bi bi-person me-1"></i>${by} &middot; <i class="bi bi-clock me-1"></i>${when}</div>
+        </div>`;
+    }).join('');
 }
 
 function shortlistRoundSelectOptions(values, selectedValue, includeBlank = true) {
@@ -403,6 +444,117 @@ function loadShortlistRounds() {
         });
 }
 
+/* -- Conditional mandatory rules ----------------------------------------- *
+ * Each rule listens to a controlling field and toggles the required state +
+ * red asterisk + disabled state of one or more dependent fields. Returns
+ * functions for applying once + on change.
+ * ----------------------------------------------------------------------- */
+function findFieldInput(name) {
+    return dynamicPanels?.querySelector(`[name="${name}"]`);
+}
+function findFieldLabel(input) {
+    if (!input) return null;
+    const col = input.closest('.col-12, .col-md-4, .col-md-6, .col-md-3');
+    return col ? col.querySelector('label') : null;
+}
+function setFieldRequired(name, required) {
+    const input = findFieldInput(name);
+    if (!input) return;
+    const label = findFieldLabel(input);
+    if (required) {
+        input.required = true;
+        if (label && !label.querySelector('.required-asterisk')) {
+            const s = document.createElement('span');
+            s.className = 'required-asterisk';
+            s.textContent = '*';
+            label.appendChild(s);
+        }
+        const empty = !String(input.value || '').trim();
+        input.classList.toggle('is-required-pending', empty);
+    } else {
+        input.required = false;
+        label?.querySelector('.required-asterisk')?.remove();
+        input.classList.remove('is-required-pending');
+    }
+}
+function setFieldDisabled(name, disabled) {
+    const input = findFieldInput(name);
+    if (!input) return;
+    input.disabled = !!disabled;
+    if (disabled) {
+        input.classList.remove('is-required-pending');
+    }
+}
+
+function applyMandatoryRules() {
+    if (!dynamicPanels) return;
+    const v = (name) => {
+        const i = findFieldInput(name);
+        return i ? String(i.value || '').trim() : '';
+    };
+    const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ');
+
+    // 5.1 First Call: enable + require First_Call_Date when First_Call_Done = Yes
+    const fcd = norm(v('First_Call_Done'));
+    setFieldDisabled('First_Call_Date', fcd !== 'yes');
+    setFieldRequired('First_Call_Date', fcd === 'yes');
+
+    // 5.2 Offer Letter Generated
+    const olg = norm(v('Offer_Letter_Generated'));
+    setFieldRequired('Offer_Letter_Generated_Remarks', olg === 'no' || olg === 'pending');
+    setFieldRequired('Offer_Letter_Generated_Date', olg === 'yes');
+
+    // 5.3 Link verified -> need URL + Join Date + Salary
+    const lv = norm(v('Link_to_Offer_letter_verified'));
+    setFieldRequired('Link_to_Offer_letter', lv === 'yes');
+    setFieldRequired('Offer_Letter_Join_Date', lv === 'yes');
+    setFieldRequired('Offer_Letter_Salary', lv === 'yes');
+
+    // 5.4 Confirm offer letter receipt by candidate
+    const colr = norm(v('Confirm_Offer_Letter_Receipt_by_Candidate'));
+    setFieldRequired('Confirm_letter_receipt_remarks', colr === 'no' || colr === 'pending');
+    setFieldRequired('confirmation_date', colr === 'yes');
+
+    // 5.5 Willing to Join: May be / No -> remarks + future date required
+    const wtj = norm(v('Willing_to_Join'));
+    const wtjForceRemarks = wtj === 'may be' || wtj === 'no';
+    setFieldRequired('willing_to_join_remarks', wtjForceRemarks);
+    setFieldRequired('Candidate_Joining_Future_Date', wtjForceRemarks || norm(v('Candidate_Joined_Status')) === 'future date');
+
+    // 5.6 Candidate Joined Status
+    const cjs = norm(v('Candidate_Joined_Status'));
+    const cjsPendingOrNo = cjs === 'no' || cjs === 'pending';
+    setFieldRequired('Remarks_Candidate_Join', cjsPendingOrNo);
+    setFieldRequired('Candidate_Join_Remarks_Type', cjsPendingOrNo);
+    setFieldRequired('Candidate_Joined_Date', cjs === 'yes');
+}
+
+function wireMandatoryListeners() {
+    if (!dynamicPanels) return;
+    const controlNames = [
+        'First_Call_Done',
+        'Offer_Letter_Generated',
+        'Link_to_Offer_letter_verified',
+        'Confirm_Offer_Letter_Receipt_by_Candidate',
+        'Willing_to_Join',
+        'Candidate_Joined_Status',
+        // dependent inputs whose value affects the "pending" class
+        'First_Call_Date',
+        'Offer_Letter_Generated_Remarks', 'Offer_Letter_Generated_Date',
+        'Link_to_Offer_letter', 'Offer_Letter_Join_Date', 'Offer_Letter_Salary',
+        'Confirm_letter_receipt_remarks', 'confirmation_date',
+        'willing_to_join_remarks', 'Candidate_Joining_Future_Date',
+        'Remarks_Candidate_Join', 'Candidate_Join_Remarks_Type', 'Candidate_Joined_Date',
+    ];
+    controlNames.forEach((n) => {
+        const input = findFieldInput(n);
+        if (!input || input.dataset.mandatoryWired === '1') return;
+        input.dataset.mandatoryWired = '1';
+        input.addEventListener('change', applyMandatoryRules);
+        input.addEventListener('input', applyMandatoryRules);
+    });
+}
+
 const SELECTED_MILESTONES = [
     { key: 'First_Call_Done',                          label: 'First Call' },
     { key: 'Offer_Letter_Generated',                   label: 'Offer Generated' },
@@ -484,8 +636,9 @@ function renderCallHistoryFloater(row) {
     if (!body) return;
     body.innerHTML = `
         <div class="card mb-2"><div class="card-header py-2 small">Add Call Detail</div><div class="card-body p-2"><div class="row g-2">
-            <div class="col-md-6"><label class="form-label small mb-1">Stage</label><select class="form-select form-select-sm" name="call_history_stage" form="manageCandidateForm"><option value="">Select</option><option>Employer Connect</option><option>Candidate Connect</option><option>Aggregator Contact</option></select></div>
+            <div class="col-md-6"><label class="form-label small mb-1">Stage</label><select class="form-select form-select-sm" id="callHistoryStageInput" name="call_history_stage" form="manageCandidateForm"><option value="">Select</option><option>Employer Connect</option><option>Candidate Connect</option><option>Aggregator Contact</option></select></div>
             <div class="col-md-6"><label class="form-label small mb-1">Purpose</label><select class="form-select form-select-sm" name="call_history_purpose_id" form="manageCandidateForm"><option value="">Select</option>${callHistoryPurposeOptions.map((o) => `<option value="${o.id}">${escapeHtml(o.purpose_name)}</option>`).join('')}</select></div>
+            <div class="col-12" id="stageContactInfo" style="display:none;"></div>
             <div class="col-md-6"><label class="form-label small mb-1">Call Date Time</label><input type="datetime-local" class="form-control form-control-sm" name="call_history_call_datetime" value="${nowIstInput()}" readonly form="manageCandidateForm"></div>
             <div class="col-md-6"><label class="form-label small mb-1">Call Status</label><select class="form-select form-select-sm" name="call_history_call_status" form="manageCandidateForm"><option value="">Select</option><option>Attended</option><option>Not attended</option><option>Invalid number</option></select></div>
             <div class="col-12"><label class="form-label small mb-1">Call Remarks</label><textarea class="form-control form-control-sm" name="call_history_call_remarks" rows="2" form="manageCandidateForm"></textarea></div>
@@ -493,10 +646,40 @@ function renderCallHistoryFloater(row) {
         <div class="d-flex justify-content-end mt-2"><button type="submit" class="btn btn-primary btn-sm" name="update_section" value="call_history" formnovalidate form="manageCandidateForm"><i class="bi bi-plus-lg me-1"></i>Add Call History</button></div>
         </div></div>
 
-        <div class="card mb-2"><div class="card-header py-2 small">Call History</div><div class="card-body p-0"><div class="table-responsive" style="max-height: 22vh;"><table class="table table-sm mb-0"><thead class="sticky-top bg-light"><tr><th>#</th><th>Stage</th><th>Purpose</th><th>Date</th><th>Status</th><th>Remarks</th></tr></thead><tbody id="callHistoryBody"></tbody></table></div></div></div>
+        <div class="card mb-2"><div class="card-header py-2 small">Call History</div><div class="card-body p-2" style="max-height: 22vh; overflow-y: auto;"><div id="callHistoryBody"></div></div></div>
 
-        <div class="card"><div class="card-header py-2 small">Activity Log</div><div class="card-body p-0"><div class="table-responsive" style="max-height: 22vh;"><table class="table table-sm mb-0"><thead class="sticky-top bg-light"><tr><th>#</th><th>Section</th><th>Type</th><th>Details</th><th>By</th><th>At</th></tr></thead><tbody id="activityLogBody"></tbody></table></div></div></div>
+        <div class="card"><div class="card-header py-2 small">Activity Log</div><div class="card-body p-2" style="max-height: 22vh; overflow-y: auto;"><div id="activityLogBody"></div></div></div>
     `;
+
+    // Wire stage -> contact info display.
+    const stageSel = document.getElementById('callHistoryStageInput');
+    const contactBox = document.getElementById('stageContactInfo');
+    if (stageSel && contactBox) {
+        stageSel.addEventListener('change', () => {
+            const stage = stageSel.value;
+            let name = '', mobile = '', label = '';
+            if (stage === 'Employer Connect') {
+                name = row.Employer_SPOC_Name || '';
+                mobile = row.Employer_SPOC_Mobile || '';
+                label = 'Employer SPOC';
+            } else if (stage === 'Aggregator Contact') {
+                name = row.Aggregator_SPOC_Name || '';
+                mobile = row.Aggregator_SPOC_Mobile || row.Aggregator_Spoc_mobile || '';
+                label = 'Aggregator SPOC';
+            } else if (stage === 'Candidate Connect') {
+                name = row.Candidate_Name || '';
+                mobile = row.Mobile_Number || row.Mobile_number || '';
+                label = 'Candidate';
+            }
+            if (stage) {
+                const telLink = mobile ? `<a href="tel:${escapeHtml(mobile)}" class="fw-semibold text-decoration-none"><i class="bi bi-telephone-fill me-1"></i>${escapeHtml(mobile)}</a>` : '<span class="text-muted">No mobile recorded</span>';
+                contactBox.innerHTML = `<div class="alert alert-info py-2 px-2 mb-0 small d-flex justify-content-between align-items-center gap-2"><span><span class="text-muted">${escapeHtml(label)}:</span> ${escapeHtml(name || 'N/A')}</span>${telLink}</div>`;
+                contactBox.style.display = '';
+            } else {
+                contactBox.style.display = 'none';
+            }
+        });
+    }
 }
 
 (function initCallHistoryFloater() {
@@ -513,6 +696,10 @@ function renderCallHistoryFloater(row) {
     });
     closeBtn?.addEventListener('click', () => floater.classList.remove('show'));
     minBtn?.addEventListener('click', () => floater.classList.toggle('minimised'));
+
+    // Open Call History floater automatically on page load so the CRM
+    // member starts with both panels visible.
+    floater.classList.add('show');
 
     let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
     header.addEventListener('mousedown', (e) => {
@@ -672,6 +859,8 @@ function renderPanels(row) {
     dynamicPanels.innerHTML = `<ul class="nav nav-tabs mb-3">${tabs}</ul><div class="tab-content">${tabBodies}</div>`;
     loadHistory();
     loadShortlistRounds();
+    wireMandatoryListeners();
+    applyMandatoryRules();
 
     dynamicPanels.querySelectorAll('.nav-link').forEach((btn) => {
         btn.addEventListener('shown.bs.tab', () => {
