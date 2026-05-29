@@ -122,6 +122,26 @@ $districtTotals = [
 ];
 
 /* ---- Role-tailored KPI definitions ---- */
+// Count notifications visible to the logged-in user (mirrors the visibility
+// logic in notifications.php). Used as a dashboard KPI.
+$rolesByToWhom = ['State CRM' => 'crm_member', 'State DSM' => 'state_dsm', 'District User' => 'district_user'];
+$myNotificationCount = 0;
+try {
+    if (is_admin($user)) {
+        $myNotificationCount = (int) db()->query("SELECT COUNT(*) FROM activities WHERE active_status = 1 AND status <> 'closed'")->fetchColumn();
+    } else {
+        $roleToWhom = array_search((string) ($user['role'] ?? ''), $rolesByToWhom, true) ?: '';
+        $cs = db()->prepare(
+            "SELECT COUNT(*) FROM activities WHERE active_status = 1 AND status <> 'closed'
+             AND (owner_user_id = ? OR (to_whom = ? AND (read_by = 'any' OR target_user_id = ?)))"
+        );
+        $cs->execute([(int) $user['id'], $roleToWhom, (int) $user['id']]);
+        $myNotificationCount = (int) $cs->fetchColumn();
+    }
+} catch (Throwable $e) {
+    $myNotificationCount = 0;
+}
+
 $allKpis = [
     'users'        => ['label' => 'Active Users',        'value' => $totalUsers,                   'icon' => 'bi-people-fill',        'tone' => 'primary', 'link' => '/users.php',              'link_text' => 'Manage users'],
     'job_fairs'    => ['label' => 'Job Fairs',           'value' => $jobFairCount,                 'icon' => 'bi-calendar-event',     'tone' => 'slate',   'link' => null,                       'link_text' => null],
@@ -134,14 +154,15 @@ $allKpis = [
     'joined'       => ['label' => 'Total Joined',        'value' => $totalJoinedCount,             'icon' => 'bi-door-open-fill',     'tone' => 'success', 'link' => null,                       'link_text' => $joinedPct . '% of selected'],
     'offer'        => ['label' => 'Offer Letters',       'value' => $offerLetterCount,             'icon' => 'bi-envelope-paper-fill','tone' => 'info',    'link' => null,                       'link_text' => $offerLetterPct . '% of selected'],
     'calls'        => ['label' => 'Total Calls Logged',  'value' => $totalCallsCount,              'icon' => 'bi-telephone-fill',     'tone' => 'danger',  'link' => '/call_history_report.php', 'link_text' => 'View call report'],
+    'notif'        => ['label' => 'My Notifications',    'value' => $myNotificationCount,          'icon' => 'bi-bell-fill',          'tone' => 'warning', 'link' => '/notifications.php',       'link_text' => 'Open notifications'],
 ];
 
 if ($isAdmin) {
-    $kpiKeys = ['users', 'job_fairs', 'selected', 'shortlisted', 'onhold', 'total_sel', 'joined', 'calls'];
+    $kpiKeys = ['users', 'job_fairs', 'selected', 'shortlisted', 'onhold', 'total_sel', 'joined', 'notif'];
 } elseif ($isDistrictUser) {
-    $kpiKeys = ['job_fairs', 'candidates', 'selected', 'shortlisted', 'onhold', 'total_sel', 'offer', 'joined'];
+    $kpiKeys = ['job_fairs', 'candidates', 'selected', 'shortlisted', 'total_sel', 'offer', 'joined', 'notif'];
 } else {
-    $kpiKeys = ['selected', 'shortlisted', 'onhold', 'total_sel', 'offer', 'joined', 'calls', 'candidates'];
+    $kpiKeys = ['selected', 'shortlisted', 'onhold', 'total_sel', 'offer', 'joined', 'calls', 'notif'];
 }
 
 /* ---- Role-tailored quick actions ---- */
@@ -168,7 +189,7 @@ if ($isAdmin) {
         ['label' => 'Call History Report', 'href' => '/call_history_report.php',      'icon' => 'bi-telephone'],
         ['label' => 'Consolidated Report', 'href' => '/consolidated_report.php',      'icon' => 'bi-clipboard-data'],
         ['label' => 'Exception Report',    'href' => '/job_fair_exception_report.php','icon' => 'bi-exclamation-triangle'],
-        ['label' => 'Activities',          'href' => '/activities.php',               'icon' => 'bi-list-task'],
+        ['label' => 'Notifications',       'href' => '/notifications.php',            'icon' => 'bi-bell'],
     ];
 }
 

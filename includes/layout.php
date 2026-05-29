@@ -7,6 +7,7 @@ function role_label(string $role): string
         'administrator' => 'Administrator',
         'crm_member' => 'CRM Member',
         'district_user' => 'District User',
+        'state_dsm' => 'State DSM',
         default => ucwords(str_replace('_', ' ', $role)),
     };
 }
@@ -91,11 +92,11 @@ function render_header(string $title, array $options = []): void
                             </li>
                         <?php else: ?>
                             <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'activities.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'manage_candidate.php', 'crm_process.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
+                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'notifications.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'manage_candidate.php', 'crm_process.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
                                 <ul class="dropdown-menu">
                                     <li><a class="dropdown-item" href="/job_fair_results.php"><i class="bi bi-table me-2"></i>Job Fair Result Data</a></li>
                                     <li><a class="dropdown-item" href="/crm_process.php"><i class="bi bi-kanban me-2"></i>CRM Process (Employer)</a></li>
-                                    <li><a class="dropdown-item" href="/activities.php"><i class="bi bi-list-task me-2"></i>Activities</a></li>
+                                    <li><a class="dropdown-item" href="/notifications.php"><i class="bi bi-bell me-2"></i>Notifications</a></li>
                                     <?php if (is_admin($user)): ?>
                                         <li><hr class="dropdown-divider"></li>
                                         <li><h6 class="dropdown-header">Data Management</h6></li>

@@ -28,6 +28,19 @@ if (!$candidate) {
     exit;
 }
 
+// Users grouped by notification target role, used to populate the in-page
+// "Raise notification" target-user dropdown.
+$notificationUsersByRole = ['State CRM' => [], 'State DSM' => [], 'District User' => []];
+$notificationRoleMap = ['State CRM' => 'crm_member', 'State DSM' => 'state_dsm', 'District User' => 'district_user'];
+$notifUsersStmt = db()->query("SELECT id, name, role, assigned_districts FROM users WHERE active_status = 1 ORDER BY name ASC");
+foreach ($notifUsersStmt->fetchAll() as $nuRow) {
+    foreach ($notificationRoleMap as $label => $r) {
+        if ($nuRow['role'] === $r) {
+            $notificationUsersByRole[$label][] = $nuRow;
+        }
+    }
+}
+
 render_header('Manage Candidate');
 render_page_header('Manage Candidate', [
     'icon' => 'bi-person-vcard',
@@ -63,6 +76,63 @@ render_page_header('Manage Candidate', [
 
     <div id="dynamicPanels"></div>
 </form>
+
+<!-- Quick "raise a notification about this candidate" modal -->
+<div class="modal fade" id="candidateNotificationModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <form method="post" action="/notifications.php" id="candidateNotificationForm">
+                <input type="hidden" name="action" value="add">
+                <input type="hidden" name="module_name" value="crm">
+                <input type="hidden" name="active_status" value="1">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-bell me-1"></i>Raise Notification</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-2">
+                        <div class="col-md-12">
+                            <label class="form-label">Title</label>
+                            <input type="text" class="form-control" name="title" id="cnTitle" required>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label">Details</label>
+                            <textarea class="form-control" name="details" id="cnDetails" rows="3"></textarea>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">To Whom</label>
+                            <select class="form-select" name="to_whom" id="cnToWhom">
+                                <option value="">Select</option>
+                                <option value="State CRM">State CRM</option>
+                                <option value="State DSM">State DSM</option>
+                                <option value="District User">District User</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Read By</label>
+                            <select class="form-select" name="read_by" id="cnReadBy">
+                                <option value="any">Any</option>
+                                <option value="specific">Specific user</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4" id="cnTargetUserCol" style="display:none;">
+                            <label class="form-label">Target User</label>
+                            <select class="form-select" name="target_user_id" id="cnTargetUser"><option value="">Select</option></select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Status</label>
+                            <select class="form-select" name="status"><option value="open">Open</option><option value="in_progress">In Progress</option></select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-send me-1"></i>Send Notification</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 <div id="callHistoryFloater" aria-hidden="true">
     <div class="ch-header" id="callHistoryFloaterHeader">
@@ -118,6 +188,49 @@ render_page_header('Manage Candidate', [
 
 <script>
 const candidateId = <?= json_encode($candidateId) ?>;
+const notificationUsersByRole = <?= json_encode($notificationUsersByRole) ?>;
+
+function refreshCnTargetUserOptions(selectedId) {
+    const toWhom = document.getElementById('cnToWhom').value;
+    const readBy = document.getElementById('cnReadBy').value;
+    const col = document.getElementById('cnTargetUserCol');
+    const sel = document.getElementById('cnTargetUser');
+    if (readBy !== 'specific' || !toWhom) {
+        col.style.display = 'none';
+        sel.innerHTML = '<option value="">Select</option>';
+        return;
+    }
+    const list = notificationUsersByRole[toWhom] || [];
+    sel.innerHTML = '<option value="">Select</option>' + list.map((u) => {
+        const districts = (u.assigned_districts || '').trim();
+        const districtsHint = districts && toWhom === 'District User' ? ' (' + districts + ')' : '';
+        return `<option value="${u.id}" ${String(u.id) === String(selectedId || '') ? 'selected' : ''}>${u.name}${districtsHint}</option>`;
+    }).join('');
+    col.style.display = '';
+}
+document.getElementById('cnToWhom')?.addEventListener('change', () => refreshCnTargetUserOptions());
+document.getElementById('cnReadBy')?.addEventListener('change', () => refreshCnTargetUserOptions());
+
+function openCandidateNotificationModal(cid) {
+    const row = currentRow || {};
+    const candidateName = row.Candidate_Name || 'Candidate';
+    const dwmsId = row.DWMS_ID || cid;
+    const employer = row.Employer_Name || '';
+    document.getElementById('cnTitle').value = `Challenge: ${candidateName} (DWMS ${dwmsId})`;
+    const challengeType = row.Challenge_Type || '';
+    const challengeText = row.Challenge_to_be_addressed || '';
+    const lines = [
+        `Candidate: ${candidateName} · DWMS ${dwmsId}`,
+        employer ? `Employer: ${employer}` : '',
+        challengeType ? `Challenge Type: ${challengeType}` : '',
+        challengeText ? `Details: ${challengeText}` : '',
+    ].filter(Boolean);
+    document.getElementById('cnDetails').value = lines.join('\n');
+    document.getElementById('cnToWhom').value = '';
+    document.getElementById('cnReadBy').value = 'any';
+    refreshCnTargetUserOptions();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('candidateNotificationModal')).show();
+}
 const detailPanel = document.getElementById('candidateDetailPanel');
 const candidateDetailStatuses = document.getElementById('candidateDetailStatuses');
 const dynamicPanels = document.getElementById('dynamicPanels');
@@ -849,7 +962,11 @@ function renderPanels(row) {
         const groups = [...new Set(panelFields.map((f) => f.group_label))];
         const groupHtml = groups.map((g) => {
             const fields = panelFields.filter((f) => f.group_label === g).sort((a,b) => (a.row_position-b.row_position) || (a.column_position-b.column_position));
-            return `<div class="card mb-3"><div class="card-header">${escapeHtml(g)}</div><div class="card-body"><div class="row g-3">${fields.map((f) => `<div class="col-12 col-md-4">${renderFieldControl(f,row)}</div>`).join('')}</div></div></div>`;
+            const isChallenges = String(g || '').toLowerCase().includes('challenge');
+            const headerExtra = isChallenges
+                ? `<button type="button" class="btn btn-sm btn-outline-warning ms-auto" onclick="openCandidateNotificationModal(${row.id})"><i class="bi bi-bell me-1"></i>Notification</button>`
+                : '';
+            return `<div class="card mb-3"><div class="card-header d-flex align-items-center">${escapeHtml(g)}${headerExtra}</div><div class="card-body"><div class="row g-3">${fields.map((f) => `<div class="col-12 col-md-4">${renderFieldControl(f,row)}</div>`).join('')}</div></div></div>`;
         }).join('');
         const updateSection = panel === 'Shortlist/Onhold' ? 'shortlist_onhold' : 'selected';
         const shortlistRoundsHtml = panel === 'Shortlist/Onhold' ? '<div id="shortlistRoundsSection" data-editing-id=""></div>' : '';

@@ -33,7 +33,12 @@ function require_admin(): void
 
 function is_admin(array $user): bool
 {
-    return ($user['role'] ?? '') === 'administrator';
+    return in_array($user['role'] ?? '', ['administrator', 'state_dsm'], true);
+}
+
+function is_state_dsm(array $user): bool
+{
+    return ($user['role'] ?? '') === 'state_dsm';
 }
 
 function is_district_user(array $user): bool
