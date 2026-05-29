@@ -55,6 +55,12 @@ render_page_header('Manage Candidate', [
         </div>
     </div>
 
+    <div class="card mb-3" id="milestonesCard" style="display:none;">
+        <div class="card-body py-2 px-3">
+            <div id="milestonesPanel"></div>
+        </div>
+    </div>
+
     <div id="dynamicPanels"></div>
 </form>
 
@@ -87,6 +93,23 @@ render_page_header('Manage Candidate', [
 @media (max-width: 575.98px) {
     #callHistoryFloater { left: 10px; right: 10px; width: auto; }
 }
+
+/* Post job fair milestone track (between candidate details and entry panels) */
+.milestone-track { display: flex; gap: 2px; padding: 4px 0; align-items: flex-start; overflow-x: auto; }
+.milestone { flex: 1 1 0; min-width: 56px; text-align: center; position: relative; padding: 0 2px; }
+.milestone:not(:last-child)::after { content: ''; position: absolute; top: 11px; left: 60%; right: -40%; height: 2px; background: #cbd5e1; z-index: 0; }
+.milestone.done::after { background: #16a34a; }
+.milestone.failed::after { background: #cbd5e1; }
+.m-icon { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: #fff; border: 2px solid #cbd5e1; color: #94a3b8; font-size: 11px; position: relative; z-index: 1; }
+.milestone.done .m-icon { background: #16a34a; border-color: #16a34a; color: #fff; }
+.milestone.failed .m-icon { background: #dc2626; border-color: #dc2626; color: #fff; }
+.milestone.inprogress .m-icon { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.milestone.current .m-icon { background: #2563eb; border-color: #2563eb; color: #fff; box-shadow: 0 0 0 3px rgba(37,99,235,.18); }
+.m-label { font-size: .62rem; line-height: 1.1; color: var(--pjf-text, #1e293b); margin-top: 3px; word-break: break-word; }
+.m-value { font-size: .58rem; color: var(--pjf-muted, #64748b); margin-top: 1px; }
+.milestone.section-break { flex: 0 0 6px; min-width: 6px; }
+.milestone.section-break::after { display: none; }
+.milestone.section-break .m-icon { width: 6px; height: 22px; border-radius: 0; background: transparent; border: 0; border-left: 2px dashed var(--pjf-border, #e2e8f0); }
 </style>
 
 <script>
@@ -380,6 +403,82 @@ function loadShortlistRounds() {
         });
 }
 
+const SELECTED_MILESTONES = [
+    { key: 'First_Call_Done',                          label: 'First Call' },
+    { key: 'Offer_Letter_Generated',                   label: 'Offer Generated' },
+    { key: 'Link_to_Offer_letter_verified',            label: 'Offer Verified' },
+    { key: 'Confirm_Offer_Letter_Receipt_by_Candidate', label: 'Receipt Confirmed' },
+    { key: 'Offer_Letter_Join_Date',                   label: 'Join Date / Salary', type: 'date' },
+    { key: 'Willing_to_Join',                          label: 'Willing to Join' },
+    { key: 'Candidate_Joined_Status',                  label: 'Candidate Joined' },
+];
+const SHORTLIST_PRE_MILESTONES = [
+    { key: 'Shortlist_Preparatory_Call_Status', label: 'Prep Call' },
+    { key: 'Shortlist_Current_Process_Status',  label: 'Process' },
+    { key: 'Shortlist_Current_Call_Status',     label: 'Current Round' },
+    { key: 'Shortlist_Candidate_Status',        label: 'Final Status' },
+];
+
+function milestoneState(value, type) {
+    const v = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!v) return 'pending';
+    if (type === 'date') return v.match(/^0{4}-0{2}-0{2}/) ? 'pending' : 'done';
+    if (['yes', 'selected', 'completed', 'received'].includes(v)) return 'done';
+    if (['no', 'rejected', 'candidate not interested', 'candidate not willing', 'invalid number'].includes(v)) return 'failed';
+    if (['pending', 'in progress', 'review in progress', 'onhold', 'yet to be contacted', 'future date', 'selected for next round', 'ongoing', 'pending at employer', 'pending at candidate'].includes(v)) return 'inprogress';
+    return 'pending';
+}
+
+function renderMilestones(row) {
+    const selKeyNorm = String(row.Selection_Status || '').toLowerCase().replace(/\s+/g, '').trim();
+    let milestones;
+    let isShortlistTrack = false;
+    if (selKeyNorm === 'selected') {
+        milestones = SELECTED_MILESTONES;
+    } else if (selKeyNorm === 'shortlisted' || selKeyNorm === 'onhold') {
+        isShortlistTrack = true;
+        const finalSelected = String(row.Shortlist_Candidate_Status || '').toLowerCase().replace(/\s+/g, '').trim() === 'selected';
+        milestones = SHORTLIST_PRE_MILESTONES.slice();
+        if (finalSelected) {
+            // Insert a small visual break between pre-selection and post-selection.
+            milestones.push({ separator: true });
+            milestones = milestones.concat(SELECTED_MILESTONES);
+        }
+    } else {
+        return '';
+    }
+
+    const items = milestones.map((m) => {
+        if (m.separator) return { separator: true };
+        const state = milestoneState(row[m.key], m.type);
+        return { ...m, state, value: row[m.key] || '' };
+    });
+
+    // Highlight the current step: first non-done / non-failed step.
+    const firstActiveIdx = items.findIndex((it) => !it.separator && it.state !== 'done' && it.state !== 'failed');
+    if (firstActiveIdx >= 0) {
+        items[firstActiveIdx].state = items[firstActiveIdx].state === 'inprogress' ? 'inprogress current' : 'current';
+    }
+
+    const iconFor = (state) => {
+        if (state.includes('done')) return 'bi-check-lg';
+        if (state.includes('failed')) return 'bi-x-lg';
+        if (state.includes('inprogress')) return 'bi-hourglass-split';
+        if (state.includes('current')) return 'bi-dot';
+        return '';
+    };
+
+    return `<div class="milestone-track">${items.map((it) => {
+        if (it.separator) return '<div class="milestone section-break"><div class="m-icon"></div></div>';
+        const valueLabel = it.value && it.value !== '0000-00-00' ? it.value : '';
+        return `<div class="milestone ${it.state}" title="${escapeHtml(it.label)}: ${escapeHtml(valueLabel || 'Pending')}">
+            <div class="m-icon"><i class="bi ${iconFor(it.state)}"></i></div>
+            <div class="m-label">${escapeHtml(it.label)}</div>
+            ${valueLabel ? `<div class="m-value">${escapeHtml(valueLabel)}</div>` : ''}
+        </div>`;
+    }).join('')}</div>`;
+}
+
 function renderCallHistoryFloater(row) {
     const body = document.getElementById('callHistoryFloaterBody');
     if (!body) return;
@@ -513,6 +612,21 @@ function renderPanels(row) {
     // Render the Call History floating panel (outside the tab content so it
     // stays available while working on Selected / Shortlisted tabs).
     renderCallHistoryFloater(row);
+
+    // Render the horizontal milestone track between the details card and the
+    // entry panels. Hidden when the row's Selection Status falls outside the
+    // Selected / Shortlisted / OnHold flow.
+    const milestonesHtml = renderMilestones(row);
+    const milestonesCard = document.getElementById('milestonesCard');
+    const milestonesPanel = document.getElementById('milestonesPanel');
+    if (milestonesPanel && milestonesCard) {
+        if (milestonesHtml) {
+            milestonesPanel.innerHTML = milestonesHtml;
+            milestonesCard.style.display = '';
+        } else {
+            milestonesCard.style.display = 'none';
+        }
+    }
 
     const panelNames = isDistrictCandidateDataMode
         ? ['Selected']
