@@ -318,8 +318,114 @@ function render_status_chip(?string $value, ?string $prefix = null): string
     return $prefixHtml . '<span class="status-chip ' . esc(status_chip_class($value)) . '">' . esc($value) . '</span>';
 }
 
+/**
+ * Renders a fixed bottom-right toast on every page when the current user has
+ * unseen notifications or new replies on notifications they have already
+ * viewed. Suppresses itself on the notifications page (where the user is
+ * already looking at the same data) and for unauthenticated visitors.
+ */
+function fetch_and_render_notification_toast(): void
+{
+    $user = current_user();
+    if (!$user) {
+        return;
+    }
+    $script = basename($_SERVER['SCRIPT_NAME'] ?? '');
+    if ($script === 'notifications.php' || $script === 'index.php' || $script === 'logout.php') {
+        return;
+    }
+
+    $uid = (int) ($user['id'] ?? 0);
+    $role = (string) ($user['role'] ?? '');
+    $rolesByToWhom = ['State CRM' => 'crm_member', 'State DSM' => 'state_dsm', 'District User' => 'district_user'];
+    $roleToWhom = array_search($role, $rolesByToWhom, true) ?: '';
+    $admin = is_admin($user);
+
+    $unseen = 0;
+    $newReplies = 0;
+    try {
+        // Notifications visible to the user but with no seen row yet (not
+        // counting ones they own).
+        if ($admin) {
+            $sql = "SELECT COUNT(*)
+                FROM activities a
+                LEFT JOIN activity_seen s ON s.activity_id = a.id AND s.user_id = ?
+                WHERE a.active_status = 1 AND a.status <> 'closed'
+                  AND a.owner_user_id <> ?
+                  AND s.activity_id IS NULL";
+            $st = db()->prepare($sql);
+            $st->execute([$uid, $uid]);
+        } else {
+            $sql = "SELECT COUNT(*)
+                FROM activities a
+                LEFT JOIN activity_seen s ON s.activity_id = a.id AND s.user_id = ?
+                WHERE a.active_status = 1 AND a.status <> 'closed'
+                  AND a.owner_user_id <> ?
+                  AND s.activity_id IS NULL
+                  AND a.to_whom = ?
+                  AND (a.read_by = 'any' OR a.target_user_id = ?)";
+            $st = db()->prepare($sql);
+            $st->execute([$uid, $uid, $roleToWhom, $uid]);
+        }
+        $unseen = (int) $st->fetchColumn();
+
+        // Replies posted by someone else after the current user's last view of
+        // that notification.
+        $rstmt = db()->prepare(
+            "SELECT COUNT(*)
+             FROM activity_replies r
+             JOIN activity_seen s ON s.activity_id = r.activity_id AND s.user_id = ?
+             WHERE r.user_id <> ?
+               AND r.created_at > s.seen_at"
+        );
+        $rstmt->execute([$uid, $uid]);
+        $newReplies = (int) $rstmt->fetchColumn();
+    } catch (Throwable $e) {
+        // Tables may not exist yet (first request before notifications.php is
+        // touched). Stay quiet rather than throw.
+        return;
+    }
+
+    if ($unseen + $newReplies <= 0) {
+        return;
+    }
+
+    $lines = [];
+    if ($unseen > 0) {
+        $lines[] = '<div><i class="bi bi-envelope me-1"></i><strong>' . (int) $unseen . '</strong> unseen notification' . ($unseen === 1 ? '' : 's') . '</div>';
+    }
+    if ($newReplies > 0) {
+        $lines[] = '<div><i class="bi bi-chat-left-text me-1"></i><strong>' . (int) $newReplies . '</strong> new repl' . ($newReplies === 1 ? 'y' : 'ies') . '</div>';
+    }
+    ?>
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1080;">
+        <div id="notificationAlertToast" class="toast" role="alert" aria-live="polite" aria-atomic="true">
+            <div class="toast-header">
+                <i class="bi bi-bell-fill text-warning me-2"></i>
+                <strong class="me-auto">You have new activity</strong>
+                <small class="text-muted">just now</small>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                <?= implode('', $lines) ?>
+                <a href="/notifications.php" class="btn btn-sm btn-primary mt-2"><i class="bi bi-arrow-right me-1"></i>Open Notifications</a>
+            </div>
+        </div>
+    </div>
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const el = document.getElementById('notificationAlertToast');
+        if (el && typeof bootstrap !== 'undefined' && bootstrap?.Toast) {
+            bootstrap.Toast.getOrCreateInstance(el, { autohide: false }).show();
+        }
+    });
+    </script>
+    <?php
+}
+
 function render_footer(bool $showFooter = true): void
 {
+    fetch_and_render_notification_toast();
     ?>
 </main>
 <?php if ($showFooter): ?>
