@@ -339,34 +339,22 @@ function fetch_and_render_notification_toast(): void
     $role = (string) ($user['role'] ?? '');
     $rolesByToWhom = ['State CRM' => 'crm_member', 'State DSM' => 'state_dsm', 'District User' => 'district_user'];
     $roleToWhom = array_search($role, $rolesByToWhom, true) ?: '';
-    $admin = is_admin($user);
 
     $unseen = 0;
     $newReplies = 0;
     try {
-        // Notifications visible to the user but with no seen row yet (not
-        // counting ones they own).
-        if ($admin) {
-            $sql = "SELECT COUNT(*)
-                FROM activities a
-                LEFT JOIN activity_seen s ON s.activity_id = a.id AND s.user_id = ?
-                WHERE a.active_status = 1 AND a.status <> 'closed'
-                  AND a.owner_user_id <> ?
-                  AND s.activity_id IS NULL";
-            $st = db()->prepare($sql);
-            $st->execute([$uid, $uid]);
-        } else {
-            $sql = "SELECT COUNT(*)
-                FROM activities a
-                LEFT JOIN activity_seen s ON s.activity_id = a.id AND s.user_id = ?
-                WHERE a.active_status = 1 AND a.status <> 'closed'
-                  AND a.owner_user_id <> ?
-                  AND s.activity_id IS NULL
-                  AND a.to_whom = ?
-                  AND (a.read_by = 'any' OR a.target_user_id = ?)";
-            $st = db()->prepare($sql);
-            $st->execute([$uid, $uid, $roleToWhom, $uid]);
-        }
+        // Strict audience filter: only notifications the user actually receives
+        // (not counting ones they own) AND has not yet seen.
+        $sql = "SELECT COUNT(*)
+            FROM activities a
+            LEFT JOIN activity_seen s ON s.activity_id = a.id AND s.user_id = ?
+            WHERE a.active_status = 1 AND a.status <> 'closed'
+              AND a.owner_user_id <> ?
+              AND s.activity_id IS NULL
+              AND a.to_whom = ?
+              AND (a.read_by = 'any' OR a.target_user_id = ?)";
+        $st = db()->prepare($sql);
+        $st->execute([$uid, $uid, $roleToWhom, $uid]);
         $unseen = (int) $st->fetchColumn();
 
         // Replies posted by someone else after the current user's last view of
