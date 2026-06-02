@@ -13,6 +13,7 @@ $categoryOptions = array_values(array_filter(
 ));
 
 $rows = fetch_shortlisted_district_jobstation_joined_report($filters);
+$jobfairRows = fetch_jobfair_candidate_joined_report($filters);
 
 render_header('District wise Candidate Joined Status', ['main_container_class' => 'container-fluid']);
 render_page_header('District wise Candidate Joined Status', [
@@ -68,6 +69,17 @@ render_page_header('District wise Candidate Joined Status', [
             District-wise count of distinct job stations and local bodies affected, plus joining outcomes split into two cohorts &mdash; directly Selected candidates (Selection Status = Selected) and Shortlisted/On hold candidates whose Final Status = Selected. The combined Total Selected and Shortlisted group sums the two cohorts per joined status.
         </p>
         <?php render_district_jobstation_joined_table($rows, $filters); ?>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h2 class="h5">Job Fair wise Candidate Joining status</h2>
+        <p class="data-meta mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            Same metric set as the District wise table above but grouped by <strong>Job Fair No</strong>. Districts, distinct job stations and local bodies are reported per job fair, alongside Selected, Shortlist Final Selected and combined joining outcomes.
+        </p>
+        <?php render_jobfair_joined_table($jobfairRows, $filters); ?>
     </div>
 </div>
 
