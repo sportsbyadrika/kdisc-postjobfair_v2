@@ -504,10 +504,10 @@ $djCell = static function (int $value, ?string $district, string $cohort, ?strin
 ?>
 <div class="card mb-4">
     <div class="card-body">
-        <h2 class="h5">District wise &middot; Job Station and Joined Status (Offer Letter Receipt = Yes)</h2>
+        <h2 class="h5">District wise &middot; Job Station and Joined Status</h2>
         <p class="data-meta mb-3">
             <i class="bi bi-info-circle me-1"></i>
-            District-wise count of distinct job stations affected, plus joining outcomes split into two cohorts whose <strong>Offer Letter Receipt Confirmed = Yes</strong>: directly Selected candidates, and Shortlisted/On hold candidates whose Final Status = Selected. Honours Aggregator / Job Fair / Category filters above.
+            District-wise count of distinct job stations affected, plus joining outcomes split into two cohorts &mdash; directly Selected candidates (First Section universe) and Shortlisted/On hold candidates whose Final Status = Selected (Second Section universe). Honours Aggregator / Job Fair / Category filters above.
         </p>
         <div class="table-responsive">
             <table class="table table-bordered table-striped align-middle mb-0">

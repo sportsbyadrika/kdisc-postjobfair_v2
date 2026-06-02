@@ -1369,8 +1369,8 @@ function fetch_crm_user_activity_report(array $filters): array
 
 /**
  * For the Shortlisted/On hold tab: district-wise breakdown of joining
- * outcomes among candidates whose Offer Letter Receipt is confirmed = Yes,
- * split into two cohorts:
+ * outcomes split into two cohorts matching the First and Second section
+ * universes:
  *  - Selected directly (Selection_Status = 'Selected')
  *  - Shortlist/Onhold whose Final status = 'Selected'
  * Also reports the distinct job-station count per district.
@@ -1404,8 +1404,7 @@ function fetch_shortlisted_district_jobstation_joined_report(array $filters): ar
                      AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending'
                           OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS shortlist_joined_pending
         FROM job_fair_result
-        WHERE LOWER(TRIM(COALESCE(Confirm_Offer_Letter_Receipt_by_Candidate, ''))) = 'yes'
-          AND (
+        WHERE (
                 LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
                 OR (
                     LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
