@@ -58,6 +58,7 @@ $selectedTotals = calculate_consolidated_totals($selectedRows, [
     'joined_yes',
     'joined_no',
     'joined_pending',
+    'joined_future_date',
 ]);
 
 $shortlistedRows = fetch_shortlisted_onhold_report($filters);
@@ -295,7 +296,7 @@ render_page_header('Consolidated Report', [
                     <th colspan="2" class="text-center">Offer Letter Softcopy</th>
                     <th colspan="3" class="text-center">Softcopy Verified</th>
                     <th colspan="3" class="text-center">Offer Letter Receipt</th>
-                    <th colspan="3" class="text-center">Candidate Joined</th>
+                    <th colspan="4" class="text-center">Candidate Joined</th>
                 </tr>
                 <tr>
                     <th>Yes</th>
@@ -311,11 +312,12 @@ render_page_header('Consolidated Report', [
                     <th>Yes</th>
                     <th>No</th>
                     <th>Pending</th>
+                    <th>Future Date</th>
                 </tr>
                 </thead>
                 <tbody>
                 <?php if ($selectedRows === []): ?>
-                    <tr><td colspan="15" class="text-center text-muted">No data available.</td></tr>
+                    <tr><td colspan="16" class="text-center text-muted">No data available.</td></tr>
                 <?php endif; ?>
                 <?php foreach ($selectedRows as $row): ?>
                     <tr>
@@ -334,6 +336,7 @@ render_page_header('Consolidated Report', [
                         <td><?= render_metric_link((int) $row['joined_yes'], 'selected', 'joined_yes', (string) $row['job_fair_no'], $filters) ?></td>
                         <td><?= render_metric_link((int) $row['joined_no'], 'selected', 'joined_no', (string) $row['job_fair_no'], $filters) ?></td>
                         <td><?= render_metric_link((int) $row['joined_pending'], 'selected', 'joined_pending', (string) $row['job_fair_no'], $filters) ?></td>
+                        <td><?= render_metric_link((int) ($row['joined_future_date'] ?? 0), 'selected', 'joined_future_date', (string) $row['job_fair_no'], $filters) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if ($selectedRows !== []): ?>
@@ -353,6 +356,7 @@ render_page_header('Consolidated Report', [
                         <td><?= render_metric_link($selectedTotals['joined_yes'], 'selected', 'joined_yes', null, $filters) ?></td>
                         <td><?= render_metric_link($selectedTotals['joined_no'], 'selected', 'joined_no', null, $filters) ?></td>
                         <td><?= render_metric_link($selectedTotals['joined_pending'], 'selected', 'joined_pending', null, $filters) ?></td>
+                        <td><?= render_metric_link((int) ($selectedTotals['joined_future_date'] ?? 0), 'selected', 'joined_future_date', null, $filters) ?></td>
                     </tr>
                 <?php endif; ?>
                 </tbody>

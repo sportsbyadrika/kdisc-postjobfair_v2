@@ -64,6 +64,7 @@ const CONSOLIDATED_METRIC_LABELS = [
         'joined_yes' => 'Candidate Joined: Yes',
         'joined_no' => 'Candidate Joined: No',
         'joined_pending' => 'Candidate Joined: Pending',
+        'joined_future_date' => 'Candidate Joined: Future Date',
     ],
     'shortlisted' => [
         'total_shortlisted_onhold_candidate' => 'Total Shortlisted/Onhold Candidate',
@@ -218,7 +219,8 @@ function fetch_selected_candidates_report(array $filters): array
             SUM(CASE WHEN LOWER(TRIM(COALESCE(Confirm_Offer_Letter_Receipt_by_Candidate, ''))) = 'pending' OR TRIM(COALESCE(Confirm_Offer_Letter_Receipt_by_Candidate, '')) = '' THEN 1 ELSE 0 END) AS receipt_confirmed_pending,
             SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS joined_yes,
             SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'no' THEN 1 ELSE 0 END) AS joined_no,
-            SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending' OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '' THEN 1 ELSE 0 END) AS joined_pending
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending' OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '' THEN 1 ELSE 0 END) AS joined_pending,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS joined_future_date
         FROM job_fair_result
         $whereClause
         GROUP BY job_fair_no
