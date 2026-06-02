@@ -485,6 +485,18 @@ render_page_header('Consolidated Report', [
     </div>
 </div>
 
+<?php $jobfairJoinedRows = fetch_jobfair_candidate_joined_report($filters); ?>
+<div class="card mb-4">
+    <div class="card-body">
+        <h2 class="h5">Job Fair wise Candidate Joining status</h2>
+        <p class="data-meta mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            Same metrics as the District wise breakdown but grouped by <strong>Job Fair No</strong>. Districts, distinct job stations and local bodies are reported per job fair, alongside Selected, Shortlist Final Selected and combined joining outcomes. Honours Aggregator / Job Fair / Category filters above.
+        </p>
+        <?php render_jobfair_joined_table($jobfairJoinedRows, $filters); ?>
+    </div>
+</div>
+
 <?php
 $joinRemarksPivotRows = fetch_shortlisted_join_remarks_pivot($filters);
 $joinRemarksPivotTotals = ['joined_yes' => 0, 'joined_no' => 0, 'joined_pending' => 0, 'joined_future_date' => 0, 'total' => 0];

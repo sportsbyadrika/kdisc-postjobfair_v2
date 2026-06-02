@@ -1469,6 +1469,213 @@ function fetch_shortlisted_join_remarks_pivot(array $filters): array
 }
 
 /**
+ * Same metrics as fetch_shortlisted_district_jobstation_joined_report but
+ * grouped by Job_Fair_No. Drives the Job Fair wise Candidate Joining Status
+ * table.
+ */
+function fetch_jobfair_candidate_joined_report(array $filters): array
+{
+    $params = [];
+    $conditions = build_common_conditions($filters, $params);
+    $jfrConditionsSql = $conditions === [] ? '' : (' AND ' . implode(' AND ', $conditions));
+
+    $sql = "SELECT
+            COALESCE(NULLIF(TRIM(Job_Fair_No), ''), 'Unknown') AS job_fair_no,
+            COUNT(DISTINCT NULLIF(TRIM(Candidate_District), '')) AS district_count,
+            COUNT(DISTINCT NULLIF(TRIM(Candidate_Jobstation), '')) AS job_station_count,
+            COUNT(DISTINCT NULLIF(TRIM(Candidate_Localbody), '')) AS local_body_count,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected' THEN 1 ELSE 0 END) AS selected_total,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS selected_joined_yes,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'no' THEN 1 ELSE 0 END) AS selected_joined_no,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                     AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending'
+                          OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS selected_joined_pending,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS selected_joined_future_date,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected' THEN 1 ELSE 0 END) AS shortlist_total,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'yes' THEN 1 ELSE 0 END) AS shortlist_joined_yes,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'no' THEN 1 ELSE 0 END) AS shortlist_joined_no,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                     AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending'
+                          OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS shortlist_joined_pending,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS shortlist_joined_future_date
+        FROM job_fair_result
+        WHERE (
+                LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                OR (
+                    LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                    AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                )
+          )
+          $jfrConditionsSql
+        GROUP BY COALESCE(NULLIF(TRIM(Job_Fair_No), ''), 'Unknown')
+        ORDER BY job_fair_no DESC";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
+
+/**
+ * Renders the Job Fair wise Candidate Joining Status table. Same metric set
+ * as the district variant, but each row scopes the drill-down by overriding
+ * the job_fair filter rather than by Candidate_District.
+ */
+function render_jobfair_joined_table(array $rows, array $filters): void
+{
+    $totals = [
+        'district_count' => 0,
+        'job_station_count' => 0,
+        'local_body_count' => 0,
+        'selected_total' => 0,
+        'selected_joined_yes' => 0,
+        'selected_joined_no' => 0,
+        'selected_joined_pending' => 0,
+        'selected_joined_future_date' => 0,
+        'shortlist_total' => 0,
+        'shortlist_joined_yes' => 0,
+        'shortlist_joined_no' => 0,
+        'shortlist_joined_pending' => 0,
+        'shortlist_joined_future_date' => 0,
+    ];
+    foreach ($rows as $r) {
+        foreach (array_keys($totals) as $k) {
+            $totals[$k] += (int) ($r[$k] ?? 0);
+        }
+    }
+
+    $drillUrl = static function (?string $jobFairNo, string $cohort, ?string $joined) use ($filters): string {
+        return '/district_jobstation_joined_drill.php?' . http_build_query(array_filter([
+            'cohort' => $cohort,
+            'joined' => $joined ?? '',
+            'aggregator' => $filters['aggregator'] ?? '',
+            'job_fair' => $jobFairNo !== null && $jobFairNo !== '' ? $jobFairNo : ($filters['job_fair'] ?? ''),
+            'category' => $filters['category'] ?? '',
+        ], static fn($v): bool => $v !== '' && $v !== null));
+    };
+    $cell = static function (int $value, ?string $jobFairNo, string $cohort, ?string $joined) use ($drillUrl): string {
+        if ($value === 0) {
+            return '<span class="text-muted">0</span>';
+        }
+        return '<a href="' . esc($drillUrl($jobFairNo, $cohort, $joined)) . '">' . number_format($value) . '</a>';
+    };
+    ?>
+    <div class="table-responsive">
+        <table class="table table-bordered table-striped align-middle mb-0">
+            <thead>
+                <tr>
+                    <th rowspan="2">Sl No</th>
+                    <th rowspan="2">Job Fair No</th>
+                    <th rowspan="2" class="text-end">Districts</th>
+                    <th rowspan="2" class="text-end">Job Stations</th>
+                    <th rowspan="2" class="text-end">Local Bodies</th>
+                    <th colspan="5" class="text-center">Selected &mdash; Candidate Joined</th>
+                    <th colspan="5" class="text-center">Shortlist Final Selected &mdash; Candidate Joined</th>
+                    <th colspan="5" class="text-center">Total Selected and Shortlisted</th>
+                </tr>
+                <tr>
+                    <th class="text-end">Yes</th>
+                    <th class="text-end">No</th>
+                    <th class="text-end">Pending</th>
+                    <th class="text-end">Future Date</th>
+                    <th class="text-end">Total</th>
+                    <th class="text-end">Yes</th>
+                    <th class="text-end">No</th>
+                    <th class="text-end">Pending</th>
+                    <th class="text-end">Future Date</th>
+                    <th class="text-end">Total</th>
+                    <th class="text-end">Yes</th>
+                    <th class="text-end">No</th>
+                    <th class="text-end">Pending</th>
+                    <th class="text-end">Future Date</th>
+                    <th class="text-end">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php if ($rows === []): ?>
+                <tr><td colspan="20"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
+            <?php endif; ?>
+            <?php $idx = 1; foreach ($rows as $row): ?>
+                <?php
+                $jf = (string) $row['job_fair_no'];
+                $selYes = (int) ($row['selected_joined_yes'] ?? 0);
+                $selNo = (int) ($row['selected_joined_no'] ?? 0);
+                $selPen = (int) ($row['selected_joined_pending'] ?? 0);
+                $selFut = (int) ($row['selected_joined_future_date'] ?? 0);
+                $shYes = (int) ($row['shortlist_joined_yes'] ?? 0);
+                $shNo = (int) ($row['shortlist_joined_no'] ?? 0);
+                $shPen = (int) ($row['shortlist_joined_pending'] ?? 0);
+                $shFut = (int) ($row['shortlist_joined_future_date'] ?? 0);
+                ?>
+                <tr>
+                    <td><?= $idx++ ?></td>
+                    <td class="fw-semibold"><?= esc($jf) ?></td>
+                    <td class="text-end"><?= number_format((int) ($row['district_count'] ?? 0)) ?></td>
+                    <td class="text-end"><?= $cell((int) ($row['job_station_count'] ?? 0), $jf, 'any', null) ?></td>
+                    <td class="text-end"><?= $cell((int) ($row['local_body_count'] ?? 0), $jf, 'any', null) ?></td>
+                    <td class="text-end"><?= $cell($selYes, $jf, 'selected', 'yes') ?></td>
+                    <td class="text-end"><?= $cell($selNo, $jf, 'selected', 'no') ?></td>
+                    <td class="text-end"><?= $cell($selPen, $jf, 'selected', 'pending') ?></td>
+                    <td class="text-end"><?= $cell($selFut, $jf, 'selected', 'future_date') ?></td>
+                    <td class="text-end fw-semibold"><?= $cell((int) ($row['selected_total'] ?? 0), $jf, 'selected', null) ?></td>
+                    <td class="text-end"><?= $cell($shYes, $jf, 'shortlist_final', 'yes') ?></td>
+                    <td class="text-end"><?= $cell($shNo, $jf, 'shortlist_final', 'no') ?></td>
+                    <td class="text-end"><?= $cell($shPen, $jf, 'shortlist_final', 'pending') ?></td>
+                    <td class="text-end"><?= $cell($shFut, $jf, 'shortlist_final', 'future_date') ?></td>
+                    <td class="text-end fw-semibold"><?= $cell((int) ($row['shortlist_total'] ?? 0), $jf, 'shortlist_final', null) ?></td>
+                    <td class="text-end fw-semibold"><?= $cell($selYes + $shYes, $jf, 'any', 'yes') ?></td>
+                    <td class="text-end fw-semibold"><?= $cell($selNo + $shNo, $jf, 'any', 'no') ?></td>
+                    <td class="text-end fw-semibold"><?= $cell($selPen + $shPen, $jf, 'any', 'pending') ?></td>
+                    <td class="text-end fw-semibold"><?= $cell($selFut + $shFut, $jf, 'any', 'future_date') ?></td>
+                    <td class="text-end fw-semibold"><?= $cell($selYes + $shYes + $selNo + $shNo + $selPen + $shPen + $selFut + $shFut, $jf, 'any', null) ?></td>
+                </tr>
+            <?php endforeach; ?>
+            <?php if ($rows !== []): ?>
+                <tr class="table-secondary fw-semibold">
+                    <td colspan="2">Total</td>
+                    <td class="text-end"><?= number_format($totals['district_count']) ?></td>
+                    <td class="text-end"><?= number_format($totals['job_station_count']) ?></td>
+                    <td class="text-end"><?= number_format($totals['local_body_count']) ?></td>
+                    <td class="text-end"><?= $cell($totals['selected_joined_yes'], null, 'selected', 'yes') ?></td>
+                    <td class="text-end"><?= $cell($totals['selected_joined_no'], null, 'selected', 'no') ?></td>
+                    <td class="text-end"><?= $cell($totals['selected_joined_pending'], null, 'selected', 'pending') ?></td>
+                    <td class="text-end"><?= $cell($totals['selected_joined_future_date'], null, 'selected', 'future_date') ?></td>
+                    <td class="text-end"><?= $cell($totals['selected_total'], null, 'selected', null) ?></td>
+                    <td class="text-end"><?= $cell($totals['shortlist_joined_yes'], null, 'shortlist_final', 'yes') ?></td>
+                    <td class="text-end"><?= $cell($totals['shortlist_joined_no'], null, 'shortlist_final', 'no') ?></td>
+                    <td class="text-end"><?= $cell($totals['shortlist_joined_pending'], null, 'shortlist_final', 'pending') ?></td>
+                    <td class="text-end"><?= $cell($totals['shortlist_joined_future_date'], null, 'shortlist_final', 'future_date') ?></td>
+                    <td class="text-end"><?= $cell($totals['shortlist_total'], null, 'shortlist_final', null) ?></td>
+                    <td class="text-end"><?= $cell($totals['selected_joined_yes'] + $totals['shortlist_joined_yes'], null, 'any', 'yes') ?></td>
+                    <td class="text-end"><?= $cell($totals['selected_joined_no'] + $totals['shortlist_joined_no'], null, 'any', 'no') ?></td>
+                    <td class="text-end"><?= $cell($totals['selected_joined_pending'] + $totals['shortlist_joined_pending'], null, 'any', 'pending') ?></td>
+                    <td class="text-end"><?= $cell($totals['selected_joined_future_date'] + $totals['shortlist_joined_future_date'], null, 'any', 'future_date') ?></td>
+                    <td class="text-end"><?= $cell(
+                        $totals['selected_joined_yes'] + $totals['shortlist_joined_yes']
+                        + $totals['selected_joined_no'] + $totals['shortlist_joined_no']
+                        + $totals['selected_joined_pending'] + $totals['shortlist_joined_pending']
+                        + $totals['selected_joined_future_date'] + $totals['shortlist_joined_future_date'],
+                        null, 'any', null
+                    ) ?></td>
+                </tr>
+            <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php
+}
+
+/**
  * Renders the District wise · Job Station and Joined Status table given the
  * already-fetched rows and active filters. Used by both consolidated_report.php
  * (admin / state DSM) and district_candidate_joined_status_report.php
