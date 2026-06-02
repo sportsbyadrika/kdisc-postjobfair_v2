@@ -1392,6 +1392,8 @@ function fetch_shortlisted_district_jobstation_joined_report(array $filters): ar
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
                      AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending'
                           OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS selected_joined_pending,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS selected_joined_future_date,
             -- Shortlist/Onhold with Final Selected cohort
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
                      AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
@@ -1402,7 +1404,10 @@ function fetch_shortlisted_district_jobstation_joined_report(array $filters): ar
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
                      AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
                      AND (LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending'
-                          OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS shortlist_joined_pending
+                          OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS shortlist_joined_pending,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS shortlist_joined_future_date
         FROM job_fair_result
         WHERE (
                 LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
