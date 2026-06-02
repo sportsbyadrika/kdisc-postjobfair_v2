@@ -26,6 +26,10 @@ if (!in_array($joined, $allowedJoined, true)) {
     $joined = '';
 }
 $offerLetterYes = (($_GET['offer_letter'] ?? '') === 'yes');
+$futureBucket = trim((string) ($_GET['future_bucket'] ?? ''));
+if (!in_array($futureBucket, ['before_today', 'today_onwards', ''], true)) {
+    $futureBucket = '';
+}
 
 $conditions = [];
 $params = [];
@@ -67,6 +71,13 @@ if ($joined === 'yes') {
 // Offer Letter Generated filter.
 if ($offerLetterYes) {
     $conditions[] = "LOWER(TRIM(COALESCE(Offer_Letter_Generated, ''))) = 'yes'";
+}
+
+// Future-date bucket filter. Only relevant when joined=future_date is set.
+if ($futureBucket === 'before_today') {
+    $conditions[] = "Candidate_Joining_Future_Date IS NOT NULL AND DATE(Candidate_Joining_Future_Date) < CURDATE()";
+} elseif ($futureBucket === 'today_onwards') {
+    $conditions[] = "Candidate_Joining_Future_Date IS NOT NULL AND DATE(Candidate_Joining_Future_Date) >= CURDATE()";
 }
 
 // Common filters (aggregator, job_fair, category) - reuse helper but it expects them in $params.
@@ -164,6 +175,7 @@ $downloadUrl = '/district_jobstation_joined_drill.php?' . http_build_query(array
     'cohort' => $cohort,
     'joined' => $joined,
     'offer_letter' => $offerLetterYes ? 'yes' : '',
+    'future_bucket' => $futureBucket,
     'aggregator' => $filters['aggregator'] ?? '',
     'job_fair' => $filters['job_fair'] ?? '',
     'category' => $filters['category'] ?? '',
@@ -190,6 +202,11 @@ render_page_header('District / Job Station — Drill-down', [
         <span class="form-label mb-0 me-1">Drill-down scope:</span>
         <?php if ($offerLetterYes): ?>
             <span class="status-chip status-success"><strong>Offer Letter Generated:</strong>&nbsp;Yes</span>
+        <?php endif; ?>
+        <?php if ($futureBucket === 'before_today'): ?>
+            <span class="status-chip status-warning"><strong>Future Date:</strong>&nbsp;Before Today</span>
+        <?php elseif ($futureBucket === 'today_onwards'): ?>
+            <span class="status-chip status-info"><strong>Future Date:</strong>&nbsp;Today Onwards</span>
         <?php endif; ?>
         <?php
             if (!$hasDistrictParam || $district === '') {

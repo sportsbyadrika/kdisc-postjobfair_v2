@@ -1879,3 +1879,207 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
     </div>
     <?php
 }
+
+/**
+ * District-wise breakdown of candidates whose Candidate_Joined_Status is
+ * "Future Date" split into Before Today / Today Onwards buckets per cohort
+ * (Selected and Shortlist Final Selected). Rows without a parseable
+ * Candidate_Joining_Future_Date are counted toward the per-cohort Future
+ * Dates total but not toward either bucket.
+ */
+function fetch_future_date_district_report(array $filters): array
+{
+    $params = [];
+    $conditions = build_common_conditions($filters, $params);
+    $jfrConditionsSql = $conditions === [] ? '' : (' AND ' . implode(' AND ', $conditions));
+
+    $sel = "LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'";
+    $sh = "LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+           AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'";
+    $fut = "LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date'";
+    $before = "Candidate_Joining_Future_Date IS NOT NULL AND DATE(Candidate_Joining_Future_Date) < CURDATE()";
+    $after = "Candidate_Joining_Future_Date IS NOT NULL AND DATE(Candidate_Joining_Future_Date) >= CURDATE()";
+
+    $sql = "SELECT
+            COALESCE(NULLIF(TRIM(Candidate_District), ''), 'Unknown') AS district,
+            SUM(CASE WHEN $sel AND $fut THEN 1 ELSE 0 END) AS selected_future_total,
+            SUM(CASE WHEN $sel AND $fut AND $before THEN 1 ELSE 0 END) AS selected_future_before_today,
+            SUM(CASE WHEN $sel AND $fut AND $after THEN 1 ELSE 0 END) AS selected_future_today_onwards,
+            SUM(CASE WHEN ($sh) AND $fut THEN 1 ELSE 0 END) AS shortlist_future_total,
+            SUM(CASE WHEN ($sh) AND $fut AND $before THEN 1 ELSE 0 END) AS shortlist_future_before_today,
+            SUM(CASE WHEN ($sh) AND $fut AND $after THEN 1 ELSE 0 END) AS shortlist_future_today_onwards
+        FROM job_fair_result
+        WHERE $fut
+          AND ($sel OR ($sh))
+          $jfrConditionsSql
+        GROUP BY COALESCE(NULLIF(TRIM(Candidate_District), ''), 'Unknown')
+        ORDER BY district ASC";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
+
+/**
+ * Same metric set as fetch_future_date_district_report but grouped by
+ * Job_Fair_No.
+ */
+function fetch_future_date_jobfair_report(array $filters): array
+{
+    $params = [];
+    $conditions = build_common_conditions($filters, $params);
+    $jfrConditionsSql = $conditions === [] ? '' : (' AND ' . implode(' AND ', $conditions));
+
+    $sel = "LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'";
+    $sh = "LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+           AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'";
+    $fut = "LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date'";
+    $before = "Candidate_Joining_Future_Date IS NOT NULL AND DATE(Candidate_Joining_Future_Date) < CURDATE()";
+    $after = "Candidate_Joining_Future_Date IS NOT NULL AND DATE(Candidate_Joining_Future_Date) >= CURDATE()";
+
+    $sql = "SELECT
+            COALESCE(NULLIF(TRIM(Job_Fair_No), ''), 'Unknown') AS job_fair_no,
+            SUM(CASE WHEN $sel AND $fut THEN 1 ELSE 0 END) AS selected_future_total,
+            SUM(CASE WHEN $sel AND $fut AND $before THEN 1 ELSE 0 END) AS selected_future_before_today,
+            SUM(CASE WHEN $sel AND $fut AND $after THEN 1 ELSE 0 END) AS selected_future_today_onwards,
+            SUM(CASE WHEN ($sh) AND $fut THEN 1 ELSE 0 END) AS shortlist_future_total,
+            SUM(CASE WHEN ($sh) AND $fut AND $before THEN 1 ELSE 0 END) AS shortlist_future_before_today,
+            SUM(CASE WHEN ($sh) AND $fut AND $after THEN 1 ELSE 0 END) AS shortlist_future_today_onwards
+        FROM job_fair_result
+        WHERE $fut
+          AND ($sel OR ($sh))
+          $jfrConditionsSql
+        GROUP BY COALESCE(NULLIF(TRIM(Job_Fair_No), ''), 'Unknown')
+        ORDER BY job_fair_no DESC";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
+
+/**
+ * Shared renderer for both future-date breakdown tables. $groupBy controls
+ * whether rows show Candidate District ('district') or Job Fair No
+ * ('job_fair'). Drill-down cells point at district_jobstation_joined_drill
+ * with joined=future_date plus the optional future_bucket filter.
+ */
+function render_future_date_joined_table(array $rows, array $filters, string $groupBy): void
+{
+    $isDistrict = ($groupBy === 'district');
+    $groupKey = $isDistrict ? 'district' : 'job_fair_no';
+    $groupHeader = $isDistrict ? 'Candidate District' : 'Job Fair No';
+
+    $totals = [
+        'selected_future_total' => 0,
+        'selected_future_before_today' => 0,
+        'selected_future_today_onwards' => 0,
+        'shortlist_future_total' => 0,
+        'shortlist_future_before_today' => 0,
+        'shortlist_future_today_onwards' => 0,
+    ];
+    foreach ($rows as $r) {
+        foreach (array_keys($totals) as $k) {
+            $totals[$k] += (int) ($r[$k] ?? 0);
+        }
+    }
+
+    $drillUrl = static function (?string $rowKey, string $cohort, ?string $bucket) use ($filters, $isDistrict): string {
+        $params = [
+            'cohort' => $cohort,
+            'joined' => 'future_date',
+            'aggregator' => $filters['aggregator'] ?? '',
+            'job_fair' => $filters['job_fair'] ?? '',
+            'category' => $filters['category'] ?? '',
+        ];
+        if ($isDistrict) {
+            $params['district'] = $rowKey ?? '';
+        } elseif ($rowKey !== null && $rowKey !== '') {
+            $params['job_fair'] = $rowKey;
+        }
+        if ($bucket !== null && $bucket !== '') {
+            $params['future_bucket'] = $bucket;
+        }
+        return '/district_jobstation_joined_drill.php?' . http_build_query(array_filter(
+            $params,
+            static fn($v): bool => $v !== '' && $v !== null
+        ));
+    };
+    $cell = static function (int $value, ?string $rowKey, string $cohort, ?string $bucket) use ($drillUrl): string {
+        if ($value === 0) {
+            return '<span class="text-muted">0</span>';
+        }
+        return '<a href="' . esc($drillUrl($rowKey, $cohort, $bucket)) . '">' . number_format($value) . '</a>';
+    };
+    $selBg = 'background-color:#e8f1ff;';
+    $shBg = 'background-color:#fff5e1;';
+    $allBg = 'background-color:#e6f6ec;';
+    ?>
+    <div class="table-responsive">
+        <table class="table table-bordered table-striped align-middle mb-0">
+            <thead>
+                <tr>
+                    <th rowspan="2">Sl No</th>
+                    <th rowspan="2"><?= esc($groupHeader) ?></th>
+                    <th colspan="3" class="text-center" style="<?= $selBg ?>">Selected &mdash; Future Date</th>
+                    <th colspan="3" class="text-center" style="<?= $shBg ?>">Shortlist Final Selected &mdash; Future Date</th>
+                    <th colspan="3" class="text-center" style="<?= $allBg ?>">Total &mdash; Future Date</th>
+                </tr>
+                <tr>
+                    <th class="text-end" style="<?= $selBg ?>">Future Dates Count</th>
+                    <th class="text-end" style="<?= $selBg ?>">Before Today</th>
+                    <th class="text-end" style="<?= $selBg ?>">Today Onwards</th>
+                    <th class="text-end" style="<?= $shBg ?>">Future Dates Count</th>
+                    <th class="text-end" style="<?= $shBg ?>">Before Today</th>
+                    <th class="text-end" style="<?= $shBg ?>">Today Onwards</th>
+                    <th class="text-end" style="<?= $allBg ?>">Future Dates Count</th>
+                    <th class="text-end" style="<?= $allBg ?>">Before Today</th>
+                    <th class="text-end" style="<?= $allBg ?>">Today Onwards</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php if ($rows === []): ?>
+                <tr><td colspan="11"><div class="empty-state"><i class="bi bi-inbox"></i>No future-dated candidates for the selected filters.</div></td></tr>
+            <?php endif; ?>
+            <?php $idx = 1; foreach ($rows as $row): ?>
+                <?php
+                $rk = (string) ($row[$groupKey] ?? '');
+                $sT = (int) ($row['selected_future_total'] ?? 0);
+                $sB = (int) ($row['selected_future_before_today'] ?? 0);
+                $sA = (int) ($row['selected_future_today_onwards'] ?? 0);
+                $hT = (int) ($row['shortlist_future_total'] ?? 0);
+                $hB = (int) ($row['shortlist_future_before_today'] ?? 0);
+                $hA = (int) ($row['shortlist_future_today_onwards'] ?? 0);
+                ?>
+                <tr>
+                    <td><?= $idx++ ?></td>
+                    <td class="fw-semibold"><?= esc($rk) ?></td>
+                    <td class="text-end fw-semibold" style="<?= $selBg ?>"><?= $cell($sT, $rk, 'selected', null) ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($sB, $rk, 'selected', 'before_today') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($sA, $rk, 'selected', 'today_onwards') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $shBg ?>"><?= $cell($hT, $rk, 'shortlist_final', null) ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($hB, $rk, 'shortlist_final', 'before_today') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($hA, $rk, 'shortlist_final', 'today_onwards') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($sT + $hT, $rk, 'any', null) ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($sB + $hB, $rk, 'any', 'before_today') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($sA + $hA, $rk, 'any', 'today_onwards') ?></td>
+                </tr>
+            <?php endforeach; ?>
+            <?php if ($rows !== []): ?>
+                <tr class="table-secondary fw-semibold">
+                    <td colspan="2">Total</td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_future_total'], null, 'selected', null) ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_future_before_today'], null, 'selected', 'before_today') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_future_today_onwards'], null, 'selected', 'today_onwards') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_future_total'], null, 'shortlist_final', null) ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_future_before_today'], null, 'shortlist_final', 'before_today') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_future_today_onwards'], null, 'shortlist_final', 'today_onwards') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_future_total'] + $totals['shortlist_future_total'], null, 'any', null) ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_future_before_today'] + $totals['shortlist_future_before_today'], null, 'any', 'before_today') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_future_today_onwards'] + $totals['shortlist_future_today_onwards'], null, 'any', 'today_onwards') ?></td>
+                </tr>
+            <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php
+}
