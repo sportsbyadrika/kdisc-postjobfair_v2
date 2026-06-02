@@ -21,16 +21,13 @@ $allowedCohorts = ['selected', 'shortlist_final', 'any'];
 if (!in_array($cohort, $allowedCohorts, true)) {
     $cohort = 'any';
 }
-$allowedJoined = ['yes', 'no', 'pending', ''];
+$allowedJoined = ['yes', 'no', 'pending', 'future_date', ''];
 if (!in_array($joined, $allowedJoined, true)) {
     $joined = '';
 }
 
 $conditions = [];
 $params = [];
-
-// The table's outer scope: Offer Letter Receipt Confirmed = Yes.
-$conditions[] = "LOWER(TRIM(COALESCE(Confirm_Offer_Letter_Receipt_by_Candidate, ''))) = 'yes'";
 
 // Cohort filter (mirrors the SQL in fetch_shortlisted_district_jobstation_joined_report).
 $selectedDirect = "LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'";
@@ -62,6 +59,8 @@ if ($joined === 'yes') {
     $conditions[] = "LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'no'";
 } elseif ($joined === 'pending') {
     $conditions[] = "(LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending' OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '')";
+} elseif ($joined === 'future_date') {
+    $conditions[] = "LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date'";
 }
 
 // Common filters (aggregator, job_fair, category) - reuse helper but it expects them in $params.
@@ -93,7 +92,7 @@ $cohortLabels = [
     'any' => 'Selected OR Shortlist Final Selected',
 ];
 $joinedLabels = [
-    'yes' => 'Yes', 'no' => 'No', 'pending' => 'Pending (incl. empty)', '' => 'Any',
+    'yes' => 'Yes', 'no' => 'No', 'pending' => 'Pending (incl. empty)', 'future_date' => 'Future Date', '' => 'Any',
 ];
 
 $activeFilters = [];

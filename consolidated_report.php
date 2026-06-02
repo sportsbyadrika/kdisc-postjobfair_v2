@@ -477,8 +477,8 @@ render_page_header('Consolidated Report', [
 $districtJobstationRows = fetch_shortlisted_district_jobstation_joined_report($filters);
 $districtJobstationTotals = [
     'job_station_count' => 0,
-    'selected_joined_yes' => 0, 'selected_joined_no' => 0, 'selected_joined_pending' => 0,
-    'shortlist_joined_yes' => 0, 'shortlist_joined_no' => 0, 'shortlist_joined_pending' => 0,
+    'selected_joined_yes' => 0, 'selected_joined_no' => 0, 'selected_joined_pending' => 0, 'selected_joined_future_date' => 0,
+    'shortlist_joined_yes' => 0, 'shortlist_joined_no' => 0, 'shortlist_joined_pending' => 0, 'shortlist_joined_future_date' => 0,
 ];
 foreach ($districtJobstationRows as $r) {
     foreach (array_keys($districtJobstationTotals) as $k) {
@@ -516,21 +516,23 @@ $djCell = static function (int $value, ?string $district, string $cohort, ?strin
                         <th rowspan="2">Sl No</th>
                         <th rowspan="2">Candidate District</th>
                         <th rowspan="2" class="text-end">Job Stations</th>
-                        <th colspan="3" class="text-center">Selected &mdash; Candidate Joined</th>
-                        <th colspan="3" class="text-center">Shortlist Final Selected &mdash; Candidate Joined</th>
+                        <th colspan="4" class="text-center">Selected &mdash; Candidate Joined</th>
+                        <th colspan="4" class="text-center">Shortlist Final Selected &mdash; Candidate Joined</th>
                     </tr>
                     <tr>
                         <th class="text-end">Yes</th>
                         <th class="text-end">No</th>
                         <th class="text-end">Pending</th>
+                        <th class="text-end">Future Date</th>
                         <th class="text-end">Yes</th>
                         <th class="text-end">No</th>
                         <th class="text-end">Pending</th>
+                        <th class="text-end">Future Date</th>
                     </tr>
                 </thead>
                 <tbody>
                 <?php if ($districtJobstationRows === []): ?>
-                    <tr><td colspan="9"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
+                    <tr><td colspan="11"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
                 <?php endif; ?>
                 <?php $djIdx = 1; foreach ($districtJobstationRows as $djRow): ?>
                     <?php $d = (string) $djRow['district']; ?>
@@ -541,9 +543,11 @@ $djCell = static function (int $value, ?string $district, string $cohort, ?strin
                         <td class="text-end"><?= $djCell((int) $djRow['selected_joined_yes'], $d, 'selected', 'yes') ?></td>
                         <td class="text-end"><?= $djCell((int) $djRow['selected_joined_no'], $d, 'selected', 'no') ?></td>
                         <td class="text-end"><?= $djCell((int) $djRow['selected_joined_pending'], $d, 'selected', 'pending') ?></td>
+                        <td class="text-end"><?= $djCell((int) ($djRow['selected_joined_future_date'] ?? 0), $d, 'selected', 'future_date') ?></td>
                         <td class="text-end"><?= $djCell((int) $djRow['shortlist_joined_yes'], $d, 'shortlist_final', 'yes') ?></td>
                         <td class="text-end"><?= $djCell((int) $djRow['shortlist_joined_no'], $d, 'shortlist_final', 'no') ?></td>
                         <td class="text-end"><?= $djCell((int) $djRow['shortlist_joined_pending'], $d, 'shortlist_final', 'pending') ?></td>
+                        <td class="text-end"><?= $djCell((int) ($djRow['shortlist_joined_future_date'] ?? 0), $d, 'shortlist_final', 'future_date') ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if ($districtJobstationRows !== []): ?>
@@ -553,9 +557,11 @@ $djCell = static function (int $value, ?string $district, string $cohort, ?strin
                         <td class="text-end"><?= $djCell($districtJobstationTotals['selected_joined_yes'], null, 'selected', 'yes') ?></td>
                         <td class="text-end"><?= $djCell($districtJobstationTotals['selected_joined_no'], null, 'selected', 'no') ?></td>
                         <td class="text-end"><?= $djCell($districtJobstationTotals['selected_joined_pending'], null, 'selected', 'pending') ?></td>
+                        <td class="text-end"><?= $djCell($districtJobstationTotals['selected_joined_future_date'], null, 'selected', 'future_date') ?></td>
                         <td class="text-end"><?= $djCell($districtJobstationTotals['shortlist_joined_yes'], null, 'shortlist_final', 'yes') ?></td>
                         <td class="text-end"><?= $djCell($districtJobstationTotals['shortlist_joined_no'], null, 'shortlist_final', 'no') ?></td>
                         <td class="text-end"><?= $djCell($districtJobstationTotals['shortlist_joined_pending'], null, 'shortlist_final', 'pending') ?></td>
+                        <td class="text-end"><?= $djCell($districtJobstationTotals['shortlist_joined_future_date'], null, 'shortlist_final', 'future_date') ?></td>
                     </tr>
                 <?php endif; ?>
                 </tbody>
