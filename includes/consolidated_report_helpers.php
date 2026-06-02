@@ -24,6 +24,8 @@ const CONSOLIDATED_CANDIDATE_COLUMNS = [
     'Willing_to_Join' => 'willing_to_join',
     'Challenge_to_be_addressed' => 'challenge_to_be_addressed',
     'Specific_Isues_Report_to_MS' => 'specific_issues_report_to_ms',
+    'Candidate_Joined_Status' => 'candidate_joined_status',
+    'Candidate_Join_Remarks_Type' => 'candidate_join_remarks_type',
     'Remarks_Candidate_Join' => 'remarks_candidate_join',
 ];
 
@@ -1018,6 +1020,8 @@ function fetch_consolidated_detail_rows(string $section, string $metric, array $
             COALESCE(TRIM(Willing_to_Join), '') AS willing_to_join,
             COALESCE(TRIM(Challenge_to_be_addressed), '') AS challenge_to_be_addressed,
             COALESCE(TRIM(Specific_Issues_Report_to_MS), '') AS specific_issues_report_to_ms,
+            COALESCE(TRIM(Candidate_Joined_Status), '') AS candidate_joined_status,
+            COALESCE(TRIM(Candidate_Join_Remarks_Type), '') AS candidate_join_remarks_type,
             COALESCE(TRIM(Remarks_Candidate_Join), '') AS remarks_candidate_join
         FROM job_fair_result
         $whereClause
@@ -1064,6 +1068,8 @@ function fetch_consolidated_call_history_detail_rows(string $section, string $me
             COALESCE(TRIM(jfr.Willing_to_Join), '') AS willing_to_join,
             COALESCE(TRIM(jfr.Challenge_to_be_addressed), '') AS challenge_to_be_addressed,
             COALESCE(TRIM(jfr.Specific_Issues_Report_to_MS), '') AS specific_issues_report_to_ms,
+            COALESCE(TRIM(jfr.Candidate_Joined_Status), '') AS candidate_joined_status,
+            COALESCE(TRIM(jfr.Candidate_Join_Remarks_Type), '') AS candidate_join_remarks_type,
             COALESCE(TRIM(jfr.Remarks_Candidate_Join), '') AS remarks_candidate_join,
             COALESCE(NULLIF(TRIM(ch.stage), ''), 'Unknown') AS call_stage,
             COALESCE(TRIM(cp.purpose_name), '') AS call_purpose,

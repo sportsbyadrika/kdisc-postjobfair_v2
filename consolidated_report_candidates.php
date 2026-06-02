@@ -12,6 +12,29 @@ function consolidated_detail_request_uri_with_download(): string
     return 'consolidated_report_candidates.php?' . http_build_query($params);
 }
 
+function consolidated_detail_back_to_report_uri(string $section): string
+{
+    $drillKeys = ['section', 'metric', 'job_fair_row', 'group_row', 'group_field', 'download'];
+    $params = $_GET;
+    foreach ($drillKeys as $key) {
+        unset($params[$key]);
+    }
+
+    $tabBySection = [
+        'selected' => 'tab-selected',
+        'shortlisted' => 'tab-shortlisted',
+        'shortlisted_rounds_pending' => 'tab-shortlisted',
+        'shortlisted_rounds_selected' => 'tab-shortlisted',
+        'crm_call_count_pending' => 'tab-crm',
+        'crm_call_count_joined_status' => 'tab-crm',
+    ];
+    $hash = '#' . ($tabBySection[$section] ?? 'tab-overall');
+
+    $query = http_build_query($params);
+
+    return 'consolidated_report.php' . ($query !== '' ? '?' . $query : '') . $hash;
+}
+
 function output_consolidated_candidates_csv(array $rows, string $sectionLabel, string $metricLabel, ?string $groupRow, string $groupLabel, array $columns): void
 {
     $safeSection = preg_replace('/[^a-z0-9]+/i', '_', strtolower($sectionLabel));
@@ -89,7 +112,8 @@ render_header('Consolidated Report Candidates', ['show_navigation' => false, 'ma
 <?php render_page_header('Consolidated Report Candidates', [
     'icon' => 'bi-people',
     'subtitle' => 'Candidate-level breakdown for the selected consolidated metric.',
-    'actions' => '<a class="btn btn-primary" href="' . esc(consolidated_detail_request_uri_with_download()) . '"><i class="bi bi-download me-1"></i>Download CSV</a>',
+    'actions' => '<a class="btn btn-light me-2" href="' . esc(consolidated_detail_back_to_report_uri($section)) . '"><i class="bi bi-arrow-left me-1"></i>Back to Report</a>'
+        . '<a class="btn btn-primary" href="' . esc(consolidated_detail_request_uri_with_download()) . '"><i class="bi bi-download me-1"></i>Download CSV</a>',
 ]); ?>
 <div class="card mb-4"><div class="card-body d-flex flex-wrap gap-4">
     <div><p class="form-label mb-1">Section</p><span class="status-chip status-neutral"><?= esc($sectionLabel) ?></span></div>
