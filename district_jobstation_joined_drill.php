@@ -25,6 +25,7 @@ $allowedJoined = ['yes', 'no', 'pending', 'future_date', ''];
 if (!in_array($joined, $allowedJoined, true)) {
     $joined = '';
 }
+$offerLetterYes = (($_GET['offer_letter'] ?? '') === 'yes');
 
 $conditions = [];
 $params = [];
@@ -61,6 +62,11 @@ if ($joined === 'yes') {
     $conditions[] = "(LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'pending' OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '')";
 } elseif ($joined === 'future_date') {
     $conditions[] = "LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date'";
+}
+
+// Offer Letter Generated filter.
+if ($offerLetterYes) {
+    $conditions[] = "LOWER(TRIM(COALESCE(Offer_Letter_Generated, ''))) = 'yes'";
 }
 
 // Common filters (aggregator, job_fair, category) - reuse helper but it expects them in $params.
@@ -157,6 +163,7 @@ $downloadUrl = '/district_jobstation_joined_drill.php?' . http_build_query(array
     'district' => $district,
     'cohort' => $cohort,
     'joined' => $joined,
+    'offer_letter' => $offerLetterYes ? 'yes' : '',
     'aggregator' => $filters['aggregator'] ?? '',
     'job_fair' => $filters['job_fair'] ?? '',
     'category' => $filters['category'] ?? '',
@@ -181,7 +188,9 @@ render_page_header('District / Job Station — Drill-down', [
 <div class="card mb-3">
     <div class="card-body d-flex flex-wrap align-items-center gap-2">
         <span class="form-label mb-0 me-1">Drill-down scope:</span>
-        <span class="status-chip status-info"><strong>Receipt Confirmed:</strong>&nbsp;Yes</span>
+        <?php if ($offerLetterYes): ?>
+            <span class="status-chip status-success"><strong>Offer Letter Generated:</strong>&nbsp;Yes</span>
+        <?php endif; ?>
         <?php
             if (!$hasDistrictParam || $district === '') {
                 $districtChipLabel = 'All Districts';

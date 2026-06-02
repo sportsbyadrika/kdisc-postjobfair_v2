@@ -1396,6 +1396,8 @@ function fetch_shortlisted_district_jobstation_joined_report(array $filters): ar
                           OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS selected_joined_pending,
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
                      AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS selected_joined_future_date,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Offer_Letter_Generated, ''))) = 'yes' THEN 1 ELSE 0 END) AS selected_offer_letter_yes,
             -- Shortlist/Onhold with Final Selected cohort
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
                      AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected' THEN 1 ELSE 0 END) AS shortlist_total,
@@ -1411,7 +1413,10 @@ function fetch_shortlisted_district_jobstation_joined_report(array $filters): ar
                           OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS shortlist_joined_pending,
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
                      AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
-                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS shortlist_joined_future_date
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS shortlist_joined_future_date,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Offer_Letter_Generated, ''))) = 'yes' THEN 1 ELSE 0 END) AS shortlist_offer_letter_yes
         FROM job_fair_result
         WHERE (
                 LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
@@ -1494,6 +1499,8 @@ function fetch_jobfair_candidate_joined_report(array $filters): array
                           OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS selected_joined_pending,
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
                      AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS selected_joined_future_date,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Offer_Letter_Generated, ''))) = 'yes' THEN 1 ELSE 0 END) AS selected_offer_letter_yes,
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
                      AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected' THEN 1 ELSE 0 END) AS shortlist_total,
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
@@ -1508,7 +1515,10 @@ function fetch_jobfair_candidate_joined_report(array $filters): array
                           OR TRIM(COALESCE(Candidate_Joined_Status, '')) = '') THEN 1 ELSE 0 END) AS shortlist_joined_pending,
             SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
                      AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
-                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS shortlist_joined_future_date
+                     AND LOWER(TRIM(COALESCE(Candidate_Joined_Status, ''))) = 'future date' THEN 1 ELSE 0 END) AS shortlist_joined_future_date,
+            SUM(CASE WHEN LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) IN ('shortlisted', 'onhold')
+                     AND LOWER(REPLACE(TRIM(COALESCE(Shortlist_Candidate_Status, '')), ' ', '')) = 'selected'
+                     AND LOWER(TRIM(COALESCE(Offer_Letter_Generated, ''))) = 'yes' THEN 1 ELSE 0 END) AS shortlist_offer_letter_yes
         FROM job_fair_result
         WHERE (
                 LOWER(REPLACE(TRIM(COALESCE(Selection_Status, '')), ' ', '')) = 'selected'
@@ -1542,11 +1552,13 @@ function render_jobfair_joined_table(array $rows, array $filters): void
         'selected_joined_no' => 0,
         'selected_joined_pending' => 0,
         'selected_joined_future_date' => 0,
+        'selected_offer_letter_yes' => 0,
         'shortlist_total' => 0,
         'shortlist_joined_yes' => 0,
         'shortlist_joined_no' => 0,
         'shortlist_joined_pending' => 0,
         'shortlist_joined_future_date' => 0,
+        'shortlist_offer_letter_yes' => 0,
     ];
     foreach ($rows as $r) {
         foreach (array_keys($totals) as $k) {
@@ -1554,21 +1566,31 @@ function render_jobfair_joined_table(array $rows, array $filters): void
         }
     }
 
-    $drillUrl = static function (?string $jobFairNo, string $cohort, ?string $joined) use ($filters): string {
-        return '/district_jobstation_joined_drill.php?' . http_build_query(array_filter([
+    $drillUrl = static function (?string $jobFairNo, string $cohort, ?string $joined, bool $offerLetter = false) use ($filters): string {
+        $params = [
             'cohort' => $cohort,
             'joined' => $joined ?? '',
             'aggregator' => $filters['aggregator'] ?? '',
             'job_fair' => $jobFairNo !== null && $jobFairNo !== '' ? $jobFairNo : ($filters['job_fair'] ?? ''),
             'category' => $filters['category'] ?? '',
-        ], static fn($v): bool => $v !== '' && $v !== null));
+        ];
+        if ($offerLetter) {
+            $params['offer_letter'] = 'yes';
+        }
+        return '/district_jobstation_joined_drill.php?' . http_build_query(array_filter(
+            $params,
+            static fn($v): bool => $v !== '' && $v !== null
+        ));
     };
-    $cell = static function (int $value, ?string $jobFairNo, string $cohort, ?string $joined) use ($drillUrl): string {
+    $cell = static function (int $value, ?string $jobFairNo, string $cohort, ?string $joined, bool $offerLetter = false) use ($drillUrl): string {
         if ($value === 0) {
             return '<span class="text-muted">0</span>';
         }
-        return '<a href="' . esc($drillUrl($jobFairNo, $cohort, $joined)) . '">' . number_format($value) . '</a>';
+        return '<a href="' . esc($drillUrl($jobFairNo, $cohort, $joined, $offerLetter)) . '">' . number_format($value) . '</a>';
     };
+    $selBg = 'background-color:#e8f1ff;';
+    $shBg = 'background-color:#fff5e1;';
+    $allBg = 'background-color:#e6f6ec;';
     ?>
     <div class="table-responsive">
         <table class="table table-bordered table-striped align-middle mb-0">
@@ -1579,31 +1601,34 @@ function render_jobfair_joined_table(array $rows, array $filters): void
                     <th rowspan="2" class="text-end">Districts</th>
                     <th rowspan="2" class="text-end">Job Stations</th>
                     <th rowspan="2" class="text-end">Local Bodies</th>
-                    <th colspan="5" class="text-center">Selected &mdash; Candidate Joined</th>
-                    <th colspan="5" class="text-center">Shortlist Final Selected &mdash; Candidate Joined</th>
-                    <th colspan="5" class="text-center">Total Selected and Shortlisted</th>
+                    <th colspan="6" class="text-center" style="<?= $selBg ?>">Selected &mdash; Candidate Joined</th>
+                    <th colspan="6" class="text-center" style="<?= $shBg ?>">Shortlist Final Selected &mdash; Candidate Joined</th>
+                    <th colspan="6" class="text-center" style="<?= $allBg ?>">Total Selected and Shortlisted</th>
                 </tr>
                 <tr>
-                    <th class="text-end">Yes</th>
-                    <th class="text-end">No</th>
-                    <th class="text-end">Pending</th>
-                    <th class="text-end">Future Date</th>
-                    <th class="text-end">Total</th>
-                    <th class="text-end">Yes</th>
-                    <th class="text-end">No</th>
-                    <th class="text-end">Pending</th>
-                    <th class="text-end">Future Date</th>
-                    <th class="text-end">Total</th>
-                    <th class="text-end">Yes</th>
-                    <th class="text-end">No</th>
-                    <th class="text-end">Pending</th>
-                    <th class="text-end">Future Date</th>
-                    <th class="text-end">Total</th>
+                    <th class="text-end" style="<?= $selBg ?>">Yes</th>
+                    <th class="text-end" style="<?= $selBg ?>">No</th>
+                    <th class="text-end" style="<?= $selBg ?>">Pending</th>
+                    <th class="text-end" style="<?= $selBg ?>">Future Date</th>
+                    <th class="text-end" style="<?= $selBg ?>">Total</th>
+                    <th class="text-end" style="<?= $selBg ?>">Offer Letter Generated</th>
+                    <th class="text-end" style="<?= $shBg ?>">Yes</th>
+                    <th class="text-end" style="<?= $shBg ?>">No</th>
+                    <th class="text-end" style="<?= $shBg ?>">Pending</th>
+                    <th class="text-end" style="<?= $shBg ?>">Future Date</th>
+                    <th class="text-end" style="<?= $shBg ?>">Total</th>
+                    <th class="text-end" style="<?= $shBg ?>">Offer Letter Generated</th>
+                    <th class="text-end" style="<?= $allBg ?>">Yes</th>
+                    <th class="text-end" style="<?= $allBg ?>">No</th>
+                    <th class="text-end" style="<?= $allBg ?>">Pending</th>
+                    <th class="text-end" style="<?= $allBg ?>">Future Date</th>
+                    <th class="text-end" style="<?= $allBg ?>">Total</th>
+                    <th class="text-end" style="<?= $allBg ?>">Offer Letter Generated</th>
                 </tr>
             </thead>
             <tbody>
             <?php if ($rows === []): ?>
-                <tr><td colspan="20"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
+                <tr><td colspan="23"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
             <?php endif; ?>
             <?php $idx = 1; foreach ($rows as $row): ?>
                 <?php
@@ -1612,10 +1637,12 @@ function render_jobfair_joined_table(array $rows, array $filters): void
                 $selNo = (int) ($row['selected_joined_no'] ?? 0);
                 $selPen = (int) ($row['selected_joined_pending'] ?? 0);
                 $selFut = (int) ($row['selected_joined_future_date'] ?? 0);
+                $selOl = (int) ($row['selected_offer_letter_yes'] ?? 0);
                 $shYes = (int) ($row['shortlist_joined_yes'] ?? 0);
                 $shNo = (int) ($row['shortlist_joined_no'] ?? 0);
                 $shPen = (int) ($row['shortlist_joined_pending'] ?? 0);
                 $shFut = (int) ($row['shortlist_joined_future_date'] ?? 0);
+                $shOl = (int) ($row['shortlist_offer_letter_yes'] ?? 0);
                 ?>
                 <tr>
                     <td><?= $idx++ ?></td>
@@ -1623,21 +1650,24 @@ function render_jobfair_joined_table(array $rows, array $filters): void
                     <td class="text-end"><?= number_format((int) ($row['district_count'] ?? 0)) ?></td>
                     <td class="text-end"><?= $cell((int) ($row['job_station_count'] ?? 0), $jf, 'any', null) ?></td>
                     <td class="text-end"><?= $cell((int) ($row['local_body_count'] ?? 0), $jf, 'any', null) ?></td>
-                    <td class="text-end"><?= $cell($selYes, $jf, 'selected', 'yes') ?></td>
-                    <td class="text-end"><?= $cell($selNo, $jf, 'selected', 'no') ?></td>
-                    <td class="text-end"><?= $cell($selPen, $jf, 'selected', 'pending') ?></td>
-                    <td class="text-end"><?= $cell($selFut, $jf, 'selected', 'future_date') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell((int) ($row['selected_total'] ?? 0), $jf, 'selected', null) ?></td>
-                    <td class="text-end"><?= $cell($shYes, $jf, 'shortlist_final', 'yes') ?></td>
-                    <td class="text-end"><?= $cell($shNo, $jf, 'shortlist_final', 'no') ?></td>
-                    <td class="text-end"><?= $cell($shPen, $jf, 'shortlist_final', 'pending') ?></td>
-                    <td class="text-end"><?= $cell($shFut, $jf, 'shortlist_final', 'future_date') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell((int) ($row['shortlist_total'] ?? 0), $jf, 'shortlist_final', null) ?></td>
-                    <td class="text-end fw-semibold"><?= $cell($selYes + $shYes, $jf, 'any', 'yes') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell($selNo + $shNo, $jf, 'any', 'no') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell($selPen + $shPen, $jf, 'any', 'pending') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell($selFut + $shFut, $jf, 'any', 'future_date') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell($selYes + $shYes + $selNo + $shNo + $selPen + $shPen + $selFut + $shFut, $jf, 'any', null) ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($selYes, $jf, 'selected', 'yes') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($selNo, $jf, 'selected', 'no') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($selPen, $jf, 'selected', 'pending') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($selFut, $jf, 'selected', 'future_date') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $selBg ?>"><?= $cell((int) ($row['selected_total'] ?? 0), $jf, 'selected', null) ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($selOl, $jf, 'selected', null, true) ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($shYes, $jf, 'shortlist_final', 'yes') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($shNo, $jf, 'shortlist_final', 'no') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($shPen, $jf, 'shortlist_final', 'pending') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($shFut, $jf, 'shortlist_final', 'future_date') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $shBg ?>"><?= $cell((int) ($row['shortlist_total'] ?? 0), $jf, 'shortlist_final', null) ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($shOl, $jf, 'shortlist_final', null, true) ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selYes + $shYes, $jf, 'any', 'yes') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selNo + $shNo, $jf, 'any', 'no') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selPen + $shPen, $jf, 'any', 'pending') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selFut + $shFut, $jf, 'any', 'future_date') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selYes + $shYes + $selNo + $shNo + $selPen + $shPen + $selFut + $shFut, $jf, 'any', null) ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selOl + $shOl, $jf, 'any', null, true) ?></td>
                 </tr>
             <?php endforeach; ?>
             <?php if ($rows !== []): ?>
@@ -1646,27 +1676,30 @@ function render_jobfair_joined_table(array $rows, array $filters): void
                     <td class="text-end"><?= number_format($totals['district_count']) ?></td>
                     <td class="text-end"><?= number_format($totals['job_station_count']) ?></td>
                     <td class="text-end"><?= number_format($totals['local_body_count']) ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_yes'], null, 'selected', 'yes') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_no'], null, 'selected', 'no') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_pending'], null, 'selected', 'pending') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_future_date'], null, 'selected', 'future_date') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_total'], null, 'selected', null) ?></td>
-                    <td class="text-end"><?= $cell($totals['shortlist_joined_yes'], null, 'shortlist_final', 'yes') ?></td>
-                    <td class="text-end"><?= $cell($totals['shortlist_joined_no'], null, 'shortlist_final', 'no') ?></td>
-                    <td class="text-end"><?= $cell($totals['shortlist_joined_pending'], null, 'shortlist_final', 'pending') ?></td>
-                    <td class="text-end"><?= $cell($totals['shortlist_joined_future_date'], null, 'shortlist_final', 'future_date') ?></td>
-                    <td class="text-end"><?= $cell($totals['shortlist_total'], null, 'shortlist_final', null) ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_yes'] + $totals['shortlist_joined_yes'], null, 'any', 'yes') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_no'] + $totals['shortlist_joined_no'], null, 'any', 'no') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_pending'] + $totals['shortlist_joined_pending'], null, 'any', 'pending') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_future_date'] + $totals['shortlist_joined_future_date'], null, 'any', 'future_date') ?></td>
-                    <td class="text-end"><?= $cell(
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_joined_yes'], null, 'selected', 'yes') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_joined_no'], null, 'selected', 'no') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_joined_pending'], null, 'selected', 'pending') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_joined_future_date'], null, 'selected', 'future_date') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_total'], null, 'selected', null) ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_offer_letter_yes'], null, 'selected', null, true) ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_joined_yes'], null, 'shortlist_final', 'yes') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_joined_no'], null, 'shortlist_final', 'no') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_joined_pending'], null, 'shortlist_final', 'pending') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_joined_future_date'], null, 'shortlist_final', 'future_date') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_total'], null, 'shortlist_final', null) ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_offer_letter_yes'], null, 'shortlist_final', null, true) ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_joined_yes'] + $totals['shortlist_joined_yes'], null, 'any', 'yes') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_joined_no'] + $totals['shortlist_joined_no'], null, 'any', 'no') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_joined_pending'] + $totals['shortlist_joined_pending'], null, 'any', 'pending') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_joined_future_date'] + $totals['shortlist_joined_future_date'], null, 'any', 'future_date') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell(
                         $totals['selected_joined_yes'] + $totals['shortlist_joined_yes']
                         + $totals['selected_joined_no'] + $totals['shortlist_joined_no']
                         + $totals['selected_joined_pending'] + $totals['shortlist_joined_pending']
                         + $totals['selected_joined_future_date'] + $totals['shortlist_joined_future_date'],
                         null, 'any', null
                     ) ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_offer_letter_yes'] + $totals['shortlist_offer_letter_yes'], null, 'any', null, true) ?></td>
                 </tr>
             <?php endif; ?>
             </tbody>
@@ -1691,11 +1724,13 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
         'selected_joined_no' => 0,
         'selected_joined_pending' => 0,
         'selected_joined_future_date' => 0,
+        'selected_offer_letter_yes' => 0,
         'shortlist_total' => 0,
         'shortlist_joined_yes' => 0,
         'shortlist_joined_no' => 0,
         'shortlist_joined_pending' => 0,
         'shortlist_joined_future_date' => 0,
+        'shortlist_offer_letter_yes' => 0,
     ];
     foreach ($rows as $r) {
         foreach (array_keys($totals) as $k) {
@@ -1703,22 +1738,34 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
         }
     }
 
-    $drillUrl = static function (?string $district, string $cohort, ?string $joined) use ($filters): string {
-        return '/district_jobstation_joined_drill.php?' . http_build_query(array_filter([
+    $drillUrl = static function (?string $district, string $cohort, ?string $joined, bool $offerLetter = false) use ($filters): string {
+        $params = [
             'district' => $district,
             'cohort' => $cohort,
             'joined' => $joined ?? '',
             'aggregator' => $filters['aggregator'] ?? '',
             'job_fair' => $filters['job_fair'] ?? '',
             'category' => $filters['category'] ?? '',
-        ], static fn($v): bool => $v !== '' && $v !== null));
+        ];
+        if ($offerLetter) {
+            $params['offer_letter'] = 'yes';
+        }
+        return '/district_jobstation_joined_drill.php?' . http_build_query(array_filter(
+            $params,
+            static fn($v): bool => $v !== '' && $v !== null
+        ));
     };
-    $cell = static function (int $value, ?string $district, string $cohort, ?string $joined) use ($drillUrl): string {
+    $cell = static function (int $value, ?string $district, string $cohort, ?string $joined, bool $offerLetter = false) use ($drillUrl): string {
         if ($value === 0) {
             return '<span class="text-muted">0</span>';
         }
-        return '<a href="' . esc($drillUrl($district, $cohort, $joined)) . '">' . number_format($value) . '</a>';
+        return '<a href="' . esc($drillUrl($district, $cohort, $joined, $offerLetter)) . '">' . number_format($value) . '</a>';
     };
+    // Subtle group-tint backgrounds applied to every <th>/<td> in each cohort
+    // group so the three groups stay visually grouped even with table-striped.
+    $selBg = 'background-color:#e8f1ff;';   // light blue   -> Selected
+    $shBg = 'background-color:#fff5e1;';   // light amber  -> Shortlist Final Selected
+    $allBg = 'background-color:#e6f6ec;';   // light green  -> Total Selected and Shortlisted
     ?>
     <div class="table-responsive">
         <table class="table table-bordered table-striped align-middle mb-0">
@@ -1728,31 +1775,34 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
                     <th rowspan="2">Candidate District</th>
                     <th rowspan="2" class="text-end">Job Stations</th>
                     <th rowspan="2" class="text-end">Local Bodies</th>
-                    <th colspan="5" class="text-center">Selected &mdash; Candidate Joined</th>
-                    <th colspan="5" class="text-center">Shortlist Final Selected &mdash; Candidate Joined</th>
-                    <th colspan="5" class="text-center">Total Selected and Shortlisted</th>
+                    <th colspan="6" class="text-center" style="<?= $selBg ?>">Selected &mdash; Candidate Joined</th>
+                    <th colspan="6" class="text-center" style="<?= $shBg ?>">Shortlist Final Selected &mdash; Candidate Joined</th>
+                    <th colspan="6" class="text-center" style="<?= $allBg ?>">Total Selected and Shortlisted</th>
                 </tr>
                 <tr>
-                    <th class="text-end">Yes</th>
-                    <th class="text-end">No</th>
-                    <th class="text-end">Pending</th>
-                    <th class="text-end">Future Date</th>
-                    <th class="text-end">Total</th>
-                    <th class="text-end">Yes</th>
-                    <th class="text-end">No</th>
-                    <th class="text-end">Pending</th>
-                    <th class="text-end">Future Date</th>
-                    <th class="text-end">Total</th>
-                    <th class="text-end">Yes</th>
-                    <th class="text-end">No</th>
-                    <th class="text-end">Pending</th>
-                    <th class="text-end">Future Date</th>
-                    <th class="text-end">Total</th>
+                    <th class="text-end" style="<?= $selBg ?>">Yes</th>
+                    <th class="text-end" style="<?= $selBg ?>">No</th>
+                    <th class="text-end" style="<?= $selBg ?>">Pending</th>
+                    <th class="text-end" style="<?= $selBg ?>">Future Date</th>
+                    <th class="text-end" style="<?= $selBg ?>">Total</th>
+                    <th class="text-end" style="<?= $selBg ?>">Offer Letter Generated</th>
+                    <th class="text-end" style="<?= $shBg ?>">Yes</th>
+                    <th class="text-end" style="<?= $shBg ?>">No</th>
+                    <th class="text-end" style="<?= $shBg ?>">Pending</th>
+                    <th class="text-end" style="<?= $shBg ?>">Future Date</th>
+                    <th class="text-end" style="<?= $shBg ?>">Total</th>
+                    <th class="text-end" style="<?= $shBg ?>">Offer Letter Generated</th>
+                    <th class="text-end" style="<?= $allBg ?>">Yes</th>
+                    <th class="text-end" style="<?= $allBg ?>">No</th>
+                    <th class="text-end" style="<?= $allBg ?>">Pending</th>
+                    <th class="text-end" style="<?= $allBg ?>">Future Date</th>
+                    <th class="text-end" style="<?= $allBg ?>">Total</th>
+                    <th class="text-end" style="<?= $allBg ?>">Offer Letter Generated</th>
                 </tr>
             </thead>
             <tbody>
             <?php if ($rows === []): ?>
-                <tr><td colspan="19"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
+                <tr><td colspan="22"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
             <?php endif; ?>
             <?php $idx = 1; foreach ($rows as $row): ?>
                 <?php
@@ -1761,31 +1811,36 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
                 $selNo = (int) ($row['selected_joined_no'] ?? 0);
                 $selPen = (int) ($row['selected_joined_pending'] ?? 0);
                 $selFut = (int) ($row['selected_joined_future_date'] ?? 0);
+                $selOl = (int) ($row['selected_offer_letter_yes'] ?? 0);
                 $shYes = (int) ($row['shortlist_joined_yes'] ?? 0);
                 $shNo = (int) ($row['shortlist_joined_no'] ?? 0);
                 $shPen = (int) ($row['shortlist_joined_pending'] ?? 0);
                 $shFut = (int) ($row['shortlist_joined_future_date'] ?? 0);
+                $shOl = (int) ($row['shortlist_offer_letter_yes'] ?? 0);
                 ?>
                 <tr>
                     <td><?= $idx++ ?></td>
                     <td class="fw-semibold"><?= esc($d) ?></td>
                     <td class="text-end"><?= $cell((int) ($row['job_station_count'] ?? 0), $d, 'any', null) ?></td>
                     <td class="text-end"><?= $cell((int) ($row['local_body_count'] ?? 0), $d, 'any', null) ?></td>
-                    <td class="text-end"><?= $cell($selYes, $d, 'selected', 'yes') ?></td>
-                    <td class="text-end"><?= $cell($selNo, $d, 'selected', 'no') ?></td>
-                    <td class="text-end"><?= $cell($selPen, $d, 'selected', 'pending') ?></td>
-                    <td class="text-end"><?= $cell($selFut, $d, 'selected', 'future_date') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell((int) ($row['selected_total'] ?? 0), $d, 'selected', null) ?></td>
-                    <td class="text-end"><?= $cell($shYes, $d, 'shortlist_final', 'yes') ?></td>
-                    <td class="text-end"><?= $cell($shNo, $d, 'shortlist_final', 'no') ?></td>
-                    <td class="text-end"><?= $cell($shPen, $d, 'shortlist_final', 'pending') ?></td>
-                    <td class="text-end"><?= $cell($shFut, $d, 'shortlist_final', 'future_date') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell((int) ($row['shortlist_total'] ?? 0), $d, 'shortlist_final', null) ?></td>
-                    <td class="text-end fw-semibold"><?= $cell($selYes + $shYes, $d, 'any', 'yes') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell($selNo + $shNo, $d, 'any', 'no') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell($selPen + $shPen, $d, 'any', 'pending') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell($selFut + $shFut, $d, 'any', 'future_date') ?></td>
-                    <td class="text-end fw-semibold"><?= $cell($selYes + $shYes + $selNo + $shNo + $selPen + $shPen + $selFut + $shFut, $d, 'any', null) ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($selYes, $d, 'selected', 'yes') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($selNo, $d, 'selected', 'no') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($selPen, $d, 'selected', 'pending') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($selFut, $d, 'selected', 'future_date') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $selBg ?>"><?= $cell((int) ($row['selected_total'] ?? 0), $d, 'selected', null) ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($selOl, $d, 'selected', null, true) ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($shYes, $d, 'shortlist_final', 'yes') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($shNo, $d, 'shortlist_final', 'no') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($shPen, $d, 'shortlist_final', 'pending') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($shFut, $d, 'shortlist_final', 'future_date') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $shBg ?>"><?= $cell((int) ($row['shortlist_total'] ?? 0), $d, 'shortlist_final', null) ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($shOl, $d, 'shortlist_final', null, true) ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selYes + $shYes, $d, 'any', 'yes') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selNo + $shNo, $d, 'any', 'no') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selPen + $shPen, $d, 'any', 'pending') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selFut + $shFut, $d, 'any', 'future_date') ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selYes + $shYes + $selNo + $shNo + $selPen + $shPen + $selFut + $shFut, $d, 'any', null) ?></td>
+                    <td class="text-end fw-semibold" style="<?= $allBg ?>"><?= $cell($selOl + $shOl, $d, 'any', null, true) ?></td>
                 </tr>
             <?php endforeach; ?>
             <?php if ($rows !== []): ?>
@@ -1793,27 +1848,30 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
                     <td colspan="2">Total</td>
                     <td class="text-end"><?= number_format($totals['job_station_count']) ?></td>
                     <td class="text-end"><?= number_format($totals['local_body_count']) ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_yes'], null, 'selected', 'yes') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_no'], null, 'selected', 'no') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_pending'], null, 'selected', 'pending') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_future_date'], null, 'selected', 'future_date') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_total'], null, 'selected', null) ?></td>
-                    <td class="text-end"><?= $cell($totals['shortlist_joined_yes'], null, 'shortlist_final', 'yes') ?></td>
-                    <td class="text-end"><?= $cell($totals['shortlist_joined_no'], null, 'shortlist_final', 'no') ?></td>
-                    <td class="text-end"><?= $cell($totals['shortlist_joined_pending'], null, 'shortlist_final', 'pending') ?></td>
-                    <td class="text-end"><?= $cell($totals['shortlist_joined_future_date'], null, 'shortlist_final', 'future_date') ?></td>
-                    <td class="text-end"><?= $cell($totals['shortlist_total'], null, 'shortlist_final', null) ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_yes'] + $totals['shortlist_joined_yes'], null, 'any', 'yes') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_no'] + $totals['shortlist_joined_no'], null, 'any', 'no') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_pending'] + $totals['shortlist_joined_pending'], null, 'any', 'pending') ?></td>
-                    <td class="text-end"><?= $cell($totals['selected_joined_future_date'] + $totals['shortlist_joined_future_date'], null, 'any', 'future_date') ?></td>
-                    <td class="text-end"><?= $cell(
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_joined_yes'], null, 'selected', 'yes') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_joined_no'], null, 'selected', 'no') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_joined_pending'], null, 'selected', 'pending') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_joined_future_date'], null, 'selected', 'future_date') ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_total'], null, 'selected', null) ?></td>
+                    <td class="text-end" style="<?= $selBg ?>"><?= $cell($totals['selected_offer_letter_yes'], null, 'selected', null, true) ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_joined_yes'], null, 'shortlist_final', 'yes') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_joined_no'], null, 'shortlist_final', 'no') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_joined_pending'], null, 'shortlist_final', 'pending') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_joined_future_date'], null, 'shortlist_final', 'future_date') ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_total'], null, 'shortlist_final', null) ?></td>
+                    <td class="text-end" style="<?= $shBg ?>"><?= $cell($totals['shortlist_offer_letter_yes'], null, 'shortlist_final', null, true) ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_joined_yes'] + $totals['shortlist_joined_yes'], null, 'any', 'yes') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_joined_no'] + $totals['shortlist_joined_no'], null, 'any', 'no') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_joined_pending'] + $totals['shortlist_joined_pending'], null, 'any', 'pending') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_joined_future_date'] + $totals['shortlist_joined_future_date'], null, 'any', 'future_date') ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell(
                         $totals['selected_joined_yes'] + $totals['shortlist_joined_yes']
                         + $totals['selected_joined_no'] + $totals['shortlist_joined_no']
                         + $totals['selected_joined_pending'] + $totals['shortlist_joined_pending']
                         + $totals['selected_joined_future_date'] + $totals['shortlist_joined_future_date'],
                         null, 'any', null
                     ) ?></td>
+                    <td class="text-end" style="<?= $allBg ?>"><?= $cell($totals['selected_offer_letter_yes'] + $totals['shortlist_offer_letter_yes'], null, 'any', null, true) ?></td>
                 </tr>
             <?php endif; ?>
             </tbody>
