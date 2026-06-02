@@ -259,6 +259,11 @@ function toInputDatetime(value) {
     const ist = new Date(date.getTime() + (5.5 * 60 * 60 * 1000));
     return ist.toISOString().slice(0,16);
 }
+function toInputDate(value) {
+    if (!value) return '';
+    const match = String(value).match(/^\d{4}-\d{2}-\d{2}/);
+    return match ? match[0] : '';
+}
 function formatDisplayDatetime(value) {
     if (!value) return 'N/A';
     const date = new Date(String(value).replace(' ', 'T'));
@@ -320,7 +325,7 @@ function renderFieldControl(config, row) {
         return `<label class="${labelClass}">${formatLabel(config.field_name)}</label><select class="form-select" name="${config.field_name}"><option value="">Select</option>${options}</select>`;
     }
     if (String(config.field_type).toLowerCase().includes('date textbox')) {
-        return `<label class="${labelClass}">${formatLabel(config.field_name)}</label><input class="form-control" type="date" name="${config.field_name}" value="${escapeHtml(value || '')}">`;
+        return `<label class="${labelClass}">${formatLabel(config.field_name)}</label><input class="form-control" type="date" name="${config.field_name}" value="${escapeHtml(toInputDate(value))}">`;
     }
     if (String(config.field_type).toLowerCase().includes('date time')) {
         return `<label class="${labelClass}">${formatLabel(config.field_name)}</label><input class="form-control" type="datetime-local" name="${config.field_name}" value="${toInputDatetime(value)}">`;
