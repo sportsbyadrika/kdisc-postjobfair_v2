@@ -473,100 +473,15 @@ render_page_header('Consolidated Report', [
     </div>
 </div>
 
-<?php
-$districtJobstationRows = fetch_shortlisted_district_jobstation_joined_report($filters);
-$districtJobstationTotals = [
-    'job_station_count' => 0,
-    'selected_joined_yes' => 0, 'selected_joined_no' => 0, 'selected_joined_pending' => 0, 'selected_joined_future_date' => 0,
-    'shortlist_joined_yes' => 0, 'shortlist_joined_no' => 0, 'shortlist_joined_pending' => 0, 'shortlist_joined_future_date' => 0,
-];
-foreach ($districtJobstationRows as $r) {
-    foreach (array_keys($districtJobstationTotals) as $k) {
-        $districtJobstationTotals[$k] += (int) ($r[$k] ?? 0);
-    }
-}
-$djDrillUrl = static function (?string $district, string $cohort, ?string $joined) use ($filters): string {
-    return '/district_jobstation_joined_drill.php?' . http_build_query(array_filter([
-        'district' => $district,
-        'cohort' => $cohort,
-        'joined' => $joined ?? '',
-        'aggregator' => $filters['aggregator'] ?? '',
-        'job_fair' => $filters['job_fair'] ?? '',
-        'category' => $filters['category'] ?? '',
-    ], static fn($v): bool => $v !== '' && $v !== null));
-};
-$djCell = static function (int $value, ?string $district, string $cohort, ?string $joined) use ($djDrillUrl): string {
-    if ($value === 0) {
-        return '<span class="text-muted">0</span>';
-    }
-    return '<a href="' . esc($djDrillUrl($district, $cohort, $joined)) . '">' . number_format($value) . '</a>';
-};
-?>
+<?php $districtJobstationRows = fetch_shortlisted_district_jobstation_joined_report($filters); ?>
 <div class="card mb-4">
     <div class="card-body">
         <h2 class="h5">District wise &middot; Job Station and Joined Status</h2>
         <p class="data-meta mb-3">
             <i class="bi bi-info-circle me-1"></i>
-            District-wise count of distinct job stations affected, plus joining outcomes split into two cohorts &mdash; directly Selected candidates (First Section universe) and Shortlisted/On hold candidates whose Final Status = Selected (Second Section universe). Honours Aggregator / Job Fair / Category filters above.
+            District-wise count of distinct job stations and local bodies affected, plus joining outcomes split into two cohorts &mdash; directly Selected candidates (First Section universe) and Shortlisted/On hold candidates whose Final Status = Selected (Second Section universe). A combined Total Selected and Shortlisted group sums the two cohorts per joined status. Honours Aggregator / Job Fair / Category filters above.
         </p>
-        <div class="table-responsive">
-            <table class="table table-bordered table-striped align-middle mb-0">
-                <thead>
-                    <tr>
-                        <th rowspan="2">Sl No</th>
-                        <th rowspan="2">Candidate District</th>
-                        <th rowspan="2" class="text-end">Job Stations</th>
-                        <th colspan="4" class="text-center">Selected &mdash; Candidate Joined</th>
-                        <th colspan="4" class="text-center">Shortlist Final Selected &mdash; Candidate Joined</th>
-                    </tr>
-                    <tr>
-                        <th class="text-end">Yes</th>
-                        <th class="text-end">No</th>
-                        <th class="text-end">Pending</th>
-                        <th class="text-end">Future Date</th>
-                        <th class="text-end">Yes</th>
-                        <th class="text-end">No</th>
-                        <th class="text-end">Pending</th>
-                        <th class="text-end">Future Date</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php if ($districtJobstationRows === []): ?>
-                    <tr><td colspan="11"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
-                <?php endif; ?>
-                <?php $djIdx = 1; foreach ($districtJobstationRows as $djRow): ?>
-                    <?php $d = (string) $djRow['district']; ?>
-                    <tr>
-                        <td><?= $djIdx++ ?></td>
-                        <td class="fw-semibold"><?= esc($d) ?></td>
-                        <td class="text-end"><?= $djCell((int) $djRow['job_station_count'], $d, 'any', null) ?></td>
-                        <td class="text-end"><?= $djCell((int) $djRow['selected_joined_yes'], $d, 'selected', 'yes') ?></td>
-                        <td class="text-end"><?= $djCell((int) $djRow['selected_joined_no'], $d, 'selected', 'no') ?></td>
-                        <td class="text-end"><?= $djCell((int) $djRow['selected_joined_pending'], $d, 'selected', 'pending') ?></td>
-                        <td class="text-end"><?= $djCell((int) ($djRow['selected_joined_future_date'] ?? 0), $d, 'selected', 'future_date') ?></td>
-                        <td class="text-end"><?= $djCell((int) $djRow['shortlist_joined_yes'], $d, 'shortlist_final', 'yes') ?></td>
-                        <td class="text-end"><?= $djCell((int) $djRow['shortlist_joined_no'], $d, 'shortlist_final', 'no') ?></td>
-                        <td class="text-end"><?= $djCell((int) $djRow['shortlist_joined_pending'], $d, 'shortlist_final', 'pending') ?></td>
-                        <td class="text-end"><?= $djCell((int) ($djRow['shortlist_joined_future_date'] ?? 0), $d, 'shortlist_final', 'future_date') ?></td>
-                    </tr>
-                <?php endforeach; ?>
-                <?php if ($districtJobstationRows !== []): ?>
-                    <tr class="table-secondary fw-semibold">
-                        <td colspan="2">Total</td>
-                        <td class="text-end"><?= number_format($districtJobstationTotals['job_station_count']) ?></td>
-                        <td class="text-end"><?= $djCell($districtJobstationTotals['selected_joined_yes'], null, 'selected', 'yes') ?></td>
-                        <td class="text-end"><?= $djCell($districtJobstationTotals['selected_joined_no'], null, 'selected', 'no') ?></td>
-                        <td class="text-end"><?= $djCell($districtJobstationTotals['selected_joined_pending'], null, 'selected', 'pending') ?></td>
-                        <td class="text-end"><?= $djCell($districtJobstationTotals['selected_joined_future_date'], null, 'selected', 'future_date') ?></td>
-                        <td class="text-end"><?= $djCell($districtJobstationTotals['shortlist_joined_yes'], null, 'shortlist_final', 'yes') ?></td>
-                        <td class="text-end"><?= $djCell($districtJobstationTotals['shortlist_joined_no'], null, 'shortlist_final', 'no') ?></td>
-                        <td class="text-end"><?= $djCell($districtJobstationTotals['shortlist_joined_pending'], null, 'shortlist_final', 'pending') ?></td>
-                        <td class="text-end"><?= $djCell($districtJobstationTotals['shortlist_joined_future_date'], null, 'shortlist_final', 'future_date') ?></td>
-                    </tr>
-                <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
+        <?php render_district_jobstation_joined_table($districtJobstationRows, $filters); ?>
     </div>
 </div>
 
