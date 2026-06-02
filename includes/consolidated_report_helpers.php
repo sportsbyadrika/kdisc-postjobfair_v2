@@ -1523,7 +1523,7 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
                     <th rowspan="2" class="text-end">Local Bodies</th>
                     <th colspan="5" class="text-center">Selected &mdash; Candidate Joined</th>
                     <th colspan="5" class="text-center">Shortlist Final Selected &mdash; Candidate Joined</th>
-                    <th colspan="4" class="text-center">Total Selected and Shortlisted</th>
+                    <th colspan="5" class="text-center">Total Selected and Shortlisted</th>
                 </tr>
                 <tr>
                     <th class="text-end">Yes</th>
@@ -1540,11 +1540,12 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
                     <th class="text-end">No</th>
                     <th class="text-end">Pending</th>
                     <th class="text-end">Future Date</th>
+                    <th class="text-end">Total</th>
                 </tr>
             </thead>
             <tbody>
             <?php if ($rows === []): ?>
-                <tr><td colspan="18"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
+                <tr><td colspan="19"><div class="empty-state"><i class="bi bi-inbox"></i>No data available for the selected filters.</div></td></tr>
             <?php endif; ?>
             <?php $idx = 1; foreach ($rows as $row): ?>
                 <?php
@@ -1577,6 +1578,7 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
                     <td class="text-end fw-semibold"><?= $cell($selNo + $shNo, $d, 'any', 'no') ?></td>
                     <td class="text-end fw-semibold"><?= $cell($selPen + $shPen, $d, 'any', 'pending') ?></td>
                     <td class="text-end fw-semibold"><?= $cell($selFut + $shFut, $d, 'any', 'future_date') ?></td>
+                    <td class="text-end fw-semibold"><?= $cell($selYes + $shYes + $selNo + $shNo + $selPen + $shPen + $selFut + $shFut, $d, 'any', null) ?></td>
                 </tr>
             <?php endforeach; ?>
             <?php if ($rows !== []): ?>
@@ -1598,6 +1600,13 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
                     <td class="text-end"><?= $cell($totals['selected_joined_no'] + $totals['shortlist_joined_no'], null, 'any', 'no') ?></td>
                     <td class="text-end"><?= $cell($totals['selected_joined_pending'] + $totals['shortlist_joined_pending'], null, 'any', 'pending') ?></td>
                     <td class="text-end"><?= $cell($totals['selected_joined_future_date'] + $totals['shortlist_joined_future_date'], null, 'any', 'future_date') ?></td>
+                    <td class="text-end"><?= $cell(
+                        $totals['selected_joined_yes'] + $totals['shortlist_joined_yes']
+                        + $totals['selected_joined_no'] + $totals['shortlist_joined_no']
+                        + $totals['selected_joined_pending'] + $totals['shortlist_joined_pending']
+                        + $totals['selected_joined_future_date'] + $totals['shortlist_joined_future_date'],
+                        null, 'any', null
+                    ) ?></td>
                 </tr>
             <?php endif; ?>
             </tbody>
