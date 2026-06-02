@@ -473,6 +473,64 @@ render_page_header('Consolidated Report', [
     </div>
 </div>
 
+<?php
+$rtdRows = fetch_rtd_selection_status_report($filters);
+$rtdTotals = ['selected' => 0, 'shortlisted_onhold' => 0, 'shortlist_to_selected' => 0, 'total_selection' => 0, 'offer_letter_generated' => 0];
+foreach ($rtdRows as $r) {
+    foreach (array_keys($rtdTotals) as $k) {
+        $rtdTotals[$k] += (int) ($r[$k] ?? 0);
+    }
+}
+?>
+<div class="card mb-4">
+    <div class="card-body">
+        <h2 class="h5">RTD Selection Status (K-DISC-RTD &amp; RTD)</h2>
+        <p class="data-meta mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            Job-Fair-wise selection counts restricted to candidates whose <strong>Category</strong> is either <code>K-DISC-RTD</code> or <code>RTD</code>. Total Selection combines directly Selected (a) with Shortlisted/On hold who converted to Selected via Final Status (c). Honours Aggregator / Job Fair / Category filters above.
+        </p>
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Job Fair</th>
+                        <th class="text-end">(a) Selected</th>
+                        <th class="text-end">(b) Shortlisted / On hold</th>
+                        <th class="text-end">(c) Shortlisted to Selected</th>
+                        <th class="text-end">(d) Total Selection (a)+(c)</th>
+                        <th class="text-end">(e) Offer Letter Generated</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if ($rtdRows === []): ?>
+                    <tr><td colspan="6"><div class="empty-state"><i class="bi bi-inbox"></i>No RTD candidates for the selected filters.</div></td></tr>
+                <?php endif; ?>
+                <?php foreach ($rtdRows as $row): ?>
+                    <tr>
+                        <td class="fw-semibold"><?= esc((string) $row['job_fair_no']) ?></td>
+                        <td class="text-end"><?= number_format((int) $row['selected']) ?></td>
+                        <td class="text-end"><?= number_format((int) $row['shortlisted_onhold']) ?></td>
+                        <td class="text-end"><?= number_format((int) $row['shortlist_to_selected']) ?></td>
+                        <td class="text-end fw-semibold"><?= number_format((int) $row['total_selection']) ?></td>
+                        <td class="text-end"><?= number_format((int) $row['offer_letter_generated']) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                <?php if ($rtdRows !== []): ?>
+                    <tr class="table-secondary fw-semibold">
+                        <td>Total</td>
+                        <td class="text-end"><?= number_format($rtdTotals['selected']) ?></td>
+                        <td class="text-end"><?= number_format($rtdTotals['shortlisted_onhold']) ?></td>
+                        <td class="text-end"><?= number_format($rtdTotals['shortlist_to_selected']) ?></td>
+                        <td class="text-end"><?= number_format($rtdTotals['total_selection']) ?></td>
+                        <td class="text-end"><?= number_format($rtdTotals['offer_letter_generated']) ?></td>
+                    </tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
 <?php $districtJobstationRows = fetch_shortlisted_district_jobstation_joined_report($filters); ?>
 <div class="card mb-4">
     <div class="card-body">

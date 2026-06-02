@@ -2083,3 +2083,43 @@ function render_future_date_joined_table(array $rows, array $filters, string $gr
     </div>
     <?php
 }
+
+/**
+ * Job-Fair-wise selection breakdown limited to RTD categories (K-DISC-RTD
+ * and RTD). Reports counts of:
+ *  (a) Selected            -> Selection_Status = Selected
+ *  (b) Shortlisted/On hold -> Selection_Status IN (Shortlisted, On hold)
+ *  (c) Shortlisted to Selected -> (b) AND Shortlist_Candidate_Status = Selected
+ *  (d) Total Selection = (a) + (c)
+ *  (e) Offer Letter Generated within (d).
+ */
+function fetch_rtd_selection_status_report(array $filters): array
+{
+    $params = [];
+    $conditions = build_common_conditions($filters, $params);
+    $categoryExpression = normalized_column('Category');
+    $conditions[] = "$categoryExpression IN ('k-disc-rtd', 'rtd')";
+    $whereClause = 'WHERE ' . implode(' AND ', $conditions);
+
+    $sel = normalized_column('Selection_Status') . " = 'selected'";
+    $shOh = normalized_column('Selection_Status') . " IN ('shortlisted', 'onhold')";
+    $shFinal = normalized_column('Shortlist_Candidate_Status') . " = 'selected'";
+    $shToSel = "($shOh AND $shFinal)";
+    $offerYes = "LOWER(TRIM(COALESCE(Offer_Letter_Generated, ''))) = 'yes'";
+
+    $sql = "SELECT
+            COALESCE(NULLIF(TRIM(Job_Fair_No), ''), 'Unknown') AS job_fair_no,
+            SUM(CASE WHEN $sel THEN 1 ELSE 0 END) AS selected,
+            SUM(CASE WHEN $shOh THEN 1 ELSE 0 END) AS shortlisted_onhold,
+            SUM(CASE WHEN $shToSel THEN 1 ELSE 0 END) AS shortlist_to_selected,
+            SUM(CASE WHEN $sel OR $shToSel THEN 1 ELSE 0 END) AS total_selection,
+            SUM(CASE WHEN ($sel OR $shToSel) AND $offerYes THEN 1 ELSE 0 END) AS offer_letter_generated
+        FROM job_fair_result
+        $whereClause
+        GROUP BY COALESCE(NULLIF(TRIM(Job_Fair_No), ''), 'Unknown')
+        ORDER BY job_fair_no DESC";
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
