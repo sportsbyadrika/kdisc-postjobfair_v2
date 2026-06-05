@@ -94,7 +94,7 @@ function render_header(string $title, array $options = []): void
                             </li>
                         <?php else: ?>
                             <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'notifications.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'manage_candidate.php', 'crm_process.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
+                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'notifications.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'job_fair_conversion_data_export.php', 'manage_candidate.php', 'crm_process.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
                                 <ul class="dropdown-menu">
                                     <li><a class="dropdown-item" href="/job_fair_results.php"><i class="bi bi-table me-2"></i>Job Fair Result Data</a></li>
                                     <?php if (is_admin($user)): ?>
@@ -107,6 +107,7 @@ function render_header(string $title, array $options = []): void
                                         <li><a class="dropdown-item" href="/job_fair_result_upload.php"><i class="bi bi-upload me-2"></i>Upload Job Fair Result CSV</a></li>
                                         <li><a class="dropdown-item" href="/aggregator_offer_letter_upload.php"><i class="bi bi-upload me-2"></i>Upload Aggregator Data CSV</a></li>
                                         <li><a class="dropdown-item" href="/job_fair_results_export.php"><i class="bi bi-download me-2"></i>Download Job Fair Result CSV</a></li>
+                                        <li><a class="dropdown-item" href="/job_fair_conversion_data_export.php"><i class="bi bi-download me-2"></i>Download Conversion Data CSV</a></li>
                                     <?php endif; ?>
                                 </ul>
                             </li>
