@@ -6,9 +6,21 @@ require_admin();
 
 $jobFairFilter = trim((string) ($_GET['job_fair_no'] ?? ''));
 $categoryFilter = trim((string) ($_GET['category'] ?? ''));
+$rawInitialStatus = $_GET['initial_status'] ?? [];
+if (!is_array($rawInitialStatus)) {
+    $rawInitialStatus = $rawInitialStatus === '' ? [] : [$rawInitialStatus];
+}
+$initialStatusFilters = array_values(array_filter(array_map('strval', $rawInitialStatus), static fn(string $v): bool => $v !== ''));
+$rawFinalStatus = $_GET['final_status'] ?? [];
+if (!is_array($rawFinalStatus)) {
+    $rawFinalStatus = $rawFinalStatus === '' ? [] : [$rawFinalStatus];
+}
+$finalStatusFilters = array_values(array_filter(array_map('strval', $rawFinalStatus), static fn(string $v): bool => $v !== ''));
 
 $jobFairs = db()->query("SELECT DISTINCT Job_Fair_No FROM job_fair_result WHERE Job_Fair_No IS NOT NULL AND Job_Fair_No <> '' ORDER BY Job_Fair_No")->fetchAll();
 $categories = db()->query("SELECT DISTINCT Category FROM job_fair_result WHERE Category IS NOT NULL AND Category <> '' ORDER BY Category")->fetchAll();
+$initialStatuses = db()->query("SELECT DISTINCT Selection_Status FROM job_fair_result WHERE Selection_Status IS NOT NULL AND Selection_Status <> '' ORDER BY Selection_Status")->fetchAll();
+$finalStatuses = db()->query("SELECT DISTINCT Shortlist_Candidate_Status FROM job_fair_result WHERE Shortlist_Candidate_Status IS NOT NULL AND Shortlist_Candidate_Status <> '' ORDER BY Shortlist_Candidate_Status")->fetchAll();
 
 $whereSql = ' WHERE 1=1';
 $params = [];
@@ -19,6 +31,16 @@ if ($jobFairFilter !== '') {
 if ($categoryFilter !== '') {
     $whereSql .= ' AND jfr.Category = ?';
     $params[] = $categoryFilter;
+}
+if ($initialStatusFilters !== []) {
+    $placeholders = implode(',', array_fill(0, count($initialStatusFilters), '?'));
+    $whereSql .= ' AND jfr.Selection_Status IN (' . $placeholders . ')';
+    array_push($params, ...$initialStatusFilters);
+}
+if ($finalStatusFilters !== []) {
+    $placeholders = implode(',', array_fill(0, count($finalStatusFilters), '?'));
+    $whereSql .= ' AND jfr.Shortlist_Candidate_Status IN (' . $placeholders . ')';
+    array_push($params, ...$finalStatusFilters);
 }
 
 // Count distinct round_numbers that have a recorded round_selection_status.
@@ -150,6 +172,37 @@ render_page_header('Export Conversion Data CSV', [
                         <option value="<?= esc($category['Category']) ?>" <?= $categoryFilter === $category['Category'] ? 'selected' : '' ?>><?= esc($category['Category']) ?></option>
                     <?php endforeach; ?>
                 </select>
+            </div>
+            <div class="col-12">
+                <div class="border rounded p-2 bg-light-subtle">
+                    <div class="d-flex flex-wrap align-items-center gap-3">
+                        <span class="form-label mb-0 me-1"><i class="bi bi-ui-checks me-1"></i>Initial Status</span>
+                        <?php foreach ($initialStatuses as $status): ?>
+                            <?php $sv = (string) $status['Selection_Status']; $cbId = 'cd-init-' . md5($sv); ?>
+                            <div class="form-check form-check-inline mb-0">
+                                <input class="form-check-input" type="checkbox" name="initial_status[]" value="<?= esc($sv) ?>" id="<?= esc($cbId) ?>" <?= in_array($sv, $initialStatusFilters, true) ? 'checked' : '' ?>>
+                                <label class="form-check-label" for="<?= esc($cbId) ?>"><?= esc($sv) ?></label>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12">
+                <div class="border rounded p-2 bg-light-subtle">
+                    <div class="d-flex flex-wrap align-items-center gap-3">
+                        <span class="form-label mb-0 me-1"><i class="bi bi-ui-checks me-1"></i>Final Status</span>
+                        <?php if ($finalStatuses === []): ?>
+                            <span class="text-muted small">No final statuses recorded yet.</span>
+                        <?php endif; ?>
+                        <?php foreach ($finalStatuses as $status): ?>
+                            <?php $sv = (string) $status['Shortlist_Candidate_Status']; $cbId = 'cd-fin-' . md5($sv); ?>
+                            <div class="form-check form-check-inline mb-0">
+                                <input class="form-check-input" type="checkbox" name="final_status[]" value="<?= esc($sv) ?>" id="<?= esc($cbId) ?>" <?= in_array($sv, $finalStatusFilters, true) ? 'checked' : '' ?>>
+                                <label class="form-check-label" for="<?= esc($cbId) ?>"><?= esc($sv) ?></label>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
             </div>
             <div class="col-12 d-flex gap-2">
                 <button type="submit" class="btn btn-primary" name="download" value="1"><i class="bi bi-download me-1"></i>Download CSV</button>
