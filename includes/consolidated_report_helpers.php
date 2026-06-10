@@ -139,6 +139,7 @@ function build_consolidated_filters(): array
         'candidate_district' => trim((string) ($_GET['candidate_district'] ?? '')),
         'job_fair' => trim((string) ($_GET['job_fair'] ?? '')),
         'category' => trim((string) ($_GET['category'] ?? '')),
+        'crm_member' => trim((string) ($_GET['crm_member'] ?? '')),
         'selection_status' => trim((string) ($_GET['selection_status'] ?? '')),
         'round_number' => trim((string) ($_GET['round_number'] ?? '')),
         'round_selection_status' => trim((string) ($_GET['round_selection_status'] ?? '')),
@@ -190,6 +191,11 @@ function build_common_conditions(array $filters, array &$params): array
     if ($filters['category'] !== '') {
         $conditions[] = "COALESCE(NULLIF(TRIM(Category), ''), 'Unknown') = ?";
         $params[] = $filters['category'];
+    }
+
+    if (($filters['crm_member'] ?? '') !== '') {
+        $conditions[] = "COALESCE(NULLIF(TRIM(CRM_Member), ''), 'Unknown') = ?";
+        $params[] = $filters['crm_member'];
     }
 
     return $conditions;
@@ -1573,6 +1579,7 @@ function render_jobfair_joined_table(array $rows, array $filters): void
             'aggregator' => $filters['aggregator'] ?? '',
             'job_fair' => $jobFairNo !== null && $jobFairNo !== '' ? $jobFairNo : ($filters['job_fair'] ?? ''),
             'category' => $filters['category'] ?? '',
+            'crm_member' => $filters['crm_member'] ?? '',
         ];
         if ($offerLetter) {
             $params['offer_letter'] = 'yes';
@@ -1746,6 +1753,7 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
             'aggregator' => $filters['aggregator'] ?? '',
             'job_fair' => $filters['job_fair'] ?? '',
             'category' => $filters['category'] ?? '',
+            'crm_member' => $filters['crm_member'] ?? '',
         ];
         if ($offerLetter) {
             $params['offer_letter'] = 'yes';
@@ -1990,6 +1998,7 @@ function render_future_date_joined_table(array $rows, array $filters, string $gr
             'aggregator' => $filters['aggregator'] ?? '',
             'job_fair' => $filters['job_fair'] ?? '',
             'category' => $filters['category'] ?? '',
+            'crm_member' => $filters['crm_member'] ?? '',
         ];
         if ($isDistrict) {
             $params['district'] = $rowKey ?? '';

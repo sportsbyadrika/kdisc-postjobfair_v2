@@ -11,6 +11,10 @@ $categoryOptions = array_values(array_filter(
     fetch_consolidated_distinct_values('Category'),
     static fn(string $value): bool => strtolower($value) !== 'unknown'
 ));
+$crmMemberOptions = array_values(array_filter(
+    fetch_consolidated_distinct_values('CRM_Member'),
+    static fn(string $value): bool => strtolower($value) !== 'unknown'
+));
 
 $districtRows = fetch_future_date_district_report($filters);
 $jobfairRows = fetch_future_date_jobfair_report($filters);
@@ -50,6 +54,15 @@ render_page_header('District wise Future Date Join Status', [
                     <option value="">All Categories</option>
                     <?php foreach ($categoryOptions as $option): ?>
                         <option value="<?= esc($option) ?>" <?= $filters['category'] === $option ? 'selected' : '' ?>><?= esc($option) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="crm_member" class="form-label">CRM Member</label>
+                <select class="form-select" id="crm_member" name="crm_member">
+                    <option value="">All CRM Members</option>
+                    <?php foreach ($crmMemberOptions as $option): ?>
+                        <option value="<?= esc($option) ?>" <?= $filters['crm_member'] === $option ? 'selected' : '' ?>><?= esc($option) ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
