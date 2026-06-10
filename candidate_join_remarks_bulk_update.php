@@ -28,7 +28,8 @@ const CANDIDATE_JOIN_REMARKS_TYPES = [
     'Joining - Confirmed / Upcoming',
 ];
 
-/* AJAX endpoint: update Candidate_Join_Remarks_Type for one candidate. */
+/* AJAX endpoint: update Candidate_Join_Remarks_Type or Remarks_Candidate_Join
+   for one candidate. */
 if (is_post() && ($_POST['action'] ?? '') === 'update_remark_type') {
     header('Content-Type: application/json');
     if (!$canEdit) {
@@ -37,24 +38,38 @@ if (is_post() && ($_POST['action'] ?? '') === 'update_remark_type') {
         exit;
     }
     $candidateId = (int) ($_POST['candidate_id'] ?? 0);
+    $field = (string) ($_POST['field'] ?? 'Candidate_Join_Remarks_Type');
     $value = (string) ($_POST['value'] ?? '');
     if ($candidateId <= 0) {
         http_response_code(400);
         echo json_encode(['ok' => false, 'error' => 'Invalid candidate']);
         exit;
     }
-    if ($value !== '' && !in_array($value, CANDIDATE_JOIN_REMARKS_TYPES, true)) {
+    if (!in_array($field, ['Candidate_Join_Remarks_Type', 'Remarks_Candidate_Join'], true)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Invalid field']);
+        exit;
+    }
+    if ($field === 'Candidate_Join_Remarks_Type'
+        && $value !== ''
+        && !in_array($value, CANDIDATE_JOIN_REMARKS_TYPES, true)
+    ) {
         http_response_code(400);
         echo json_encode(['ok' => false, 'error' => 'Invalid remark type']);
         exit;
     }
+    if ($field === 'Remarks_Candidate_Join' && mb_strlen($value) > 1000) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Remarks too long (max 1000 chars)']);
+        exit;
+    }
 
-    $beforeStmt = db()->prepare('SELECT Candidate_Join_Remarks_Type FROM job_fair_result WHERE id = ?');
+    $beforeStmt = db()->prepare("SELECT $field FROM job_fair_result WHERE id = ?");
     $beforeStmt->execute([$candidateId]);
     $oldValue = (string) ($beforeStmt->fetchColumn() ?: '');
 
     $newValue = $value === '' ? null : $value;
-    $stmt = db()->prepare('UPDATE job_fair_result SET Candidate_Join_Remarks_Type = ? WHERE id = ?');
+    $stmt = db()->prepare("UPDATE job_fair_result SET $field = ? WHERE id = ?");
     $stmt->execute([$newValue, $candidateId]);
 
     if ($oldValue !== (string) ($newValue ?? '')) {
@@ -65,7 +80,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'update_remark_type') {
             $candidateId,
             'candidate_join_remarks_bulk_update',
             'update',
-            'Candidate Join Remarks Type: ' . ($oldValue === '' ? 'N/A' : $oldValue)
+            str_replace('_', ' ', $field) . ': ' . ($oldValue === '' ? 'N/A' : $oldValue)
                 . ' -> ' . ($newValue === null ? 'N/A' : $newValue),
             (int) ($currentUser['id'] ?? 0),
         ]);
@@ -214,7 +229,12 @@ render_page_header('Bulk Update — Candidate Join Remarks Type', [
                         </td>
                         <td><?= esc((string) ($row['Job_Fair_No'] ?? '')) ?></td>
                         <td><?= render_status_chip((string) ($row['Candidate_Joined_Status'] ?? '')) ?></td>
-                        <td><?= esc((string) ($row['Remarks_Candidate_Join'] ?? '')) ?></td>
+                        <?php $remarksText = (string) ($row['Remarks_Candidate_Join'] ?? ''); ?>
+                        <td style="min-width:240px;">
+                            <textarea class="form-control form-control-sm remarks-text" rows="2" maxlength="1000"
+                                data-original="<?= esc($remarksText) ?>" <?= $canEdit ? '' : 'disabled' ?>><?= esc($remarksText) ?></textarea>
+                            <div class="small mt-1 remarks-text-status text-muted" style="min-height:1em;"></div>
+                        </td>
                         <td style="min-width:240px;">
                             <select class="form-select form-select-sm remark-type-select" data-original="<?= esc($current) ?>" <?= $canEdit ? '' : 'disabled' ?>>
                                 <option value="">Select</option>
@@ -237,54 +257,66 @@ render_page_header('Bulk Update — Candidate Join Remarks Type', [
 
 <script>
 (function () {
+    function saveField(input, field, statusSelector, statusBaseClass) {
+        const row = input.closest('tr');
+        const cid = row?.getAttribute('data-candidate-id');
+        const status = row?.querySelector(statusSelector);
+        if (!cid) return;
+        const newValue = input.value;
+        const original = input.getAttribute('data-original') || '';
+        if (newValue === original) return;
+        if (status) {
+            status.textContent = 'Saving…';
+            status.className = statusBaseClass + ' text-muted';
+        }
+        input.disabled = true;
+        const body = new URLSearchParams();
+        body.append('action', 'update_remark_type');
+        body.append('candidate_id', cid);
+        body.append('field', field);
+        body.append('value', newValue);
+        fetch(window.location.pathname, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString(),
+        })
+        .then((r) => r.json().catch(() => ({ ok: false, error: 'Bad response' })))
+        .then((data) => {
+            input.disabled = false;
+            if (data && data.ok) {
+                input.setAttribute('data-original', newValue);
+                if (status) {
+                    status.textContent = 'Saved';
+                    status.className = statusBaseClass + ' text-success';
+                    setTimeout(() => { status.textContent = ''; }, 2000);
+                }
+            } else {
+                input.value = original;
+                if (status) {
+                    status.textContent = (data && data.error) ? data.error : 'Save failed';
+                    status.className = statusBaseClass + ' text-danger';
+                }
+            }
+        })
+        .catch(() => {
+            input.disabled = false;
+            input.value = original;
+            if (status) {
+                status.textContent = 'Network error';
+                status.className = statusBaseClass + ' text-danger';
+            }
+        });
+    }
+
     document.querySelectorAll('.remark-type-select').forEach((select) => {
         select.addEventListener('change', function () {
-            const row = this.closest('tr');
-            const cid = row?.getAttribute('data-candidate-id');
-            const status = row?.querySelector('.remark-type-status');
-            if (!cid) return;
-            const newValue = this.value;
-            const original = this.getAttribute('data-original') || '';
-            if (status) {
-                status.textContent = 'Saving…';
-                status.className = 'small mt-1 remark-type-status text-muted';
-            }
-            this.disabled = true;
-            const body = new URLSearchParams();
-            body.append('action', 'update_remark_type');
-            body.append('candidate_id', cid);
-            body.append('value', newValue);
-            fetch(window.location.pathname, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: body.toString(),
-            })
-            .then((r) => r.json().catch(() => ({ ok: false, error: 'Bad response' })))
-            .then((data) => {
-                this.disabled = false;
-                if (data && data.ok) {
-                    this.setAttribute('data-original', newValue);
-                    if (status) {
-                        status.textContent = 'Saved';
-                        status.className = 'small mt-1 remark-type-status text-success';
-                        setTimeout(() => { status.textContent = ''; }, 2000);
-                    }
-                } else {
-                    this.value = original;
-                    if (status) {
-                        status.textContent = (data && data.error) ? data.error : 'Save failed';
-                        status.className = 'small mt-1 remark-type-status text-danger';
-                    }
-                }
-            })
-            .catch(() => {
-                this.disabled = false;
-                this.value = original;
-                if (status) {
-                    status.textContent = 'Network error';
-                    status.className = 'small mt-1 remark-type-status text-danger';
-                }
-            });
+            saveField(this, 'Candidate_Join_Remarks_Type', '.remark-type-status', 'small mt-1 remark-type-status');
+        });
+    });
+    document.querySelectorAll('.remarks-text').forEach((textarea) => {
+        // Save on blur so we don't fire on every keystroke.
+        textarea.addEventListener('blur', function () {
+            saveField(this, 'Remarks_Candidate_Join', '.remarks-text-status', 'small mt-1 remarks-text-status');
         });
     });
 })();
