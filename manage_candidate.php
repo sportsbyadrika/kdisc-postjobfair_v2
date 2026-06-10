@@ -147,6 +147,21 @@ render_page_header('Manage Candidate', [
     </div>
 </div>
 
+<div id="offerLetterFloater" aria-hidden="true">
+    <div class="ol-header" id="offerLetterFloaterHeader">
+        <span class="fw-semibold text-truncate" id="offerLetterFloaterTitle"><i class="bi bi-link-45deg me-1 text-primary"></i>Offer Letter</span>
+        <div class="d-flex gap-1">
+            <a class="btn btn-sm btn-link p-0 text-muted" id="offerLetterFloaterOpenTab" target="_blank" rel="noopener noreferrer" aria-label="Open in new tab" title="Open in new tab"><i class="bi bi-box-arrow-up-right"></i></a>
+            <button type="button" class="btn btn-sm btn-link p-0 text-muted" id="offerLetterFloaterFullscreen" aria-label="Toggle full screen" title="Toggle full screen"><i class="bi bi-arrows-fullscreen"></i></button>
+            <button type="button" class="btn btn-sm btn-link p-0 text-muted" id="offerLetterFloaterClose" aria-label="Close" title="Close"><i class="bi bi-x-square"></i></button>
+        </div>
+    </div>
+    <div class="ol-body" id="offerLetterFloaterBody">
+        <iframe id="offerLetterFloaterFrame" src="about:blank" referrerpolicy="no-referrer"></iframe>
+    </div>
+    <div class="ol-resize-handle" id="offerLetterFloaterResize" title="Drag to resize"></div>
+</div>
+
 <style>
 .detail-group { padding: .25rem .5rem; height: 100%; }
 .detail-group-title { font-size: .7rem; text-transform: uppercase; color: var(--pjf-muted, #64748b); letter-spacing: .04em; font-weight: 600; margin-bottom: .35rem; padding-bottom: .25rem; border-bottom: 1px solid var(--pjf-border, #e2e8f0); }
@@ -163,6 +178,17 @@ render_page_header('Manage Candidate', [
 @media (max-width: 575.98px) {
     #callHistoryFloater { left: 10px; right: 10px; width: auto; }
 }
+
+/* Offer Letter draggable preview floater */
+#offerLetterFloater { position: fixed; top: 110px; left: 50%; transform: translateX(-50%); width: 720px; height: 560px; max-width: 95vw; max-height: 90vh; background: #fff; border: 1px solid var(--pjf-border, #e2e8f0); border-radius: 10px; box-shadow: 0 12px 32px rgba(15, 23, 42, .18); z-index: 1060; display: none; flex-direction: column; overflow: hidden; }
+#offerLetterFloater.show { display: flex; }
+#offerLetterFloater.fullscreen { top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; width: 100vw !important; height: 100vh !important; max-width: none; max-height: none; border-radius: 0; transform: none; }
+#offerLetterFloater .ol-header { padding: .5rem .75rem; background: var(--pjf-surface-alt, #f8fafc); border-bottom: 1px solid var(--pjf-border, #e2e8f0); border-radius: 10px 10px 0 0; cursor: move; user-select: none; display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+#offerLetterFloater #offerLetterFloaterTitle { max-width: 70%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#offerLetterFloater .ol-body { flex: 1 1 auto; background: #f1f5f9; overflow: hidden; position: relative; }
+#offerLetterFloater #offerLetterFloaterFrame { width: 100%; height: 100%; border: 0; background: #fff; }
+#offerLetterFloater .ol-resize-handle { position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, var(--pjf-border, #94a3b8) 50% 60%, transparent 60% 70%, var(--pjf-border, #94a3b8) 70% 80%, transparent 80%); opacity: .7; }
+#offerLetterFloater.fullscreen .ol-resize-handle { display: none; }
 
 /* Post job fair milestone track (between candidate details and entry panels) */
 .milestone-track { display: flex; gap: 2px; padding: 4px 0; align-items: flex-start; overflow-x: auto; }
@@ -339,7 +365,7 @@ function renderFieldControl(config, row) {
         return `
             <label class="${labelClass} d-flex justify-content-between align-items-center">
                 <span>${formatLabel(config.field_name)}</span>
-                <a id="${iconId}" class="offer-letter-link-icon ${canOpen ? '' : 'disabled'}" href="${canOpen ? safeValue : '#'}" target="_blank" rel="noopener noreferrer" title="Open offer letter in a new tab" aria-label="Open offer letter in a new tab">🔗</a>
+                <a id="${iconId}" class="offer-letter-link-icon ${canOpen ? '' : 'disabled'}" href="${canOpen ? safeValue : '#'}" onclick="return openOfferLetterFloater('${inputId}', event);" title="Preview offer letter in a movable window" aria-label="Preview offer letter">🔗</a>
             </label>
             <input id="${inputId}" class="form-control" type="text" name="${config.field_name}" value="${safeValue}" oninput="updateOfferLetterLink('${inputId}', '${iconId}')">
         `;
@@ -363,6 +389,89 @@ function updateOfferLetterLink(inputId, iconId) {
     icon.href = rawValue;
     icon.classList.remove('disabled');
 }
+
+function openOfferLetterFloater(inputId, ev) {
+    if (ev) { ev.preventDefault(); }
+    const input = document.getElementById(inputId);
+    const url = input ? String(input.value || '').trim() : '';
+    if (!url) return false;
+    const floater = document.getElementById('offerLetterFloater');
+    const frame = document.getElementById('offerLetterFloaterFrame');
+    const openTab = document.getElementById('offerLetterFloaterOpenTab');
+    const title = document.getElementById('offerLetterFloaterTitle');
+    if (!floater || !frame) return false;
+    frame.src = url;
+    if (openTab) openTab.href = url;
+    if (title) {
+        try {
+            const u = new URL(url, window.location.href);
+            title.innerHTML = '<i class="bi bi-link-45deg me-1 text-primary"></i>' + escapeHtml(u.hostname + u.pathname);
+        } catch (_) {
+            title.innerHTML = '<i class="bi bi-link-45deg me-1 text-primary"></i>Offer Letter';
+        }
+    }
+    floater.classList.add('show');
+    floater.classList.remove('fullscreen');
+    return false;
+}
+
+(function initOfferLetterFloater() {
+    const floater = document.getElementById('offerLetterFloater');
+    const header = document.getElementById('offerLetterFloaterHeader');
+    const closeBtn = document.getElementById('offerLetterFloaterClose');
+    const fsBtn = document.getElementById('offerLetterFloaterFullscreen');
+    const frame = document.getElementById('offerLetterFloaterFrame');
+    const resize = document.getElementById('offerLetterFloaterResize');
+    if (!floater || !header) return;
+
+    closeBtn?.addEventListener('click', () => {
+        floater.classList.remove('show');
+        floater.classList.remove('fullscreen');
+        if (frame) frame.src = 'about:blank';
+    });
+    fsBtn?.addEventListener('click', () => {
+        floater.classList.toggle('fullscreen');
+        const icon = fsBtn.querySelector('i');
+        if (icon) {
+            icon.className = floater.classList.contains('fullscreen') ? 'bi bi-fullscreen-exit' : 'bi bi-arrows-fullscreen';
+        }
+    });
+
+    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    header.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button') || e.target.closest('a')) return;
+        if (floater.classList.contains('fullscreen')) return;
+        dragging = true;
+        const rect = floater.getBoundingClientRect();
+        sx = e.clientX; sy = e.clientY; ox = rect.left; oy = rect.top;
+        floater.style.transform = 'none';
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        floater.style.left = (ox + e.clientX - sx) + 'px';
+        floater.style.top = Math.max(0, oy + e.clientY - sy) + 'px';
+        floater.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', () => { dragging = false; });
+
+    // Resize from bottom-right grip.
+    let resizing = false, rsx = 0, rsy = 0, rw = 0, rh = 0;
+    resize?.addEventListener('mousedown', (e) => {
+        if (floater.classList.contains('fullscreen')) return;
+        resizing = true;
+        rsx = e.clientX; rsy = e.clientY;
+        const rect = floater.getBoundingClientRect();
+        rw = rect.width; rh = rect.height;
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+        if (!resizing) return;
+        floater.style.width = Math.max(320, rw + e.clientX - rsx) + 'px';
+        floater.style.height = Math.max(240, rh + e.clientY - rsy) + 'px';
+    });
+    document.addEventListener('mouseup', () => { resizing = false; });
+})();
 
 function renderCallHistoryRows(rows) {
     const body = document.getElementById('callHistoryBody');
