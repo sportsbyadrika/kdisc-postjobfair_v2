@@ -30,6 +30,8 @@ $futureBucket = trim((string) ($_GET['future_bucket'] ?? ''));
 if (!in_array($futureBucket, ['before_today', 'today_onwards', ''], true)) {
     $futureBucket = '';
 }
+$hasRemarkTypeParam = array_key_exists('remark_type', $_GET);
+$remarkType = trim((string) ($_GET['remark_type'] ?? ''));
 
 $conditions = [];
 $params = [];
@@ -78,6 +80,16 @@ if ($futureBucket === 'before_today') {
     $conditions[] = "Candidate_Joining_Future_Date IS NOT NULL AND DATE(Candidate_Joining_Future_Date) < CURDATE()";
 } elseif ($futureBucket === 'today_onwards') {
     $conditions[] = "Candidate_Joining_Future_Date IS NOT NULL AND DATE(Candidate_Joining_Future_Date) >= CURDATE()";
+}
+
+// Candidate Join Remarks Type filter (matches the pivot's COALESCE bucket).
+if ($hasRemarkTypeParam) {
+    if ($remarkType === '' || $remarkType === '(No Remark Type)') {
+        $conditions[] = "(Candidate_Join_Remarks_Type IS NULL OR TRIM(Candidate_Join_Remarks_Type) = '')";
+    } else {
+        $conditions[] = "TRIM(COALESCE(Candidate_Join_Remarks_Type, '')) = ?";
+        $params[] = $remarkType;
+    }
 }
 
 // Common filters (aggregator, job_fair, category) - reuse helper but it expects them in $params.
@@ -176,6 +188,7 @@ $downloadUrl = '/district_jobstation_joined_drill.php?' . http_build_query(array
     'joined' => $joined,
     'offer_letter' => $offerLetterYes ? 'yes' : '',
     'future_bucket' => $futureBucket,
+    'remark_type' => $hasRemarkTypeParam ? $remarkType : '',
     'aggregator' => $filters['aggregator'] ?? '',
     'job_fair' => $filters['job_fair'] ?? '',
     'category' => $filters['category'] ?? '',
@@ -207,6 +220,9 @@ render_page_header('District / Job Station — Drill-down', [
             <span class="status-chip status-warning"><strong>Future Date:</strong>&nbsp;Before Today</span>
         <?php elseif ($futureBucket === 'today_onwards'): ?>
             <span class="status-chip status-info"><strong>Future Date:</strong>&nbsp;Today Onwards</span>
+        <?php endif; ?>
+        <?php if ($hasRemarkTypeParam): ?>
+            <span class="status-chip status-neutral"><strong>Join Remarks Type:</strong>&nbsp;<?= esc($remarkType !== '' ? $remarkType : '(No Remark Type)') ?></span>
         <?php endif; ?>
         <?php
             if (!$hasDistrictParam || $district === '') {
