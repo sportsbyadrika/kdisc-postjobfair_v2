@@ -400,7 +400,7 @@ function openOfferLetterFloater(inputId, ev) {
     const openTab = document.getElementById('offerLetterFloaterOpenTab');
     const title = document.getElementById('offerLetterFloaterTitle');
     if (!floater || !frame) return false;
-    frame.src = url;
+    frame.src = toEmbeddableUrl(url);
     if (openTab) openTab.href = url;
     if (title) {
         try {
@@ -413,6 +413,47 @@ function openOfferLetterFloater(inputId, ev) {
     floater.classList.add('show');
     floater.classList.remove('fullscreen');
     return false;
+}
+
+/**
+ * Convert known Google Drive / Docs / Office viewer URLs to their embeddable
+ * equivalents. Google's /view, /edit and open?id= URLs send
+ * X-Frame-Options: SAMEORIGIN so they show the "you need access" page when
+ * iframed; the /preview endpoint is the supported alternative and respects
+ * the file's existing sharing settings. Anything we don't recognise is
+ * returned unchanged.
+ */
+function toEmbeddableUrl(rawUrl) {
+    if (!rawUrl) return rawUrl;
+    let u;
+    try { u = new URL(rawUrl, window.location.href); } catch (_) { return rawUrl; }
+    const host = u.hostname.toLowerCase();
+
+    // drive.google.com/file/d/FILE_ID/(view|edit|preview)... -> /preview
+    if (host === 'drive.google.com') {
+        const fileMatch = u.pathname.match(/^\/file\/d\/([^/]+)/);
+        if (fileMatch) {
+            return 'https://drive.google.com/file/d/' + fileMatch[1] + '/preview';
+        }
+        // drive.google.com/open?id=FILE_ID -> file preview
+        if (u.pathname === '/open' && u.searchParams.get('id')) {
+            return 'https://drive.google.com/file/d/' + u.searchParams.get('id') + '/preview';
+        }
+        // drive.google.com/uc?id=FILE_ID&export=download -> preview
+        if (u.pathname === '/uc' && u.searchParams.get('id')) {
+            return 'https://drive.google.com/file/d/' + u.searchParams.get('id') + '/preview';
+        }
+    }
+
+    // docs.google.com/(document|spreadsheets|presentation|forms)/d/FILE_ID/... -> /preview
+    if (host === 'docs.google.com') {
+        const docMatch = u.pathname.match(/^\/(document|spreadsheets|presentation|forms)\/d\/([^/]+)/);
+        if (docMatch) {
+            return 'https://docs.google.com/' + docMatch[1] + '/d/' + docMatch[2] + '/preview';
+        }
+    }
+
+    return rawUrl;
 }
 
 (function initOfferLetterFloater() {
