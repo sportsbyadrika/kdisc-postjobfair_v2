@@ -565,7 +565,6 @@ foreach ($joinRemarksPivotRows as $r) {
 }
 $jrDrillUrl = static function (?string $remarkType, ?string $joined) use ($filters): string {
     $params = [
-        'cohort' => 'any',
         'aggregator' => $filters['aggregator'] ?? '',
         'job_fair' => $filters['job_fair'] ?? '',
         'category' => $filters['category'] ?? '',
@@ -573,7 +572,7 @@ $jrDrillUrl = static function (?string $remarkType, ?string $joined) use ($filte
     if ($joined !== null && $joined !== '') {
         $params['joined'] = $joined;
     }
-    $url = '/district_jobstation_joined_drill.php?' . http_build_query(array_filter(
+    $url = '/candidate_join_remarks_bulk_update.php?' . http_build_query(array_filter(
         $params,
         static fn($v): bool => $v !== '' && $v !== null
     ));

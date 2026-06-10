@@ -657,6 +657,14 @@ function applyMandatoryRules() {
         // Candidate Join Remarks Type: required in every status, never disabled here
         setFieldDisabled('Candidate_Join_Remarks_Type', false);
         setFieldRequired('Candidate_Join_Remarks_Type', true);
+        // Default to "Joined" when status is Yes and no remark type is set yet.
+        if (cjsYes) {
+            const remarksTypeInput = findFieldInput('Candidate_Join_Remarks_Type');
+            if (remarksTypeInput && String(remarksTypeInput.value || '').trim() === '') {
+                remarksTypeInput.value = 'Joined';
+                remarksTypeInput.classList.remove('is-required-pending');
+            }
+        }
         // Candidate Joined Date: required only for Yes, disabled otherwise
         setFieldDisabled('Candidate_Joined_Date', !cjsYes);
         setFieldRequired('Candidate_Joined_Date', cjsYes);
