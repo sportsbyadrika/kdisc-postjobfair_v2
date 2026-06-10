@@ -633,18 +633,46 @@ function applyMandatoryRules() {
     setFieldRequired('Confirm_letter_receipt_remarks', colr === 'no' || colr === 'pending');
     setFieldRequired('confirmation_date', colr === 'yes');
 
-    // 5.5 Willing to Join: May be / No -> remarks + future date required
+    // 5.5 Willing to Join: May be / No -> willing-to-join remarks required.
+    // (Candidate_Joining_Future_Date is driven by Candidate Joined Status below.)
     const wtj = norm(v('Willing_to_Join'));
     const wtjForceRemarks = wtj === 'may be' || wtj === 'no';
     setFieldRequired('willing_to_join_remarks', wtjForceRemarks);
-    setFieldRequired('Candidate_Joining_Future_Date', wtjForceRemarks || norm(v('Candidate_Joined_Status')) === 'future date');
 
-    // 5.6 Candidate Joined Status
+    // 5.6 Candidate Joined Status -> strict per-status rules for the Joined
+    // details panel. When Joined Status isn't set yet, fall back to the
+    // willing-to-join driven future-date requirement and leave the other
+    // fields unconstrained.
     const cjs = norm(v('Candidate_Joined_Status'));
-    const cjsPendingOrNo = cjs === 'no' || cjs === 'pending';
-    setFieldRequired('Remarks_Candidate_Join', cjsPendingOrNo);
-    setFieldRequired('Candidate_Join_Remarks_Type', cjsPendingOrNo);
-    setFieldRequired('Candidate_Joined_Date', cjs === 'yes');
+    const cjsYes = cjs === 'yes';
+    const cjsNo = cjs === 'no';
+    const cjsPending = cjs === 'pending';
+    const cjsFuture = cjs === 'future date';
+    const cjsSet = cjsYes || cjsNo || cjsPending || cjsFuture;
+
+    if (cjsSet) {
+        // Remarks Candidate Join: required for No/Pending/Future Date, disabled for Yes
+        setFieldDisabled('Remarks_Candidate_Join', cjsYes);
+        setFieldRequired('Remarks_Candidate_Join', cjsNo || cjsPending || cjsFuture);
+        // Candidate Join Remarks Type: required in every status, never disabled here
+        setFieldDisabled('Candidate_Join_Remarks_Type', false);
+        setFieldRequired('Candidate_Join_Remarks_Type', true);
+        // Candidate Joined Date: required only for Yes, disabled otherwise
+        setFieldDisabled('Candidate_Joined_Date', !cjsYes);
+        setFieldRequired('Candidate_Joined_Date', cjsYes);
+        // Candidate Joining Future Date: required only for Future Date, disabled otherwise
+        setFieldDisabled('Candidate_Joining_Future_Date', !cjsFuture);
+        setFieldRequired('Candidate_Joining_Future_Date', cjsFuture);
+    } else {
+        setFieldDisabled('Remarks_Candidate_Join', false);
+        setFieldRequired('Remarks_Candidate_Join', false);
+        setFieldDisabled('Candidate_Join_Remarks_Type', false);
+        setFieldRequired('Candidate_Join_Remarks_Type', false);
+        setFieldDisabled('Candidate_Joined_Date', false);
+        setFieldRequired('Candidate_Joined_Date', false);
+        setFieldDisabled('Candidate_Joining_Future_Date', false);
+        setFieldRequired('Candidate_Joining_Future_Date', wtjForceRemarks);
+    }
 }
 
 function wireMandatoryListeners() {
