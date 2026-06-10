@@ -98,6 +98,25 @@ foreach ($commonConditions as $c) {
     $conditions[] = $c;
 }
 
+/**
+ * Render a MySQL date/datetime safely. Returns empty string for blanks,
+ * NULL, "0000-00-00", "0000-00-00 00:00:00" or anything strtotime can't
+ * parse into a sensible positive timestamp (which would otherwise render
+ * as "30 Nov -0001" because strtotime maps year 0 to 1 BC).
+ */
+function format_drill_date(?string $value): string
+{
+    $v = trim((string) ($value ?? ''));
+    if ($v === '' || str_starts_with($v, '0000-00-00')) {
+        return '';
+    }
+    $ts = strtotime($v);
+    if ($ts === false || $ts <= 0) {
+        return '';
+    }
+    return date('d M Y', $ts);
+}
+
 $whereClause = 'WHERE ' . implode(' AND ', $conditions);
 
 $sql = "SELECT id, Job_Fair_No, Job_Fair_Date, DWMS_ID, Candidate_Name, Mobile_Number,
@@ -287,7 +306,7 @@ render_page_header('District / Job Station — Drill-down', [
                         </td>
                         <td>
                             <div><?= esc((string) ($row['Job_Fair_No'] ?? '')) ?></div>
-                            <div class="small text-muted"><?= $row['Job_Fair_Date'] ? esc(date('d M Y', strtotime((string) $row['Job_Fair_Date']))) : '' ?></div>
+                            <div class="small text-muted"><?= esc(format_drill_date((string) ($row['Job_Fair_Date'] ?? ''))) ?></div>
                         </td>
                         <td>
                             <?= render_status_chip($row['Selection_Status']) ?>
@@ -297,19 +316,20 @@ render_page_header('District / Job Station — Drill-down', [
                         </td>
                         <td>
                             <?= render_status_chip($row['Confirm_Offer_Letter_Receipt_by_Candidate']) ?>
-                            <?php if (!empty($row['confirmation_date']) && $row['confirmation_date'] !== '0000-00-00 00:00:00' && $row['confirmation_date'] !== '0000-00-00'): ?>
-                                <div class="small text-muted"><?= esc(date('d M Y', strtotime((string) $row['confirmation_date']))) ?></div>
+                            <?php $cd = format_drill_date((string) ($row['confirmation_date'] ?? '')); ?>
+                            <?php if ($cd !== ''): ?>
+                                <div class="small text-muted"><?= esc($cd) ?></div>
                             <?php endif; ?>
                         </td>
                         <td><?= render_status_chip($row['Candidate_Joined_Status']) ?></td>
                         <td>
                             <?php
-                                $jd = (string) ($row['Candidate_Joined_Date'] ?? '');
-                                $fjd = (string) ($row['Candidate_Joining_Future_Date'] ?? '');
-                                if ($jd !== '' && $jd !== '0000-00-00') {
-                                    echo esc(date('d M Y', strtotime($jd)));
-                                } elseif ($fjd !== '' && $fjd !== '0000-00-00') {
-                                    echo '<span class="small text-muted">Future:</span> ' . esc(date('d M Y', strtotime($fjd)));
+                                $jd = format_drill_date((string) ($row['Candidate_Joined_Date'] ?? ''));
+                                $fjd = format_drill_date((string) ($row['Candidate_Joining_Future_Date'] ?? ''));
+                                if ($jd !== '') {
+                                    echo esc($jd);
+                                } elseif ($fjd !== '') {
+                                    echo '<span class="small text-muted">Future:</span> ' . esc($fjd);
                                 } else {
                                     echo '<span class="text-muted">&mdash;</span>';
                                 }
