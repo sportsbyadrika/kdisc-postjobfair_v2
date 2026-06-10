@@ -13,6 +13,7 @@ function consolidated_metric_url(string $section, string $metric, ?string $jobFa
         'aggregator' => $filters['aggregator'],
         'job_fair' => $filters['job_fair'],
         'category' => $filters['category'],
+        'crm_member' => $filters['crm_member'] ?? '',
         'selection_status' => $filters['selection_status'],
         'round_number' => $extraParams['round_number'] ?? '',
         'round_selection_status' => $extraParams['round_selection_status'] ?? '',
@@ -38,6 +39,10 @@ $aggregatorOptions = fetch_consolidated_distinct_values('Aggregator');
 $jobFairOptions = fetch_consolidated_distinct_values('Job_Fair_No');
 $categoryOptions = array_values(array_filter(
     fetch_consolidated_distinct_values('Category'),
+    static fn(string $value): bool => strtolower($value) !== 'unknown'
+));
+$crmMemberOptions = array_values(array_filter(
+    fetch_consolidated_distinct_values('CRM_Member'),
     static fn(string $value): bool => strtolower($value) !== 'unknown'
 ));
 $selectionStatusOptions = fetch_consolidated_distinct_values('Selection_Status');
@@ -133,6 +138,7 @@ $districtDrillUrl = static function (string $district, string $view) use ($filte
         'aggregator' => $filters['aggregator'] ?? '',
         'job_fair' => $filters['job_fair'] ?? '',
         'category' => $filters['category'] ?? '',
+        'crm_member' => $filters['crm_member'] ?? '',
     ], static fn ($value): bool => $value !== ''));
 };
 
@@ -188,6 +194,15 @@ render_page_header('Consolidated Report', [
                     <option value="">All Categories</option>
                     <?php foreach ($categoryOptions as $option): ?>
                         <option value="<?= esc($option) ?>" <?= $filters['category'] === $option ? 'selected' : '' ?>><?= esc($option) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="crm_member" class="form-label">CRM Member</label>
+                <select class="form-select" id="crm_member" name="crm_member">
+                    <option value="">All CRM Members</option>
+                    <?php foreach ($crmMemberOptions as $option): ?>
+                        <option value="<?= esc($option) ?>" <?= $filters['crm_member'] === $option ? 'selected' : '' ?>><?= esc($option) ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
@@ -568,6 +583,7 @@ $jrDrillUrl = static function (?string $remarkType, ?string $joined) use ($filte
         'aggregator' => $filters['aggregator'] ?? '',
         'job_fair' => $filters['job_fair'] ?? '',
         'category' => $filters['category'] ?? '',
+        'crm_member' => $filters['crm_member'] ?? '',
     ];
     if ($joined !== null && $joined !== '') {
         $params['joined'] = $joined;

@@ -1579,6 +1579,7 @@ function render_jobfair_joined_table(array $rows, array $filters): void
             'aggregator' => $filters['aggregator'] ?? '',
             'job_fair' => $jobFairNo !== null && $jobFairNo !== '' ? $jobFairNo : ($filters['job_fair'] ?? ''),
             'category' => $filters['category'] ?? '',
+            'crm_member' => $filters['crm_member'] ?? '',
         ];
         if ($offerLetter) {
             $params['offer_letter'] = 'yes';
@@ -1752,6 +1753,7 @@ function render_district_jobstation_joined_table(array $rows, array $filters): v
             'aggregator' => $filters['aggregator'] ?? '',
             'job_fair' => $filters['job_fair'] ?? '',
             'category' => $filters['category'] ?? '',
+            'crm_member' => $filters['crm_member'] ?? '',
         ];
         if ($offerLetter) {
             $params['offer_letter'] = 'yes';
