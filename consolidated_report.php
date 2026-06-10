@@ -563,6 +563,32 @@ foreach ($joinRemarksPivotRows as $r) {
         $joinRemarksPivotTotals[$k] += (int) ($r[$k] ?? 0);
     }
 }
+$jrDrillUrl = static function (?string $remarkType, ?string $joined) use ($filters): string {
+    $params = [
+        'cohort' => 'any',
+        'aggregator' => $filters['aggregator'] ?? '',
+        'job_fair' => $filters['job_fair'] ?? '',
+        'category' => $filters['category'] ?? '',
+    ];
+    if ($joined !== null && $joined !== '') {
+        $params['joined'] = $joined;
+    }
+    $url = '/district_jobstation_joined_drill.php?' . http_build_query(array_filter(
+        $params,
+        static fn($v): bool => $v !== '' && $v !== null
+    ));
+    if ($remarkType !== null) {
+        // Append explicitly so '(No Remark Type)' or any literal value survives.
+        $url .= '&remark_type=' . rawurlencode($remarkType);
+    }
+    return $url;
+};
+$jrCell = static function (int $value, ?string $remarkType, ?string $joined) use ($jrDrillUrl): string {
+    if ($value === 0) {
+        return '<span class="text-muted">0</span>';
+    }
+    return '<a href="' . esc($jrDrillUrl($remarkType, $joined)) . '">' . number_format($value) . '</a>';
+};
 ?>
 <div class="card mb-4">
     <div class="card-body">
@@ -589,24 +615,25 @@ foreach ($joinRemarksPivotRows as $r) {
                     <tr><td colspan="7"><div class="empty-state"><i class="bi bi-inbox"></i>No remarks data available.</div></td></tr>
                 <?php endif; ?>
                 <?php $jrIdx = 1; foreach ($joinRemarksPivotRows as $jrRow): ?>
+                    <?php $rt = (string) $jrRow['remark_type']; ?>
                     <tr>
                         <td><?= $jrIdx++ ?></td>
-                        <td class="fw-semibold"><?= esc((string) $jrRow['remark_type']) ?></td>
-                        <td class="text-end"><?= number_format((int) $jrRow['joined_yes']) ?></td>
-                        <td class="text-end"><?= number_format((int) $jrRow['joined_no']) ?></td>
-                        <td class="text-end"><?= number_format((int) $jrRow['joined_pending']) ?></td>
-                        <td class="text-end"><?= number_format((int) $jrRow['joined_future_date']) ?></td>
-                        <td class="text-end"><strong><?= number_format((int) $jrRow['total']) ?></strong></td>
+                        <td class="fw-semibold"><?= esc($rt) ?></td>
+                        <td class="text-end"><?= $jrCell((int) $jrRow['joined_yes'], $rt, 'yes') ?></td>
+                        <td class="text-end"><?= $jrCell((int) $jrRow['joined_no'], $rt, 'no') ?></td>
+                        <td class="text-end"><?= $jrCell((int) $jrRow['joined_pending'], $rt, 'pending') ?></td>
+                        <td class="text-end"><?= $jrCell((int) $jrRow['joined_future_date'], $rt, 'future_date') ?></td>
+                        <td class="text-end fw-semibold"><?= $jrCell((int) $jrRow['total'], $rt, null) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if ($joinRemarksPivotRows !== []): ?>
                     <tr class="table-secondary fw-semibold">
                         <td colspan="2">Total</td>
-                        <td class="text-end"><?= number_format($joinRemarksPivotTotals['joined_yes']) ?></td>
-                        <td class="text-end"><?= number_format($joinRemarksPivotTotals['joined_no']) ?></td>
-                        <td class="text-end"><?= number_format($joinRemarksPivotTotals['joined_pending']) ?></td>
-                        <td class="text-end"><?= number_format($joinRemarksPivotTotals['joined_future_date']) ?></td>
-                        <td class="text-end"><?= number_format($joinRemarksPivotTotals['total']) ?></td>
+                        <td class="text-end"><?= $jrCell($joinRemarksPivotTotals['joined_yes'], null, 'yes') ?></td>
+                        <td class="text-end"><?= $jrCell($joinRemarksPivotTotals['joined_no'], null, 'no') ?></td>
+                        <td class="text-end"><?= $jrCell($joinRemarksPivotTotals['joined_pending'], null, 'pending') ?></td>
+                        <td class="text-end"><?= $jrCell($joinRemarksPivotTotals['joined_future_date'], null, 'future_date') ?></td>
+                        <td class="text-end"><?= $jrCell($joinRemarksPivotTotals['total'], null, null) ?></td>
                     </tr>
                 <?php endif; ?>
                 </tbody>
