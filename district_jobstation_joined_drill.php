@@ -153,6 +153,9 @@ if (($filters['job_fair'] ?? '') !== '') {
 if (($filters['category'] ?? '') !== '') {
     $activeFilters[] = ['label' => 'Category', 'value' => $filters['category']];
 }
+if (($filters['crm_member'] ?? '') !== '') {
+    $activeFilters[] = ['label' => 'CRM Member', 'value' => $filters['crm_member']];
+}
 
 if (($_GET['download'] ?? '') === 'csv') {
     $filename = 'district_jobstation_drill_' . date('Ymd_His') . '.csv';
@@ -211,6 +214,7 @@ $downloadUrl = '/district_jobstation_joined_drill.php?' . http_build_query(array
     'aggregator' => $filters['aggregator'] ?? '',
     'job_fair' => $filters['job_fair'] ?? '',
     'category' => $filters['category'] ?? '',
+    'crm_member' => $filters['crm_member'] ?? '',
 ], static fn($v): bool => $v !== ''));
 
 $backUrl = '/consolidated_report.php?' . http_build_query(array_filter([
