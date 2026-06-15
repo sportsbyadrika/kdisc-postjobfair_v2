@@ -21,6 +21,48 @@ $flashMessage = null;
 $flashType = 'success';
 
 /* ------------------------------------------------------------------------- *
+ * Delete a single candidate row plus all dependent child rows. The HTML form
+ * is in the table actions column; a JS confirm() guards the submit. We also
+ * clean up candidate_call_history, candidate_shortlist_rounds and
+ * candidate_manage_activity_log so the delete is consistent across reports.
+ * ------------------------------------------------------------------------- */
+if (is_post() && ($_POST['action'] ?? '') === 'delete_candidate') {
+    $candidateId = (int) ($_POST['candidate_id'] ?? 0);
+    if ($candidateId <= 0) {
+        $flashMessage = 'Invalid candidate id.';
+        $flashType = 'danger';
+    } else {
+        $info = db()->prepare('SELECT Candidate_Name, DWMS_ID, Job_Fair_No FROM job_fair_result WHERE id = ?');
+        $info->execute([$candidateId]);
+        $row = $info->fetch();
+        if (!$row) {
+            $flashMessage = 'Candidate not found (may have already been deleted).';
+            $flashType = 'warning';
+        } else {
+            foreach ([
+                'DELETE FROM candidate_call_history WHERE candidate_id = ?',
+                'DELETE FROM candidate_shortlist_rounds WHERE candidate_id = ?',
+                'DELETE FROM candidate_manage_activity_log WHERE candidate_id = ?',
+            ] as $childSql) {
+                try {
+                    db()->prepare($childSql)->execute([$candidateId]);
+                } catch (Throwable $e) {
+                    // Child table may not exist on older schemas — ignore.
+                }
+            }
+            db()->prepare('DELETE FROM job_fair_result WHERE id = ?')->execute([$candidateId]);
+            $flashMessage = sprintf(
+                'Deleted candidate "%s" (DWMS %s, Job Fair %s).',
+                (string) ($row['Candidate_Name'] ?? ''),
+                (string) ($row['DWMS_ID'] ?? ''),
+                (string) ($row['Job_Fair_No'] ?? '')
+            );
+            $flashType = 'success';
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------- *
  * Bulk update via CSV upload. Required columns (case / underscore insensitive):
  *   DWMS_ID, Job_Id, Job_Fair_No, Candidate_Jobstation, Candidate_Localbody
  * (also accepts "DWMS ID" / "Job ID" / "Job Fair No" / "Job Station" /
@@ -343,7 +385,20 @@ render_page_header('Candidates Master', [
                             <div class="small text-muted"><?= esc((string) ($row['Job_Id'] ?? '')) ?></div>
                         </td>
                         <td class="text-end">
-                            <a class="btn btn-sm btn-outline-primary" href="/manage_candidate.php?candidate_id=<?= (int) $row['id'] ?>"><i class="bi bi-pencil-square"></i> Manage</a>
+                            <div class="d-inline-flex gap-1">
+                                <a class="btn btn-sm btn-outline-primary" href="/manage_candidate.php?candidate_id=<?= (int) $row['id'] ?>"><i class="bi bi-pencil-square"></i> Manage</a>
+                                <?php
+                                    $confirmLabel = trim((string) ($row['Candidate_Name'] ?? '')) !== ''
+                                        ? (string) $row['Candidate_Name']
+                                        : ('DWMS ' . (string) ($row['DWMS_ID'] ?? ''));
+                                    $confirmMsg = 'Permanently delete candidate "' . $confirmLabel . '"? Linked call history, shortlist rounds and activity log entries will also be removed. This cannot be undone.';
+                                ?>
+                                <form method="post" class="d-inline" onsubmit="return confirm(<?= htmlspecialchars(json_encode($confirmMsg), ENT_QUOTES, 'UTF-8') ?>);">
+                                    <input type="hidden" name="action" value="delete_candidate">
+                                    <input type="hidden" name="candidate_id" value="<?= (int) $row['id'] ?>">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete candidate" aria-label="Delete candidate"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </div>
                         </td>
                     </tr>
                 <?php endforeach; ?>
