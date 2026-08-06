@@ -36,6 +36,7 @@ $dateStmt->execute($dateParams);
 $dateRows = $dateStmt->fetchAll();
 
 $userRows = [];
+$editDetailRows = [];
 if ($selectedDate !== '') {
     $userSql = "SELECT
             u.id AS user_id,
@@ -58,6 +59,36 @@ if ($selectedDate !== '') {
     $userStmt = db()->prepare($userSql);
     $userStmt->execute([$selectedDate, $selectedDate]);
     $userRows = $userStmt->fetchAll();
+
+    // Per-edit detail, joined through the emp_id -> employer_id FK so every
+    // row shows which employer (and job title, for job edits) was touched.
+    $detailSql = "(SELECT
+            'Employer' AS entity,
+            el.edited_at, el.field_name, el.old_value, el.new_value,
+            u.name AS editor_name,
+            e.employer_id AS employer_id, e.employer_name,
+            NULL AS job_id, NULL AS job_title
+        FROM demand_employer_edit_log el
+        LEFT JOIN users u ON u.id = el.edited_by
+        LEFT JOIN demand_employers e ON e.id = el.employer_row_id
+        WHERE DATE(el.edited_at) = ?)
+        UNION ALL
+        (SELECT
+            'Job' AS entity,
+            jl.edited_at, jl.field_name, jl.old_value, jl.new_value,
+            u.name AS editor_name,
+            j.emp_id AS employer_id, e.employer_name,
+            j.job_id, j.jobtitle
+        FROM demand_employer_job_edit_log jl
+        LEFT JOIN users u ON u.id = jl.edited_by
+        LEFT JOIN demand_employer_jobs j ON j.id = jl.job_row_id
+        LEFT JOIN demand_employers e ON e.employer_id = j.emp_id
+        WHERE DATE(jl.edited_at) = ?)
+        ORDER BY edited_at DESC
+        LIMIT 500";
+    $detailStmt = db()->prepare($detailSql);
+    $detailStmt->execute([$selectedDate, $selectedDate]);
+    $editDetailRows = $detailStmt->fetchAll();
 }
 
 render_header('Demand Side · Data Modification Statistics', ['main_container_class' => 'container-fluid']);
@@ -166,6 +197,60 @@ render_page_header('Demand Side · Data Modification Statistics', [
                             <td class="text-end"><?= number_format((int) $row['job_invalid']) ?></td>
                             <td class="text-end"><?= number_format((int) $row['job_corrected']) ?></td>
                             <td class="text-end fw-semibold"><?= number_format((int) $row['total_edits']) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-list-check text-primary me-1"></i>Edit detail on <?= esc($selectedDate) ?> <span class="text-muted small ms-1">(joined via emp_id → employer_id)</span></span>
+            <span class="status-chip status-info"><?= number_format(count($editDetailRows)) ?> edits</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-striped table-bordered align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>When</th>
+                        <th>Entity</th>
+                        <th>Employer</th>
+                        <th>Job</th>
+                        <th>Field</th>
+                        <th>Old</th>
+                        <th>New</th>
+                        <th>Edited By</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if ($editDetailRows === []): ?>
+                        <tr><td colspan="8"><div class="empty-state"><i class="bi bi-inbox"></i>No edits on this date.</div></td></tr>
+                    <?php endif; ?>
+                    <?php foreach ($editDetailRows as $er): ?>
+                        <tr>
+                            <td class="small text-muted"><?= esc((string) $er['edited_at']) ?></td>
+                            <td><span class="status-chip status-neutral"><?= esc((string) $er['entity']) ?></span></td>
+                            <td>
+                                <?php if (!empty($er['employer_id'])): ?>
+                                    <div class="fw-semibold"><?= esc((string) ($er['employer_name'] ?? '')) ?></div>
+                                    <div class="small text-muted">ID <?= (int) $er['employer_id'] ?></div>
+                                <?php else: ?>
+                                    <span class="text-muted">—</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if (!empty($er['job_id'])): ?>
+                                    <div><?= esc((string) ($er['job_title'] ?? '')) ?></div>
+                                    <div class="small text-muted">Job ID <?= (int) $er['job_id'] ?></div>
+                                <?php else: ?>
+                                    <span class="text-muted">—</span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="small"><?= esc((string) $er['field_name']) ?></td>
+                            <td class="small text-muted"><?= esc((string) ($er['old_value'] ?? '')) ?></td>
+                            <td class="small fw-bold"><?= esc((string) ($er['new_value'] ?? '')) ?></td>
+                            <td class="small"><?= esc((string) ($er['editor_name'] ?? '')) ?></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>

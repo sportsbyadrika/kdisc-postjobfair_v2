@@ -295,9 +295,9 @@ $nicJoin = static function (?string $code, ?string $name): string {
     </div>
 </div>
 
-<div class="card mb-4">
+<div class="card mb-4" id="jobs">
     <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-briefcase text-primary me-1"></i>Employer Jobs</span>
+        <span><i class="bi bi-briefcase text-primary me-1"></i>Employer Jobs <span class="text-muted small ms-1">emp_id = <?= (int) $employer['employer_id'] ?></span></span>
         <span class="status-chip status-info"><?= number_format(count($jobs)) ?> jobs</span>
     </div>
     <div class="card-body p-0">
