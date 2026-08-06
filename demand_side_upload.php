@@ -206,7 +206,13 @@ if (is_post() && ($_POST['action'] ?? '') === 'preview') {
                 $flashType = 'danger';
             } else {
                 $previewMap = demand_map_headers($header, $aliasSet);
-                $missing = array_keys(array_filter($previewMap, static fn(int $i): bool => $i < 0));
+                $required = $type === 'employer'
+                    ? demand_employer_upload_required()
+                    : demand_employer_job_upload_required();
+                $missing = array_values(array_filter(
+                    $required,
+                    static fn(string $col): bool => ($previewMap[$col] ?? -1) < 0
+                ));
                 if ($missing !== []) {
                     $flashMessage = 'Required column(s) missing in CSV: ' . implode(', ', $missing);
                     $flashType = 'danger';
@@ -264,13 +270,25 @@ render_page_header('Demand Side · Upload Data', [
                 <button class="btn btn-primary"><i class="bi bi-eye me-1"></i>Preview</button>
             </div>
         </form>
+        <?php
+            $requiredCols = $type === 'employer'
+                ? demand_employer_upload_required()
+                : demand_employer_job_upload_required();
+            $optionalCols = array_values(array_diff(array_keys($aliasSet), $requiredCols));
+        ?>
         <div class="mt-3 small text-muted">
-            Required columns (case / underscore insensitive):
+            Accepted columns (case / underscore insensitive) — <strong>required</strong> ones are highlighted, others are optional:
             <div class="d-flex flex-wrap gap-1 mt-1">
-                <?php foreach (array_keys($aliasSet) as $col): ?>
+                <?php foreach ($requiredCols as $col): ?>
+                    <span class="status-chip status-danger"><?= esc($col) ?> *</span>
+                <?php endforeach; ?>
+                <?php foreach ($optionalCols as $col): ?>
                     <span class="status-chip status-neutral"><?= esc($col) ?></span>
                 <?php endforeach; ?>
             </div>
+            <?php if ($type === 'jobs'): ?>
+                <div class="mt-2"><em>Note:</em> <code>status</code>, <code>remarks</code>, <code>remarks_group</code>, <code>posted_on</code>, <code>posted_by</code>, <code>expired_date</code> and <code>corrected_open_position</code> are managed inside the app on the Edit screen, so they are not part of the upload.</div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
