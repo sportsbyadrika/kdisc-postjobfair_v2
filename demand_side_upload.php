@@ -33,6 +33,89 @@ function demand_map_headers(array $header, array $aliasSet): array
 }
 
 /* ------------------------------------------------------------------------- *
+ * Delete handlers. Only administrator / state_dsm (require_admin at top of
+ * the file) can reach these. Each destructive action is guarded on the
+ * client with a JS confirm() and on the server here by an explicit
+ * action= handler. Employer deletes are blocked whenever jobs exist for
+ * that employer_id because of the ON DELETE RESTRICT foreign key.
+ * ------------------------------------------------------------------------- */
+if (is_post() && ($_POST['action'] ?? '') === 'delete_all_jobs') {
+    $affected = 0;
+    try {
+        $stmt = db()->prepare('DELETE FROM demand_employer_jobs');
+        $stmt->execute();
+        $affected = $stmt->affectedRows();
+        $flashMessage = "Deleted $affected Employer Jobs row(s).";
+    } catch (Throwable $e) {
+        $flashMessage = 'Could not delete jobs: ' . $e->getMessage();
+        $flashType = 'danger';
+    }
+} elseif (is_post() && ($_POST['action'] ?? '') === 'delete_all_employers') {
+    try {
+        $stmt = db()->prepare('DELETE FROM demand_employers');
+        $stmt->execute();
+        $flashMessage = 'Deleted ' . $stmt->affectedRows() . ' Employer row(s).';
+    } catch (Throwable $e) {
+        $flashMessage = 'Could not delete employers (jobs may still reference them — delete jobs first): ' . $e->getMessage();
+        $flashType = 'danger';
+    }
+} elseif (is_post() && ($_POST['action'] ?? '') === 'delete_employer_by_id') {
+    $eid = demand_parse_int((string) ($_POST['employer_id'] ?? ''));
+    if ($eid === null || $eid <= 0) {
+        $flashMessage = 'Enter a valid numeric employer_id.';
+        $flashType = 'danger';
+    } else {
+        $chk = db()->prepare('SELECT COUNT(*) FROM demand_employer_jobs WHERE emp_id = ?');
+        $chk->execute([$eid]);
+        $jobsExist = (int) $chk->fetchColumn();
+        if ($jobsExist > 0) {
+            $flashMessage = "Employer $eid still has $jobsExist job(s). Delete those first or use the per-row delete after cascading them.";
+            $flashType = 'warning';
+        } else {
+            $del = db()->prepare('DELETE FROM demand_employers WHERE employer_id = ?');
+            $del->execute([$eid]);
+            $affected = $del->affectedRows();
+            if ($affected > 0) {
+                $flashMessage = "Deleted employer $eid.";
+            } else {
+                $flashMessage = "No employer with employer_id $eid.";
+                $flashType = 'warning';
+            }
+        }
+    }
+} elseif (is_post() && ($_POST['action'] ?? '') === 'delete_job_by_id') {
+    $jid = demand_parse_int((string) ($_POST['job_id'] ?? ''));
+    if ($jid === null || $jid <= 0) {
+        $flashMessage = 'Enter a valid numeric job_id.';
+        $flashType = 'danger';
+    } else {
+        $del = db()->prepare('DELETE FROM demand_employer_jobs WHERE job_id = ?');
+        $del->execute([$jid]);
+        $affected = $del->affectedRows();
+        if ($affected > 0) {
+            $flashMessage = "Deleted job $jid.";
+        } else {
+            $flashMessage = "No job with job_id $jid.";
+            $flashType = 'warning';
+        }
+    }
+} elseif (is_post() && ($_POST['action'] ?? '') === 'delete_jobs_by_employer') {
+    $eid = demand_parse_int((string) ($_POST['employer_id'] ?? ''));
+    if ($eid === null || $eid <= 0) {
+        $flashMessage = 'Enter a valid numeric employer_id.';
+        $flashType = 'danger';
+    } else {
+        $del = db()->prepare('DELETE FROM demand_employer_jobs WHERE emp_id = ?');
+        $del->execute([$eid]);
+        $flashMessage = 'Deleted ' . $del->affectedRows() . " job(s) for employer $eid.";
+    }
+}
+
+// Current counts for the delete panel summary.
+$employerCount = (int) db()->query('SELECT COUNT(*) FROM demand_employers')->fetchColumn();
+$jobCount = (int) db()->query('SELECT COUNT(*) FROM demand_employer_jobs')->fetchColumn();
+
+/* ------------------------------------------------------------------------- *
  * Step 2: Commit the import from a previously staged file (session-based).
  * ------------------------------------------------------------------------- */
 if (is_post() && ($_POST['action'] ?? '') === 'commit') {
@@ -346,5 +429,65 @@ render_page_header('Demand Side · Upload Data', [
         </div>
     </div>
 <?php endif; ?>
+
+<div class="card border-danger mb-4">
+    <div class="card-header bg-danger-subtle text-danger-emphasis d-flex align-items-center gap-2">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <span class="fw-semibold">Danger zone · Delete data</span>
+        <span class="status-chip status-danger ms-auto"><?= number_format($employerCount) ?> employers · <?= number_format($jobCount) ?> jobs</span>
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            Destructive actions. Because <code>demand_employer_jobs.emp_id</code> is a foreign key to
+            <code>demand_employers.employer_id</code> with <em>ON&nbsp;DELETE&nbsp;RESTRICT</em>, an Employer cannot be deleted while its Jobs still exist &mdash; delete the Jobs first, or use the <em>Delete Jobs for one employer</em> helper below.
+        </p>
+
+        <div class="row g-3">
+            <div class="col-lg-6">
+                <div class="border rounded p-3 h-100">
+                    <h3 class="h6 mb-3"><i class="bi bi-trash me-1"></i>Delete one</h3>
+                    <form method="post" class="row g-2 align-items-end mb-3" onsubmit="return confirm('Delete employer with employer_id=' + this.employer_id.value + '? This cannot be undone.');">
+                        <input type="hidden" name="action" value="delete_employer_by_id">
+                        <div class="col">
+                            <label class="form-label small">Employer employer_id</label>
+                            <input class="form-control form-control-sm" type="number" min="1" name="employer_id" required>
+                        </div>
+                        <div class="col-auto"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Delete employer</button></div>
+                    </form>
+                    <form method="post" class="row g-2 align-items-end mb-3" onsubmit="return confirm('Delete ALL jobs whose emp_id = ' + this.employer_id.value + '? This cannot be undone.');">
+                        <input type="hidden" name="action" value="delete_jobs_by_employer">
+                        <div class="col">
+                            <label class="form-label small">All jobs for emp_id</label>
+                            <input class="form-control form-control-sm" type="number" min="1" name="employer_id" required>
+                        </div>
+                        <div class="col-auto"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Delete jobs</button></div>
+                    </form>
+                    <form method="post" class="row g-2 align-items-end" onsubmit="return confirm('Delete job with job_id=' + this.job_id.value + '?');">
+                        <input type="hidden" name="action" value="delete_job_by_id">
+                        <div class="col">
+                            <label class="form-label small">Job job_id</label>
+                            <input class="form-control form-control-sm" type="number" min="1" name="job_id" required>
+                        </div>
+                        <div class="col-auto"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Delete job</button></div>
+                    </form>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="border rounded p-3 h-100 bg-danger-subtle">
+                    <h3 class="h6 mb-3 text-danger-emphasis"><i class="bi bi-fire me-1"></i>Wipe everything</h3>
+                    <p class="small text-muted">Use these before importing a fresh dataset. Jobs first, then Employers.</p>
+                    <form method="post" class="mb-2" onsubmit="return confirm('Delete ALL <?= (int) $jobCount ?> Employer Jobs? This cannot be undone.');">
+                        <input type="hidden" name="action" value="delete_all_jobs">
+                        <button class="btn btn-danger btn-sm w-100" <?= $jobCount === 0 ? 'disabled' : '' ?>><i class="bi bi-trash-fill me-1"></i>Delete ALL Employer Jobs (<?= number_format($jobCount) ?>)</button>
+                    </form>
+                    <form method="post" onsubmit="return confirm('Delete ALL <?= (int) $employerCount ?> Employers? Any jobs still present will block this.');">
+                        <input type="hidden" name="action" value="delete_all_employers">
+                        <button class="btn btn-danger btn-sm w-100" <?= $employerCount === 0 ? 'disabled' : '' ?>><i class="bi bi-trash-fill me-1"></i>Delete ALL Employers (<?= number_format($employerCount) ?>)</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 <?php render_footer(); ?>
