@@ -113,6 +113,26 @@ function demand_side_bootstrap(): void
         UNIQUE KEY unique_name (name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+    // Foreign key: demand_employer_jobs.emp_id -> demand_employers.employer_id.
+    // Older installations that were created before the FK existed will pick it
+    // up here; the ALTER is skipped silently if orphaned rows or a non-InnoDB
+    // engine would block it, so bootstrap never fails mid-page-load.
+    try {
+        $fkExists = (int) $db->query("SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'demand_employer_jobs'
+              AND CONSTRAINT_NAME = 'fk_demand_employer_jobs_emp'")->fetchColumn();
+        if ($fkExists === 0) {
+            $db->query("ALTER TABLE demand_employer_jobs
+                ADD CONSTRAINT fk_demand_employer_jobs_emp
+                FOREIGN KEY (emp_id) REFERENCES demand_employers (employer_id)
+                ON UPDATE CASCADE ON DELETE RESTRICT");
+        }
+    } catch (Throwable $e) {
+        // Orphaned emp_id rows or engine mismatch — leave the app-level
+        // guard in the upload wizard as the source of truth.
+    }
+
     // Seed defaults if empty.
     $seedCount = (int) $db->query('SELECT COUNT(*) FROM demand_remarks_groups')->fetchColumn();
     if ($seedCount === 0) {

@@ -59,7 +59,7 @@ unset($baseParams['page']);
 render_header('Employer', ['main_container_class' => 'container-fluid']);
 render_page_header('Demand Side · Employer', [
     'icon' => 'bi-building',
-    'subtitle' => 'Master list of employers and their jobs. Admin / State DSM can review, edit and upload.',
+    'subtitle' => 'Master list of employers and their jobs. Employer Jobs link to Employers via emp_id → employer_id. Admin / State DSM can review, edit and upload.',
     'actions' => '<a class="btn btn-light me-1" href="/demand_side_upload.php"><i class="bi bi-upload me-1"></i>Upload Data</a>'
         . '<a class="btn btn-light" href="/demand_side_stats.php"><i class="bi bi-bar-chart-line me-1"></i>Statistics</a>',
 ]);
