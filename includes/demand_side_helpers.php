@@ -215,7 +215,10 @@ function demand_employer_upload_columns(): array
 }
 
 /**
- * Header aliases for the Employer Jobs CSV upload.
+ * Header aliases for the Employer Jobs CSV upload. Only the fields that come
+ * from the source system are accepted — the manually edited fields
+ * (posted_on, posted_by, expired_date, corrected_open_position, status,
+ * remarks, remarks_group) live only in the app.
  */
 function demand_employer_job_upload_columns(): array
 {
@@ -229,14 +232,22 @@ function demand_employer_job_upload_columns(): array
         'salary_slab'             => ['salary_slab'],
         'qualificationcategory'   => ['qualificationcategory', 'qualification_category', 'qualification'],
         'vk_flag'                 => ['vk_flag', 'vkflag'],
-        'posted_on'               => ['posted_on', 'postedon'],
-        'posted_by'               => ['posted_by', 'postedby'],
-        'expired_date'            => ['expired_date', 'expireddate'],
-        'corrected_open_position' => ['corrected_open_position', 'correctedopenposition'],
-        'status'                  => ['status'],
-        'remarks'                 => ['remarks'],
-        'remarks_group'           => ['remarks_group', 'remarksgroup'],
     ];
+}
+
+/**
+ * Only a small subset of upload columns are actually required for the file
+ * to be accepted; the rest are optional and default to NULL when absent.
+ * Employer needs employer_id (business key). Jobs need job_id + emp_id.
+ */
+function demand_employer_upload_required(): array
+{
+    return ['employer_id'];
+}
+
+function demand_employer_job_upload_required(): array
+{
+    return ['job_id', 'emp_id'];
 }
 
 /**
