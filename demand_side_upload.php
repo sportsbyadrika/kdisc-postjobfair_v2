@@ -126,8 +126,14 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                     elseif ($affected >= 2) $updated++;
                 }
             } else {
-                // Employer Jobs — resolve remarks_group name -> id
-                $groupStmt = db()->prepare('SELECT id FROM demand_remarks_groups WHERE name = ? LIMIT 1');
+                // Employer Jobs. emp_id is a foreign key to
+                // demand_employers.employer_id — pre-load the valid set once
+                // so we can reject orphan rows with a clear message even when
+                // the DB-level FK isn't in place yet.
+                $validEmpIds = [];
+                foreach (db()->query('SELECT employer_id FROM demand_employers')->fetchAll() as $er) {
+                    $validEmpIds[(int) $er['employer_id']] = true;
+                }
                 $upsert = db()->prepare("INSERT INTO demand_employer_jobs (
                         job_id, jobtitle, emp_id, emp_name, open_positions,
                         salary_type, salary_slab, qualificationcategory, vk_flag
@@ -149,6 +155,11 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                     if ($jid === null || $jid <= 0 || $empId === null || $empId <= 0) {
                         $skipped++;
                         if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: missing/invalid job_id or emp_id";
+                        continue;
+                    }
+                    if (!isset($validEmpIds[$empId])) {
+                        $skipped++;
+                        if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: emp_id $empId not found in Employers (upload Employer first)";
                         continue;
                     }
                     $upsert->execute([
@@ -287,7 +298,8 @@ render_page_header('Demand Side · Upload Data', [
                 <?php endforeach; ?>
             </div>
             <?php if ($type === 'jobs'): ?>
-                <div class="mt-2"><em>Note:</em> <code>status</code>, <code>remarks</code>, <code>remarks_group</code>, <code>posted_on</code>, <code>posted_by</code>, <code>expired_date</code> and <code>corrected_open_position</code> are managed inside the app on the Edit screen, so they are not part of the upload.</div>
+                <div class="mt-2"><em>Note:</em> <code>emp_id</code> is a foreign key to <code>Employers.employer_id</code>&nbsp;— upload Employer first, then Employer Jobs. Rows whose <code>emp_id</code> isn't found in Employers are skipped and reported.</div>
+                <div class="mt-1"><em>Also:</em> <code>status</code>, <code>remarks</code>, <code>remarks_group</code>, <code>posted_on</code>, <code>posted_by</code>, <code>expired_date</code> and <code>corrected_open_position</code> are managed inside the app on the Edit screen, so they are not part of the upload.</div>
             <?php endif; ?>
         </div>
     </div>

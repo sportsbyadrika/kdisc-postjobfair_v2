@@ -172,9 +172,50 @@ if ($flashMessage !== null): ?>
 <?php endif; ?>
 
 <?php
-// Helper: renders one label/value row.
-$dl = static function (string $label, ?string $value): void {
-    echo '<div class="detail-line"><span class="dl-label">' . esc($label) . '</span><span class="dl-value">' . esc((string) ($value ?? '')) . '</span></div>';
+/**
+ * $renderKvTable(title, rows) prints a striped 2-column table where each row
+ * is [Field, Value]. Values are bold; empty values fall through to a muted
+ * em-dash. Alternate row colouring comes from Bootstrap's table-striped.
+ */
+$renderKvTable = static function (string $title, array $pairs): void {
+    ?>
+    <div class="mb-3">
+        <div class="detail-group-title mb-1"><?= esc($title) ?></div>
+        <div class="table-responsive">
+            <table class="table table-sm table-striped table-bordered align-middle mb-0" style="table-layout: fixed;">
+                <colgroup>
+                    <col style="width: 38%;">
+                    <col>
+                </colgroup>
+                <tbody>
+                <?php foreach ($pairs as [$k, $v]): ?>
+                    <?php $val = (string) ($v ?? ''); ?>
+                    <tr>
+                        <th class="fw-normal text-muted"><?= esc($k) ?></th>
+                        <td class="fw-bold text-break"><?= $val === '' ? '<span class="text-muted fw-normal">&mdash;</span>' : nl2br(esc($val)) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <?php
+};
+
+$ownerName = '';
+if ((int) ($employer['task_owner_id'] ?? 0) > 0) {
+    $ownerStmt = db()->prepare('SELECT name FROM users WHERE id = ?');
+    $ownerStmt->execute([(int) $employer['task_owner_id']]);
+    $ownerName = (string) ($ownerStmt->fetchColumn() ?: '');
+}
+
+$nicJoin = static function (?string $code, ?string $name): string {
+    $c = trim((string) ($code ?? ''));
+    $n = trim((string) ($name ?? ''));
+    if ($c === '' && $n === '') return '';
+    if ($c === '') return $n;
+    if ($n === '') return $c;
+    return $c . ' — ' . $n;
 };
 ?>
 
@@ -186,59 +227,40 @@ $dl = static function (string $label, ?string $value): void {
     <div class="card-body">
         <div class="row g-3">
             <div class="col-lg-6">
-                <div class="detail-group">
-                    <div class="detail-group-title">Identity</div>
-                    <?php
-                        $dl('Employer ID', (string) $employer['employer_id']);
-                        $dl('Clustered Employer ID', (string) ($employer['clustered_employer_id'] ?? ''));
-                        $dl('Employer Name', (string) ($employer['employer_name'] ?? ''));
-                        $dl('Cluster Employer Name', (string) ($employer['clusteremployername'] ?? ''));
-                        $dl('Website', (string) ($employer['website'] ?? ''));
-                        $dl('Company Address', (string) ($employer['company_address'] ?? ''));
-                        $dl('Type of Company', (string) ($employer['type_of_company'] ?? ''));
-                        $dl('Created', (string) ($employer['created_datetime'] ?? ''));
-                    ?>
-                </div>
+                <?php $renderKvTable('Identity', [
+                    ['Employer ID',           (string) $employer['employer_id']],
+                    ['Clustered Employer ID', (string) ($employer['clustered_employer_id'] ?? '')],
+                    ['Employer Name',         (string) ($employer['employer_name'] ?? '')],
+                    ['Cluster Employer Name', (string) ($employer['clusteremployername'] ?? '')],
+                    ['Website',               (string) ($employer['website'] ?? '')],
+                    ['Company Address',       (string) ($employer['company_address'] ?? '')],
+                    ['Type of Company',       (string) ($employer['type_of_company'] ?? '')],
+                    ['Created',               (string) ($employer['created_datetime'] ?? '')],
+                ]); ?>
             </div>
             <div class="col-lg-6">
-                <div class="detail-group">
-                    <div class="detail-group-title">Job Agency &amp; Flags</div>
-                    <?php
-                        $dl('Job Agency', (string) ($employer['jobagency'] ?? ''));
-                        $dl('Job Agency ID', (string) ($employer['job_agency_id'] ?? ''));
-                        $dl('Job Fair Flag', (string) ($employer['jobfair_flag'] ?? ''));
-                        $dl('VK Flag', (string) ($employer['vk_flag'] ?? ''));
-                        $dl('Final Status', (string) ($employer['final_status'] ?? ''));
-                        $ownerName = '';
-                        if ((int) ($employer['task_owner_id'] ?? 0) > 0) {
-                            $ownerStmt = db()->prepare('SELECT name FROM users WHERE id = ?');
-                            $ownerStmt->execute([(int) $employer['task_owner_id']]);
-                            $ownerName = (string) ($ownerStmt->fetchColumn() ?: '');
-                        }
-                        $dl('Task Owner (last edit)', $ownerName);
-                    ?>
-                </div>
+                <?php $renderKvTable('Job Agency & Flags', [
+                    ['Job Agency',              (string) ($employer['jobagency'] ?? '')],
+                    ['Job Agency ID',           (string) ($employer['job_agency_id'] ?? '')],
+                    ['Job Fair Flag',           (string) ($employer['jobfair_flag'] ?? '')],
+                    ['VK Flag',                 (string) ($employer['vk_flag'] ?? '')],
+                    ['Final Status',            (string) ($employer['final_status'] ?? '')],
+                    ['Task Owner (last edit)',  $ownerName],
+                ]); ?>
             </div>
-            <div class="col-12">
-                <div class="detail-group">
-                    <div class="detail-group-title">NIC Classification</div>
-                    <div class="row g-2">
-                        <div class="col-md-6">
-                            <?php
-                                $dl('Section', ((string) ($employer['nic_section_code'] ?? '')) . ' — ' . ((string) ($employer['nic_section_name'] ?? '')));
-                                $dl('Division', ((string) ($employer['nic_division_code'] ?? '')) . ' — ' . ((string) ($employer['nic_division_name'] ?? '')));
-                                $dl('Group', ((string) ($employer['nic_group_code'] ?? '')) . ' — ' . ((string) ($employer['nic_group_name'] ?? '')));
-                            ?>
-                        </div>
-                        <div class="col-md-6">
-                            <?php
-                                $dl('Class', ((string) ($employer['nic_class_code'] ?? '')) . ' — ' . ((string) ($employer['nic_class_name'] ?? '')));
-                                $dl('Sub-class', ((string) ($employer['nic_sub_class_code'] ?? '')) . ' — ' . ((string) ($employer['nic_sub_class_name'] ?? '')));
-                                $dl('Reason for Classification', (string) ($employer['reason_for_classification'] ?? ''));
-                            ?>
-                        </div>
-                    </div>
-                </div>
+            <div class="col-lg-6">
+                <?php $renderKvTable('NIC Classification (1/2)', [
+                    ['Section',  $nicJoin($employer['nic_section_code']  ?? '', $employer['nic_section_name']  ?? '')],
+                    ['Division', $nicJoin($employer['nic_division_code'] ?? '', $employer['nic_division_name'] ?? '')],
+                    ['Group',    $nicJoin($employer['nic_group_code']    ?? '', $employer['nic_group_name']    ?? '')],
+                ]); ?>
+            </div>
+            <div class="col-lg-6">
+                <?php $renderKvTable('NIC Classification (2/2)', [
+                    ['Class',                     $nicJoin($employer['nic_class_code']     ?? '', $employer['nic_class_name']     ?? '')],
+                    ['Sub-class',                 $nicJoin($employer['nic_sub_class_code'] ?? '', $employer['nic_sub_class_name'] ?? '')],
+                    ['Reason for Classification', (string) ($employer['reason_for_classification'] ?? '')],
+                ]); ?>
             </div>
         </div>
 
