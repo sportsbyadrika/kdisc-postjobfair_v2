@@ -113,6 +113,20 @@ function demand_side_bootstrap(): void
         UNIQUE KEY unique_name (name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+    // Per-user employer scope. When a non-administrator user has one or more
+    // rows here, the Demand Side Employer listing is filtered down to those
+    // employer_ids only.
+    $db->query("CREATE TABLE IF NOT EXISTS demand_user_employer_assignments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        employer_id INT NOT NULL,
+        assigned_by INT NULL,
+        assigned_at DATETIME NOT NULL,
+        UNIQUE KEY unique_user_employer (user_id, employer_id),
+        KEY idx_user_id (user_id),
+        KEY idx_employer_id (employer_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     // Foreign key: demand_employer_jobs.emp_id -> demand_employers.employer_id.
     // Older installations that were created before the FK existed will pick it
     // up here; the ALTER is skipped silently if orphaned rows or a non-InnoDB
@@ -317,4 +331,36 @@ function demand_parse_int(?string $raw): ?int
     if ($v === '') return null;
     if (!preg_match('/^-?\d+$/', $v)) return null;
     return (int) $v;
+}
+
+/**
+ * Parse a free-form list of employer IDs (commas, whitespace or newlines
+ * separated) into a de-duplicated array of positive ints. Returns an empty
+ * array when nothing valid is found.
+ */
+function demand_parse_employer_id_list(?string $raw): array
+{
+    if ($raw === null || trim($raw) === '') return [];
+    $parts = preg_split('/[\s,;]+/', $raw) ?: [];
+    $ids = [];
+    foreach ($parts as $part) {
+        $part = trim($part);
+        if ($part === '') continue;
+        if (!ctype_digit($part)) continue;
+        $ids[(int) $part] = true;
+    }
+    return array_keys($ids);
+}
+
+/**
+ * Employer IDs assigned to a specific user. Returns an empty array when the
+ * user has no assignments (i.e. "no scope override"). Administrator users
+ * should NOT be scoped through this — callers decide whether to apply.
+ */
+function demand_get_assigned_employer_ids(int $userId): array
+{
+    if ($userId <= 0) return [];
+    $stmt = db()->prepare('SELECT employer_id FROM demand_user_employer_assignments WHERE user_id = ? ORDER BY employer_id ASC');
+    $stmt->execute([$userId]);
+    return array_map(static fn(array $r): int => (int) $r['employer_id'], $stmt->fetchAll());
 }
