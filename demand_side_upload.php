@@ -3,10 +3,22 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/demand_side_helpers.php';
 require_admin();
-demand_side_bootstrap();
 
 $currentUser = current_user();
 $userId = (int) ($currentUser['id'] ?? 0);
+// Upload and delete are Administrator-only within the demand-side module —
+// State DSM can view / edit but not import or wipe data.
+if (($currentUser['role'] ?? '') !== 'administrator') {
+    http_response_code(403);
+    render_header('Access denied');
+    render_page_header('Access denied', ['icon' => 'bi-shield-lock', 'subtitle' => 'Only the Administrator role can upload or delete demand-side data.']);
+    echo '<div class="alert alert-danger">Your role can view and edit demand-side data, but only the Administrator role can upload or delete records here.</div>';
+    echo '<a class="btn btn-primary" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>';
+    render_footer();
+    exit;
+}
+
+demand_side_bootstrap();
 
 $type = ($_GET['type'] ?? $_POST['type'] ?? '') === 'jobs' ? 'jobs' : 'employer';
 $flashMessage = null;

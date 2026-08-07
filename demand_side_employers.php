@@ -73,12 +73,19 @@ $finalStatusOptions = array_map(
 $baseParams = $_GET;
 unset($baseParams['page']);
 
+$currentUserForActions = current_user();
+$isAdministrator = (($currentUserForActions['role'] ?? '') === 'administrator');
+$actionsHtml = '';
+if ($isAdministrator) {
+    $actionsHtml .= '<a class="btn btn-light me-1" href="/demand_side_upload.php"><i class="bi bi-upload me-1"></i>Upload Data</a>';
+}
+$actionsHtml .= '<a class="btn btn-light" href="/demand_side_stats.php"><i class="bi bi-bar-chart-line me-1"></i>Statistics</a>';
+
 render_header('Employer', ['main_container_class' => 'container-fluid']);
 render_page_header('Demand Side · Employer', [
     'icon' => 'bi-building',
-    'subtitle' => 'Master list of employers and their jobs. Employer Jobs link to Employers via emp_id → employer_id. Admin / State DSM can review, edit and upload.',
-    'actions' => '<a class="btn btn-light me-1" href="/demand_side_upload.php"><i class="bi bi-upload me-1"></i>Upload Data</a>'
-        . '<a class="btn btn-light" href="/demand_side_stats.php"><i class="bi bi-bar-chart-line me-1"></i>Statistics</a>',
+    'subtitle' => 'Master list of employers and their jobs. Employer Jobs link to Employers via emp_id → employer_id. Admin / State DSM can review and edit; only Administrator can upload.',
+    'actions' => $actionsHtml,
 ]);
 ?>
 

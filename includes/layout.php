@@ -143,7 +143,9 @@ function render_header(string $title, array $options = []): void
                                     <a class="nav-link dropdown-toggle<?= $isActive(['demand_side_employers.php', 'demand_side_employer_edit.php', 'demand_side_upload.php', 'demand_side_stats.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-building me-1"></i>Demand Side</a>
                                     <ul class="dropdown-menu">
                                         <li><a class="dropdown-item" href="/demand_side_employers.php"><i class="bi bi-building me-2"></i>Employer</a></li>
-                                        <li><a class="dropdown-item" href="/demand_side_upload.php"><i class="bi bi-upload me-2"></i>Upload Data</a></li>
+                                        <?php if (($user['role'] ?? '') === 'administrator'): ?>
+                                            <li><a class="dropdown-item" href="/demand_side_upload.php"><i class="bi bi-upload me-2"></i>Upload Data</a></li>
+                                        <?php endif; ?>
                                         <li><a class="dropdown-item" href="/demand_side_stats.php"><i class="bi bi-bar-chart-line me-2"></i>Data Modification Statistics</a></li>
                                     </ul>
                                 </li>
