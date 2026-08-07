@@ -9,8 +9,28 @@ $isDistrictUser = is_district_user($user);
 $isAdmin = is_admin($user);
 
 $totalUsers = 0;
+$demandEmployerCount = 0;
+$demandJobCount = 0;
+$demandOpenPositions = 0;
+$demandStatusValid = 0;
+$demandStatusInvalid = 0;
+$demandStatusCorrected = 0;
+$demandStatusNotStarted = 0;
 if ($isAdmin) {
     $totalUsers = (int) db()->query('SELECT COUNT(*) FROM users WHERE active_status = 1')->fetchColumn();
+    // Demand-side snapshot for the admin / state_dsm dashboard. Wrapped in a
+    // try so a fresh install without the demand_* tables yet still renders.
+    try {
+        require_once __DIR__ . '/includes/demand_side_helpers.php';
+        demand_side_bootstrap();
+        $demandEmployerCount = (int) db()->query('SELECT COUNT(*) FROM demand_employers')->fetchColumn();
+        $demandJobCount = (int) db()->query('SELECT COUNT(*) FROM demand_employer_jobs')->fetchColumn();
+        $demandOpenPositions = (int) db()->query('SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs')->fetchColumn();
+        $demandStatusValid = (int) db()->query("SELECT COUNT(*) FROM demand_employer_jobs WHERE status = 'Valid'")->fetchColumn();
+        $demandStatusInvalid = (int) db()->query("SELECT COUNT(*) FROM demand_employer_jobs WHERE status = 'Invalid'")->fetchColumn();
+        $demandStatusCorrected = (int) db()->query("SELECT COUNT(*) FROM demand_employer_jobs WHERE status = 'Corrected'")->fetchColumn();
+        $demandStatusNotStarted = (int) db()->query("SELECT COUNT(*) FROM demand_employer_jobs WHERE status IS NULL OR TRIM(status) = ''")->fetchColumn();
+    } catch (Throwable $e) { /* demand-side tables not yet available */ }
 }
 
 $selectedCount = (int) db()->query("SELECT COUNT(*) FROM job_fair_result WHERE LOWER(REPLACE(TRIM(Selection_Status), ' ', '')) = 'selected'")->fetchColumn();
@@ -234,6 +254,76 @@ render_header('Dashboard');
         </div>
     <?php endforeach; ?>
 </div>
+
+<?php if ($isAdmin): ?>
+<div class="mt-4">
+    <h2 class="h6 text-muted text-uppercase mb-2"><i class="bi bi-building me-1"></i>Demand Side snapshot</h2>
+    <div class="row g-3">
+        <div class="col-6 col-md-4">
+            <div class="card card-stat accent-info h-100">
+                <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                    <div>
+                        <p class="stat-label">Employers</p>
+                        <p class="stat-value"><?= number_format($demandEmployerCount) ?></p>
+                        <a class="stat-link" href="/demand_side_employers.php">Open list <i class="bi bi-arrow-right-short"></i></a>
+                    </div>
+                    <span class="stat-icon-box tone-info"><i class="bi bi-building"></i></span>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4">
+            <div class="card card-stat accent-primary h-100">
+                <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                    <div>
+                        <p class="stat-label">Jobs</p>
+                        <p class="stat-value"><?= number_format($demandJobCount) ?></p>
+                        <span class="data-meta">Across all employers</span>
+                    </div>
+                    <span class="stat-icon-box tone-primary"><i class="bi bi-briefcase"></i></span>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-4">
+            <div class="card card-stat accent-success h-100">
+                <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                    <div>
+                        <p class="stat-label">Open Positions</p>
+                        <p class="stat-value"><?= number_format($demandOpenPositions) ?></p>
+                        <span class="data-meta">Sum of open_positions</span>
+                    </div>
+                    <span class="stat-icon-box tone-success"><i class="bi bi-person-plus"></i></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h2 class="h6 text-muted text-uppercase mb-2 mt-4"><i class="bi bi-clipboard-check me-1"></i>Demand Side · Edit Statistics</h2>
+    <div class="row g-3">
+        <?php
+            $editStatCards = [
+                ['label' => 'Valid',           'value' => $demandStatusValid,       'tone' => 'success', 'icon' => 'bi-check-circle-fill'],
+                ['label' => 'Invalid',         'value' => $demandStatusInvalid,     'tone' => 'danger',  'icon' => 'bi-x-circle-fill'],
+                ['label' => 'Corrected',       'value' => $demandStatusCorrected,   'tone' => 'warning', 'icon' => 'bi-pencil-square'],
+                ['label' => 'Not Yet Started', 'value' => $demandStatusNotStarted,  'tone' => 'neutral', 'icon' => 'bi-hourglass-split'],
+            ];
+        ?>
+        <?php foreach ($editStatCards as $card): ?>
+            <div class="col-6 col-md-3">
+                <div class="card card-stat accent-<?= esc($card['tone']) ?> h-100">
+                    <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                        <div>
+                            <p class="stat-label"><?= esc($card['label']) ?></p>
+                            <p class="stat-value"><?= number_format((int) $card['value']) ?></p>
+                            <a class="stat-link" href="/demand_side_stats.php">View statistics <i class="bi bi-arrow-right-short"></i></a>
+                        </div>
+                        <span class="stat-icon-box tone-<?= esc($card['tone']) ?>"><i class="bi <?= esc($card['icon']) ?>"></i></span>
+                    </div>
+                </div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+</div>
+<?php endif; ?>
 
 <div class="card mt-3">
     <div class="card-body">
