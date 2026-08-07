@@ -18,6 +18,24 @@ $perPage = 25;
 
 $conds = ['1=1'];
 $params = [];
+
+// Per-user employer scope: when the current user is NOT an administrator
+// and has one or more rows in demand_user_employer_assignments, restrict
+// the listing (and its diagnostic) to that set of employer_ids only.
+$viewerRow = current_user();
+$viewerId = (int) ($viewerRow['id'] ?? 0);
+$viewerIsAdministrator = (($viewerRow['role'] ?? '') === 'administrator');
+$scopedEmployerIds = [];
+$scopeActive = false;
+if (!$viewerIsAdministrator) {
+    $scopedEmployerIds = demand_get_assigned_employer_ids($viewerId);
+    if ($scopedEmployerIds !== []) {
+        $scopeActive = true;
+        $ph = implode(',', array_fill(0, count($scopedEmployerIds), '?'));
+        $conds[] = "e.employer_id IN ($ph)";
+        foreach ($scopedEmployerIds as $sid) { $params[] = $sid; }
+    }
+}
 if ($employerIdFilter !== '' && ctype_digit($employerIdFilter)) {
     $conds[] = 'e.employer_id = ?';
     $params[] = (int) $employerIdFilter;
@@ -83,12 +101,15 @@ $listStmt->execute([...$params, $perPage, $offset]);
 $rows = $listStmt->fetchAll();
 
 // Diagnostic: Employer Jobs whose emp_id doesn't match any Employer.
-// With the FK in place these can't exist for new inserts, but legacy rows
-// or a partial import can still leave orphans — surface them here so admins
-// can fix the data.
-$orphanCount = (int) db()->query('SELECT COUNT(*) FROM demand_employer_jobs j
-    LEFT JOIN demand_employers e ON e.employer_id = j.emp_id
-    WHERE e.employer_id IS NULL')->fetchColumn();
+// Admin-only — the orphan count is a global data-quality signal that a
+// scoped user shouldn't see (and would misleadingly compare against a
+// filtered listing).
+$orphanCount = 0;
+if ($viewerIsAdministrator) {
+    $orphanCount = (int) db()->query('SELECT COUNT(*) FROM demand_employer_jobs j
+        LEFT JOIN demand_employers e ON e.employer_id = j.emp_id
+        WHERE e.employer_id IS NULL')->fetchColumn();
+}
 
 $activeStatusOptions = demand_employer_active_status_options();
 $finalStatusOptions = array_map(
@@ -108,6 +129,7 @@ $isAdministrator = (($currentUserForActions['role'] ?? '') === 'administrator');
 $actionsHtml = '';
 if ($isAdministrator) {
     $actionsHtml .= '<a class="btn btn-light me-1" href="/demand_side_upload.php"><i class="bi bi-upload me-1"></i>Upload Data</a>';
+    $actionsHtml .= '<a class="btn btn-light me-1" href="/demand_side_assignments.php"><i class="bi bi-people-arrows me-1"></i>Assign Employers</a>';
 }
 $actionsHtml .= '<a class="btn btn-light" href="/demand_side_stats.php"><i class="bi bi-bar-chart-line me-1"></i>Statistics</a>';
 
@@ -177,6 +199,15 @@ render_page_header('Demand Side · Employer', [
         </div>
     </div>
 </form>
+
+<?php if ($scopeActive): ?>
+    <div class="alert alert-info d-flex align-items-start gap-2">
+        <i class="bi bi-info-circle-fill mt-1"></i>
+        <div>
+            You are viewing an assigned subset: <strong><?= number_format(count($scopedEmployerIds)) ?> employer(s)</strong> out of the full master list. Contact the Administrator to change your assignment.
+        </div>
+    </div>
+<?php endif; ?>
 
 <?php if ($orphanCount > 0): ?>
     <div class="alert alert-warning d-flex align-items-start gap-2">
