@@ -3,20 +3,50 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/demand_side_helpers.php';
 require_admin();
-demand_side_bootstrap();
 
 $currentUser = current_user();
 $userId = (int) ($currentUser['id'] ?? 0);
+// Upload and delete are Administrator-only within the demand-side module —
+// State DSM can view / edit but not import or wipe data.
+if (($currentUser['role'] ?? '') !== 'administrator') {
+    http_response_code(403);
+    render_header('Access denied');
+    render_page_header('Access denied', ['icon' => 'bi-shield-lock', 'subtitle' => 'Only the Administrator role can upload or delete demand-side data.']);
+    echo '<div class="alert alert-danger">Your role can view and edit demand-side data, but only the Administrator role can upload or delete records here.</div>';
+    echo '<a class="btn btn-primary" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>';
+    render_footer();
+    exit;
+}
 
-$type = ($_GET['type'] ?? $_POST['type'] ?? '') === 'jobs' ? 'jobs' : 'employer';
+demand_side_bootstrap();
+
+$rawType = (string) ($_GET['type'] ?? $_POST['type'] ?? '');
+if ($rawType === 'jobs') {
+    $type = 'jobs';
+} elseif ($rawType === 'posted_on') {
+    $type = 'posted_on';
+} else {
+    $type = 'employer';
+}
 $flashMessage = null;
 $flashType = 'success';
 $previewRows = [];
 $previewSkips = [];
 
-$aliasSet = $type === 'employer'
-    ? demand_employer_upload_columns()
-    : demand_employer_job_upload_columns();
+if ($type === 'employer') {
+    $aliasSet = demand_employer_upload_columns();
+    $requiredCols = demand_employer_upload_required();
+} elseif ($type === 'jobs') {
+    $aliasSet = demand_employer_job_upload_columns();
+    $requiredCols = demand_employer_job_upload_required();
+} else {
+    // posted_on bulk update: only job_id + created_date -> written to posted_on.
+    $aliasSet = [
+        'job_id'       => ['job_id', 'jobid'],
+        'created_date' => ['created_date', 'createddate', 'posted_on', 'postedon', 'date'],
+    ];
+    $requiredCols = ['job_id', 'created_date'];
+}
 
 function demand_map_headers(array $header, array $aliasSet): array
 {
@@ -208,7 +238,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                     if ($affected === 1) $inserted++;
                     elseif ($affected >= 2) $updated++;
                 }
-            } else {
+            } elseif ($type === 'jobs') {
                 // Employer Jobs. emp_id is a foreign key to
                 // demand_employers.employer_id — pre-load the valid set once
                 // so we can reject orphan rows with a clear message even when
@@ -260,6 +290,44 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                     if ($affected === 1) $inserted++;
                     elseif ($affected >= 2) $updated++;
                 }
+            } elseif ($type === 'posted_on') {
+                // Bulk update of demand_employer_jobs.posted_on keyed by
+                // job_id. Each real change is logged and the row's
+                // task_owner_id is set to the uploading user.
+                $lookup = db()->prepare('SELECT id, posted_on FROM demand_employer_jobs WHERE job_id = ?');
+                $update = db()->prepare('UPDATE demand_employer_jobs
+                    SET posted_on = ?, task_owner_id = ?, updated_by = ?, updated_at = NOW()
+                    WHERE job_id = ?');
+                while (($row = fgetcsv($fh)) !== false) {
+                    $processed++;
+                    $get = static fn(string $c): string => $colIndex[$c] < 0 ? '' : trim((string) ($row[$colIndex[$c]] ?? ''));
+                    $jid = demand_parse_int($get('job_id'));
+                    $rawDate = $get('created_date');
+                    $newDate = demand_parse_date($rawDate);
+                    if ($jid === null || $jid <= 0) {
+                        $skipped++;
+                        if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: missing/invalid job_id";
+                        continue;
+                    }
+                    if ($rawDate === '' || $newDate === null) {
+                        $skipped++;
+                        if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: could not parse created_date '$rawDate'";
+                        continue;
+                    }
+                    $lookup->execute([$jid]);
+                    $existing = $lookup->fetch();
+                    if (!$existing) {
+                        $skipped++;
+                        if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: job_id $jid not found";
+                        continue;
+                    }
+                    $oldDate = substr((string) ($existing['posted_on'] ?? ''), 0, 10);
+                    $update->execute([$newDate, $userId, $userId, $jid]);
+                    if ($oldDate !== $newDate) {
+                        demand_write_edit_log('job', (int) $existing['id'], 'posted_on', $oldDate, $newDate, $userId);
+                        $updated++;
+                    }
+                }
             }
             fclose($fh);
             @unlink($stagedPath);
@@ -300,11 +368,8 @@ if (is_post() && ($_POST['action'] ?? '') === 'preview') {
                 $flashType = 'danger';
             } else {
                 $previewMap = demand_map_headers($header, $aliasSet);
-                $required = $type === 'employer'
-                    ? demand_employer_upload_required()
-                    : demand_employer_job_upload_required();
                 $missing = array_values(array_filter(
-                    $required,
+                    $requiredCols,
                     static fn(string $col): bool => ($previewMap[$col] ?? -1) < 0
                 ));
                 if ($missing !== []) {
@@ -334,7 +399,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'preview') {
 render_header('Demand Side · Upload Data', ['main_container_class' => 'container-fluid']);
 render_page_header('Demand Side · Upload Data', [
     'icon' => 'bi-upload',
-    'subtitle' => 'Two-step CSV wizard: preview headers and rows, then confirm to import. Existing rows are updated by their business key (Employer ID / Job ID); manually edited fields are preserved.',
+    'subtitle' => 'Two-step CSV wizard: preview headers and rows, then confirm to import. Existing rows are updated by their business key (Employer ID / Job ID); manually edited fields are preserved. A third tab bulk-updates Posted On from a job_id + created_date CSV.',
     'actions' => '<a class="btn btn-light" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>',
 ]);
 ?>
@@ -346,6 +411,7 @@ render_page_header('Demand Side · Upload Data', [
 <ul class="nav nav-pills mb-3">
     <li class="nav-item"><a class="nav-link <?= $type === 'employer' ? 'active' : '' ?>" href="/demand_side_upload.php?type=employer"><i class="bi bi-building me-1"></i>Upload Employer</a></li>
     <li class="nav-item"><a class="nav-link <?= $type === 'jobs' ? 'active' : '' ?>" href="/demand_side_upload.php?type=jobs"><i class="bi bi-briefcase me-1"></i>Upload Employer Jobs</a></li>
+    <li class="nav-item"><a class="nav-link <?= $type === 'posted_on' ? 'active' : '' ?>" href="/demand_side_upload.php?type=posted_on"><i class="bi bi-calendar-check me-1"></i>Bulk update Posted On</a></li>
 </ul>
 
 <div class="card mb-3">
@@ -357,19 +423,15 @@ render_page_header('Demand Side · Upload Data', [
             <input type="hidden" name="action" value="preview">
             <input type="hidden" name="type" value="<?= esc($type) ?>">
             <div class="col-md-6">
-                <label class="form-label">CSV file (<?= $type === 'employer' ? 'Employer' : 'Employer Jobs' ?>)</label>
+                <?php $csvLabel = ['employer' => 'Employer', 'jobs' => 'Employer Jobs', 'posted_on' => 'Posted On update']; ?>
+                <label class="form-label">CSV file (<?= esc($csvLabel[$type]) ?>)</label>
                 <input type="file" class="form-control" name="csv_file" accept=".csv,text/csv" required>
             </div>
             <div class="col-md-3">
                 <button class="btn btn-primary"><i class="bi bi-eye me-1"></i>Preview</button>
             </div>
         </form>
-        <?php
-            $requiredCols = $type === 'employer'
-                ? demand_employer_upload_required()
-                : demand_employer_job_upload_required();
-            $optionalCols = array_values(array_diff(array_keys($aliasSet), $requiredCols));
-        ?>
+        <?php $optionalCols = array_values(array_diff(array_keys($aliasSet), $requiredCols)); ?>
         <div class="mt-3 small text-muted">
             Accepted columns (case / underscore insensitive) — <strong>required</strong> ones are highlighted, others are optional:
             <div class="d-flex flex-wrap gap-1 mt-1">
@@ -383,6 +445,9 @@ render_page_header('Demand Side · Upload Data', [
             <?php if ($type === 'jobs'): ?>
                 <div class="mt-2"><em>Note:</em> <code>emp_id</code> is a foreign key to <code>Employers.employer_id</code>&nbsp;— upload Employer first, then Employer Jobs. Rows whose <code>emp_id</code> isn't found in Employers are skipped and reported.</div>
                 <div class="mt-1"><em>Also:</em> <code>status</code>, <code>remarks</code>, <code>remarks_group</code>, <code>posted_on</code>, <code>posted_by</code>, <code>expired_date</code> and <code>corrected_open_position</code> are managed inside the app on the Edit screen, so they are not part of the upload.</div>
+            <?php elseif ($type === 'posted_on'): ?>
+                <div class="mt-2"><em>What it does:</em> for every CSV row, the <code>created_date</code> value is written into <code>posted_on</code> for the Employer Job whose <code>job_id</code> matches. Missing jobs are skipped. Each real change is logged in the Job Edit History and the row's Task Owner is set to you.</div>
+                <div class="mt-1"><em>Accepted date formats:</em> <code>YYYY-MM-DD</code>, <code>DD/MM/YYYY</code>, <code>DD-MM-YYYY</code> or any string PHP's strtotime can parse.</div>
             <?php endif; ?>
         </div>
     </div>
