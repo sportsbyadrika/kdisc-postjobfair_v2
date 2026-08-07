@@ -103,6 +103,20 @@ if (is_post() && ($action === 'preview' || $action === 'save')) {
 
 /* User list for the dropdown. */
 $userOptions = db()->query("SELECT id, name, role FROM users WHERE active_status = 1 AND role <> 'administrator' ORDER BY name ASC")->fetchAll();
+$userRoleOptions = [];
+foreach ($userOptions as $u) {
+    $r = (string) ($u['role'] ?? '');
+    if ($r !== '' && !in_array($r, $userRoleOptions, true)) {
+        $userRoleOptions[] = $r;
+    }
+}
+sort($userRoleOptions);
+$filterRoleForEdit = '';
+if ($editUserId > 0) {
+    foreach ($userOptions as $u) {
+        if ((int) $u['id'] === $editUserId) { $filterRoleForEdit = (string) $u['role']; break; }
+    }
+}
 
 /* Existing assignments summary. */
 $summarySql = "SELECT
@@ -143,14 +157,24 @@ render_page_header('Demand Side · Assign Employers to Users', [
         <?= $editUserId > 0 ? 'Edit assignment' : 'New assignment' ?>
     </div>
     <div class="card-body">
-        <form method="post" class="row g-3">
+        <form method="post" class="row g-3" id="assignmentForm">
             <input type="hidden" name="action" value="preview">
+            <div class="col-md-3">
+                <label class="form-label">User Type</label>
+                <select class="form-select" id="userRoleFilter" <?= $editUserId > 0 ? 'disabled' : '' ?>>
+                    <option value="">All User Types</option>
+                    <?php foreach ($userRoleOptions as $r): ?>
+                        <option value="<?= esc($r) ?>" <?= $filterRoleForEdit === $r ? 'selected' : '' ?>><?= esc(role_label($r)) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <div class="small text-muted mt-1">Filters the User dropdown to that role.</div>
+            </div>
             <div class="col-md-4">
                 <label class="form-label">User</label>
-                <select class="form-select" name="user_id" required <?= $editUserId > 0 ? 'disabled' : '' ?>>
+                <select class="form-select" name="user_id" id="userSelect" required <?= $editUserId > 0 ? 'disabled' : '' ?>>
                     <option value="">Select user…</option>
                     <?php foreach ($userOptions as $u): ?>
-                        <option value="<?= (int) $u['id'] ?>" <?= (int) $u['id'] === $formUserId ? 'selected' : '' ?>>
+                        <option value="<?= (int) $u['id'] ?>" data-role="<?= esc((string) ($u['role'] ?? '')) ?>" <?= (int) $u['id'] === $formUserId ? 'selected' : '' ?>>
                             <?= esc((string) $u['name']) ?> · <?= esc(role_label((string) $u['role'])) ?>
                         </option>
                     <?php endforeach; ?>
@@ -160,7 +184,7 @@ render_page_header('Demand Side · Assign Employers to Users', [
                     <div class="small text-muted mt-1">Locked — editing an existing assignment. <a href="/demand_side_assignments.php">Start new</a>.</div>
                 <?php endif; ?>
             </div>
-            <div class="col-md-8">
+            <div class="col-md-5">
                 <label class="form-label">Employer IDs <span class="small text-muted">(comma / space / newline separated)</span></label>
                 <textarea class="form-control" name="employer_ids" rows="4" placeholder="e.g. 1012, 1234, 4567&#10;1890 1901 2001"><?= esc($formIdsRaw) ?></textarea>
             </div>
@@ -169,6 +193,27 @@ render_page_header('Demand Side · Assign Employers to Users', [
                 <a class="btn btn-light" href="/demand_side_assignments.php">Reset form</a>
             </div>
         </form>
+        <script>
+        (function () {
+            const roleSel = document.getElementById('userRoleFilter');
+            const userSel = document.getElementById('userSelect');
+            if (!roleSel || !userSel) return;
+            const applyFilter = () => {
+                const wanted = String(roleSel.value || '');
+                let selectedStillVisible = false;
+                Array.from(userSel.options).forEach((opt) => {
+                    if (!opt.value) { opt.hidden = false; return; }
+                    const role = opt.getAttribute('data-role') || '';
+                    const show = (wanted === '' || role === wanted);
+                    opt.hidden = !show;
+                    if (show && opt.selected) selectedStillVisible = true;
+                });
+                if (!selectedStillVisible) userSel.value = '';
+            };
+            roleSel.addEventListener('change', applyFilter);
+            applyFilter();
+        })();
+        </script>
 
         <?php if ($previewLoaded): ?>
             <hr>
