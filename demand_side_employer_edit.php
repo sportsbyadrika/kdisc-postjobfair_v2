@@ -89,6 +89,16 @@ if (is_post() && $mode === 'edit') {
                     $flashMessage = 'Invalid status value.';
                     $flashType = 'danger';
                 } else {
+                    // Server-side mirror of the client-side edit rules on
+                    // status: Valid clears both corrected and remarks group,
+                    // Invalid clears only corrected. Prevents a tampered form
+                    // from persisting values the UI wouldn't allow.
+                    if ($status === 'Valid') {
+                        $correctedPos = null;
+                        $remarksGroupId = null;
+                    } elseif ($status === 'Invalid') {
+                        $correctedPos = null;
+                    }
                     $update = db()->prepare('UPDATE demand_employer_jobs
                         SET posted_on = ?, posted_by = ?, expired_date = ?, corrected_open_position = ?,
                             status = ?, remarks = ?, remarks_group_id = ?, task_owner_id = ?, updated_by = ?, updated_at = NOW()
@@ -313,8 +323,8 @@ $nicJoin = static function (?string $code, ?string $name): string {
                         <th>Posted On</th>
                         <th>Posted By</th>
                         <th>Expired Date</th>
-                        <th class="text-end">Corrected Open Position</th>
                         <th>Status</th>
+                        <th class="text-end">Corrected Open Position</th>
                         <th>Remarks Group</th>
                         <th>Remarks</th>
                         <th>Task Owner</th>
@@ -340,17 +350,17 @@ $nicJoin = static function (?string $code, ?string $name): string {
                                 <td><input type="date" class="form-control form-control-sm" name="posted_on" value="<?= esc(substr((string) ($job['posted_on'] ?? ''), 0, 10)) ?>"></td>
                                 <td><input type="text" class="form-control form-control-sm" name="posted_by" value="<?= esc((string) ($job['posted_by'] ?? '')) ?>" style="min-width:120px;"></td>
                                 <td><input type="date" class="form-control form-control-sm" name="expired_date" value="<?= esc(substr((string) ($job['expired_date'] ?? ''), 0, 10)) ?>"></td>
-                                <td><input type="number" class="form-control form-control-sm text-end" name="corrected_open_position" value="<?= esc((string) ($job['corrected_open_position'] ?? '')) ?>" style="min-width:100px;"></td>
                                 <td>
-                                    <select class="form-select form-select-sm" name="status" style="min-width:120px;">
+                                    <select class="form-select form-select-sm js-job-status" name="status" style="min-width:120px;">
                                         <option value="">Select</option>
                                         <?php foreach (demand_employer_job_status_options() as $opt): ?>
                                             <option value="<?= esc($opt) ?>" <?= $status === $opt ? 'selected' : '' ?>><?= esc($opt) ?></option>
                                         <?php endforeach; ?>
                                     </select>
                                 </td>
+                                <td><input type="number" class="form-control form-control-sm text-end js-job-corrected" name="corrected_open_position" value="<?= esc((string) ($job['corrected_open_position'] ?? '')) ?>" style="min-width:100px;"></td>
                                 <td>
-                                    <select class="form-select form-select-sm" name="remarks_group_id" style="min-width:150px;">
+                                    <select class="form-select form-select-sm js-job-remarks-group" name="remarks_group_id" style="min-width:150px;">
                                         <option value="">Select</option>
                                         <?php foreach ($remarksGroups as $rg): ?>
                                             <option value="<?= (int) $rg['id'] ?>" <?= (int) ($job['remarks_group_id'] ?? 0) === (int) $rg['id'] ? 'selected' : '' ?>><?= esc((string) $rg['name']) ?></option>
@@ -372,8 +382,8 @@ $nicJoin = static function (?string $code, ?string $name): string {
                             <td><?= esc(substr((string) ($job['posted_on'] ?? ''), 0, 10)) ?></td>
                             <td><?= esc((string) ($job['posted_by'] ?? '')) ?></td>
                             <td><?= esc(substr((string) ($job['expired_date'] ?? ''), 0, 10)) ?></td>
-                            <td class="text-end"><?= esc((string) ($job['corrected_open_position'] ?? '')) ?></td>
                             <td><?= render_status_chip($status) ?></td>
+                            <td class="text-end"><?= esc((string) ($job['corrected_open_position'] ?? '')) ?></td>
                             <td><?= esc((string) ($job['remarks_group_name'] ?? '')) ?></td>
                             <td><?= nl2br(esc((string) ($job['remarks'] ?? ''))) ?></td>
                             <td class="small text-muted"><?= esc((string) ($job['task_owner_name'] ?? '')) ?></td>
@@ -445,5 +455,43 @@ $nicJoin = static function (?string $code, ?string $name): string {
         </div>
     </div>
 </div>
+
+<script>
+/* Employer-Jobs edit-row validation:
+ *   Valid     -> disable corrected_open_position and remarks_group
+ *   Invalid   -> disable corrected_open_position, enable remarks_group
+ *   Corrected -> enable both
+ *   (blank)   -> enable both
+ * Disabled inputs are cleared and get a subtle muted look so the user sees
+ * why the value they'd typed disappeared.
+ */
+(function () {
+    function applyRule(sel) {
+        const row = sel.closest('tr');
+        if (!row) return;
+        const corrected = row.querySelector('.js-job-corrected');
+        const remarksGroup = row.querySelector('.js-job-remarks-group');
+        const status = String(sel.value || '');
+        const disableCorrected = (status === 'Valid' || status === 'Invalid');
+        const disableRemarksGroup = (status === 'Valid');
+
+        if (corrected) {
+            corrected.disabled = disableCorrected;
+            if (disableCorrected) { corrected.value = ''; }
+            corrected.classList.toggle('bg-light', disableCorrected);
+        }
+        if (remarksGroup) {
+            remarksGroup.disabled = disableRemarksGroup;
+            if (disableRemarksGroup) { remarksGroup.value = ''; }
+            remarksGroup.classList.toggle('bg-light', disableRemarksGroup);
+        }
+    }
+
+    document.querySelectorAll('.js-job-status').forEach((sel) => {
+        applyRule(sel);
+        sel.addEventListener('change', () => applyRule(sel));
+    });
+})();
+</script>
 
 <?php render_footer(); ?>
