@@ -89,6 +89,13 @@ $fromSql = "FROM demand_employers e
 $countStmt = db()->prepare("SELECT COUNT(*) $fromSql");
 $countStmt->execute($params);
 $totalRecords = (int) $countStmt->fetchColumn();
+
+// Total open positions across the filtered employer set, using the same
+// FROM/WHERE the listing does so the header chip stays consistent with
+// pagination.
+$vacTotalStmt = db()->prepare("SELECT COALESCE(SUM(COALESCE(j.total_open_positions, 0)), 0) $fromSql");
+$vacTotalStmt->execute($params);
+$totalVacancies = (int) $vacTotalStmt->fetchColumn();
 $totalPages = max((int) ceil($totalRecords / $perPage), 1);
 $page = min($page, $totalPages);
 $offset = ($page - 1) * $perPage;
@@ -222,9 +229,12 @@ render_page_header('Demand Side · Employer', [
 <?php render_pagination($page, $totalPages, $totalRecords, $perPage, '/demand_side_employers.php', $baseParams, 'Employers pagination'); ?>
 
 <div class="card table-card">
-    <div class="card-header d-flex justify-content-between align-items-center">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-building text-primary me-1"></i>Employers</span>
-        <span class="status-chip status-info"><?= number_format($totalRecords) ?> records</span>
+        <div class="d-flex gap-2">
+            <span class="status-chip status-info"><?= number_format($totalRecords) ?> records</span>
+            <span class="status-chip status-success"><?= number_format($totalVacancies) ?> vacancies</span>
+        </div>
     </div>
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">

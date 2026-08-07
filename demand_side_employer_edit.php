@@ -130,16 +130,75 @@ if (is_post() && $mode === 'edit') {
 }
 
 /* ------------------------------------------------------------------------- *
- * Load jobs list (post-save so counts reflect updates)
+ * Load jobs list (post-save so counts reflect updates). Supports comma-
+ * separated Job ID search, Job Title LIKE search and column sort on
+ * job_id / jobtitle / open_positions / posted_on via GET params. All
+ * search/sort state is carried via GET only, so the row-level Save POSTs
+ * on this page are unaffected.
  * ------------------------------------------------------------------------- */
-$jobsStmt = db()->prepare('SELECT j.*, u.name AS task_owner_name, rg.name AS remarks_group_name
+$jobIdSearch    = trim((string) ($_GET['job_ids_search']    ?? ''));
+$jobTitleSearch = trim((string) ($_GET['job_title_search']  ?? ''));
+$rawJobSort     = strtolower((string) ($_GET['job_sort']    ?? 'job_id'));
+$rawJobDir      = strtolower((string) ($_GET['job_dir']     ?? 'asc'));
+$allowedJobSort = [
+    'job_id'         => 'j.job_id',
+    'jobtitle'       => 'j.jobtitle',
+    'open_positions' => 'j.open_positions',
+    'posted_on'      => 'j.posted_on',
+];
+$jobSort = array_key_exists($rawJobSort, $allowedJobSort) ? $rawJobSort : 'job_id';
+$jobDir  = ($rawJobDir === 'desc') ? 'desc' : 'asc';
+
+$jobConds = ['j.emp_id = ?'];
+$jobParams = [(int) $employer['employer_id']];
+$parsedJobIdSearch = demand_parse_employer_id_list($jobIdSearch);
+if ($parsedJobIdSearch !== []) {
+    $ph = implode(',', array_fill(0, count($parsedJobIdSearch), '?'));
+    $jobConds[] = "j.job_id IN ($ph)";
+    foreach ($parsedJobIdSearch as $jid) { $jobParams[] = $jid; }
+}
+if ($jobTitleSearch !== '') {
+    $jobConds[] = 'j.jobtitle LIKE ?';
+    $jobParams[] = '%' . $jobTitleSearch . '%';
+}
+$jobWhereSql = 'WHERE ' . implode(' AND ', $jobConds);
+$jobOrderSql = 'ORDER BY ' . $allowedJobSort[$jobSort] . ' ' . ($jobDir === 'desc' ? 'DESC' : 'ASC');
+
+$jobsStmt = db()->prepare("SELECT j.*, u.name AS task_owner_name, rg.name AS remarks_group_name
     FROM demand_employer_jobs j
     LEFT JOIN users u ON u.id = j.task_owner_id
     LEFT JOIN demand_remarks_groups rg ON rg.id = j.remarks_group_id
-    WHERE j.emp_id = ?
-    ORDER BY j.job_id ASC');
-$jobsStmt->execute([(int) $employer['employer_id']]);
+    $jobWhereSql
+    $jobOrderSql");
+$jobsStmt->execute($jobParams);
 $jobs = $jobsStmt->fetchAll();
+
+// Vacancies total across ALL jobs for this employer (independent of the
+// current search) so the header chip always shows the true figure.
+$vacStmt = db()->prepare('SELECT COUNT(*) AS jobs_count, COALESCE(SUM(open_positions), 0) AS positions
+    FROM demand_employer_jobs WHERE emp_id = ?');
+$vacStmt->execute([(int) $employer['employer_id']]);
+$vacRow = $vacStmt->fetch() ?: ['jobs_count' => 0, 'positions' => 0];
+$employerJobsCount = (int) $vacRow['jobs_count'];
+$employerVacancies = (int) $vacRow['positions'];
+
+// URL builder for column-sort links.
+$jobSortLink = static function (string $col, string $label) use ($jobSort, $jobDir, $jobIdSearch, $jobTitleSearch): string {
+    $nextDir = ($jobSort === $col && $jobDir === 'asc') ? 'desc' : 'asc';
+    $params = array_filter([
+        'id'               => (int) ($_GET['id'] ?? 0),
+        'mode'             => (string) ($_GET['mode'] ?? 'view'),
+        'job_ids_search'   => $jobIdSearch,
+        'job_title_search' => $jobTitleSearch,
+        'job_sort'         => $col,
+        'job_dir'          => $nextDir,
+    ], static fn($v): bool => $v !== '' && $v !== 0);
+    $arrow = '';
+    if ($jobSort === $col) {
+        $arrow = $jobDir === 'asc' ? ' <i class="bi bi-caret-up-fill small"></i>' : ' <i class="bi bi-caret-down-fill small"></i>';
+    }
+    return '<a class="text-decoration-none text-reset" href="/demand_side_employer_edit.php?' . esc(http_build_query($params)) . '#jobs">' . esc($label) . $arrow . '</a>';
+};
 
 $remarksGroups = db()->query('SELECT id, name FROM demand_remarks_groups WHERE active = 1 ORDER BY name ASC')->fetchAll();
 
@@ -306,21 +365,48 @@ $nicJoin = static function (?string $code, ?string $name): string {
 </div>
 
 <div class="card mb-4" id="jobs">
-    <div class="card-header d-flex justify-content-between align-items-center">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-briefcase text-primary me-1"></i>Employer Jobs <span class="text-muted small ms-1">emp_id = <?= (int) $employer['employer_id'] ?></span></span>
-        <span class="status-chip status-info"><?= number_format(count($jobs)) ?> jobs</span>
+        <div class="d-flex align-items-center gap-2">
+            <?php $showing = count($jobs); ?>
+            <?php if ($showing !== $employerJobsCount): ?>
+                <span class="status-chip status-neutral"><?= number_format($showing) ?> shown</span>
+            <?php endif; ?>
+            <span class="status-chip status-info"><?= number_format($employerJobsCount) ?> jobs</span>
+            <span class="status-chip status-success"><?= number_format($employerVacancies) ?> vacancies</span>
+        </div>
+    </div>
+    <div class="card-body pb-2">
+        <form method="get" class="row g-2 align-items-end">
+            <input type="hidden" name="id" value="<?= $employerRowId ?>">
+            <input type="hidden" name="mode" value="<?= esc($mode) ?>">
+            <input type="hidden" name="job_sort" value="<?= esc($jobSort) ?>">
+            <input type="hidden" name="job_dir" value="<?= esc($jobDir) ?>">
+            <div class="col-md-4">
+                <label class="form-label small mb-1">Job IDs <span class="text-muted">(comma separated)</span></label>
+                <input type="text" class="form-control form-control-sm" name="job_ids_search" value="<?= esc($jobIdSearch) ?>" placeholder="e.g. 1234, 5678">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small mb-1">Job Title contains</label>
+                <input type="text" class="form-control form-control-sm" name="job_title_search" value="<?= esc($jobTitleSearch) ?>" placeholder="Search title">
+            </div>
+            <div class="col-md-4 d-flex gap-2">
+                <button class="btn btn-sm btn-primary"><i class="bi bi-search me-1"></i>Search</button>
+                <a class="btn btn-sm btn-light" href="/demand_side_employer_edit.php?id=<?= $employerRowId ?>&mode=<?= esc($mode) ?>#jobs">Reset</a>
+            </div>
+        </form>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-bordered align-middle mb-0">
                 <thead>
                     <tr>
-                        <th>Job ID</th>
-                        <th>Job Title</th>
-                        <th class="text-end">Open Positions</th>
+                        <th><?= $jobSortLink('job_id', 'Job ID') ?></th>
+                        <th><?= $jobSortLink('jobtitle', 'Job Title') ?></th>
+                        <th class="text-end"><?= $jobSortLink('open_positions', 'Open Positions') ?></th>
                         <th>Salary</th>
                         <th>Qualification</th>
-                        <th>Posted On</th>
+                        <th><?= $jobSortLink('posted_on', 'Posted On') ?></th>
                         <th>Posted By</th>
                         <th>Expired Date</th>
                         <th>Status</th>
