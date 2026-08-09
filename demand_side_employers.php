@@ -86,9 +86,109 @@ $fromSql = "FROM demand_employers e
     ) j ON j.emp_id = e.employer_id
     $whereSql";
 
+/* ------------------------------------------------------------------------- *
+ * CSV download — respects every active filter (and the per-user scope
+ * applied above), streams the full filtered set (no pagination) and
+ * includes the emp_id-joined Jobs + Open Positions aggregates so the
+ * export lines up with what the header chips show.
+ * ------------------------------------------------------------------------- */
+if (($_GET['download'] ?? '') === 'csv') {
+    $exportSql = "SELECT
+            e.employer_id,
+            e.clustered_employer_id,
+            e.employer_name,
+            e.clusteremployername,
+            e.website,
+            e.company_address,
+            e.job_agency_id,
+            e.jobagency,
+            e.jobfair_flag,
+            e.vk_flag,
+            e.type_of_company,
+            e.nic_section_code, e.nic_section_name,
+            e.nic_division_code, e.nic_division_name,
+            e.nic_group_code, e.nic_group_name,
+            e.nic_class_code, e.nic_class_name,
+            e.nic_sub_class_code, e.nic_sub_class_name,
+            e.reason_for_classification,
+            e.active_status,
+            e.final_status,
+            e.remarks,
+            e.created_datetime,
+            COALESCE(j.jobs_count, 0) AS jobs_count,
+            COALESCE(j.total_open_positions, 0) AS total_open_positions
+        $fromSql
+        ORDER BY e.employer_id ASC";
+    $exportStmt = db()->prepare($exportSql);
+    $exportStmt->execute($params);
+
+    $filename = 'demand_employers_' . date('Ymd_His') . '.csv';
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    $out = fopen('php://output', 'w');
+    // UTF-8 BOM so Excel opens Indian-language names correctly.
+    fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, [
+        'employer_id', 'clustered_employer_id', 'employer_name', 'clusteremployername',
+        'website', 'company_address', 'job_agency_id', 'jobagency', 'jobfair_flag', 'vk_flag',
+        'type_of_company',
+        'nic_section_code', 'nic_section_name',
+        'nic_division_code', 'nic_division_name',
+        'nic_group_code', 'nic_group_name',
+        'nic_class_code', 'nic_class_name',
+        'nic_sub_class_code', 'nic_sub_class_name',
+        'reason_for_classification',
+        'active_status', 'final_status', 'remarks',
+        'created_datetime',
+        'jobs_count', 'total_open_positions',
+    ]);
+    while ($er = $exportStmt->fetch()) {
+        fputcsv($out, [
+            (string) ($er['employer_id'] ?? ''),
+            (string) ($er['clustered_employer_id'] ?? ''),
+            (string) ($er['employer_name'] ?? ''),
+            (string) ($er['clusteremployername'] ?? ''),
+            (string) ($er['website'] ?? ''),
+            (string) ($er['company_address'] ?? ''),
+            (string) ($er['job_agency_id'] ?? ''),
+            (string) ($er['jobagency'] ?? ''),
+            (string) ($er['jobfair_flag'] ?? ''),
+            (string) ($er['vk_flag'] ?? ''),
+            (string) ($er['type_of_company'] ?? ''),
+            (string) ($er['nic_section_code'] ?? ''),
+            (string) ($er['nic_section_name'] ?? ''),
+            (string) ($er['nic_division_code'] ?? ''),
+            (string) ($er['nic_division_name'] ?? ''),
+            (string) ($er['nic_group_code'] ?? ''),
+            (string) ($er['nic_group_name'] ?? ''),
+            (string) ($er['nic_class_code'] ?? ''),
+            (string) ($er['nic_class_name'] ?? ''),
+            (string) ($er['nic_sub_class_code'] ?? ''),
+            (string) ($er['nic_sub_class_name'] ?? ''),
+            (string) ($er['reason_for_classification'] ?? ''),
+            (string) ($er['active_status'] ?? ''),
+            (string) ($er['final_status'] ?? ''),
+            (string) ($er['remarks'] ?? ''),
+            (string) ($er['created_datetime'] ?? ''),
+            (string) ($er['jobs_count'] ?? 0),
+            (string) ($er['total_open_positions'] ?? 0),
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
 $countStmt = db()->prepare("SELECT COUNT(*) $fromSql");
 $countStmt->execute($params);
 $totalRecords = (int) $countStmt->fetchColumn();
+
+// Total open positions across the filtered employer set, using the same
+// FROM/WHERE the listing does so the header chip stays consistent with
+// pagination.
+$vacTotalStmt = db()->prepare("SELECT COALESCE(SUM(COALESCE(j.total_open_positions, 0)), 0) $fromSql");
+$vacTotalStmt->execute($params);
+$totalVacancies = (int) $vacTotalStmt->fetchColumn();
 $totalPages = max((int) ceil($totalRecords / $perPage), 1);
 $page = min($page, $totalPages);
 $offset = ($page - 1) * $perPage;
@@ -126,11 +226,23 @@ unset($baseParams['page']);
 
 $currentUserForActions = current_user();
 $isAdministrator = (($currentUserForActions['role'] ?? '') === 'administrator');
+
+// Download URL preserves every active filter so the CSV reflects exactly
+// what the user is looking at.
+$downloadParams = $_GET;
+unset($downloadParams['page']);
+$downloadParams['download'] = 'csv';
+$downloadUrl = '/demand_side_employers.php?' . http_build_query(array_filter(
+    $downloadParams,
+    static fn($v): bool => $v !== '' && $v !== null
+));
+
 $actionsHtml = '';
 if ($isAdministrator) {
     $actionsHtml .= '<a class="btn btn-light me-1" href="/demand_side_upload.php"><i class="bi bi-upload me-1"></i>Upload Data</a>';
     $actionsHtml .= '<a class="btn btn-light me-1" href="/demand_side_assignments.php"><i class="bi bi-people-arrows me-1"></i>Assign Employers</a>';
 }
+$actionsHtml .= '<a class="btn btn-light me-1" href="' . esc($downloadUrl) . '"><i class="bi bi-download me-1"></i>Download CSV</a>';
 $actionsHtml .= '<a class="btn btn-light" href="/demand_side_stats.php"><i class="bi bi-bar-chart-line me-1"></i>Statistics</a>';
 
 render_header('Employer', ['main_container_class' => 'container-fluid']);
@@ -222,9 +334,12 @@ render_page_header('Demand Side · Employer', [
 <?php render_pagination($page, $totalPages, $totalRecords, $perPage, '/demand_side_employers.php', $baseParams, 'Employers pagination'); ?>
 
 <div class="card table-card">
-    <div class="card-header d-flex justify-content-between align-items-center">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-building text-primary me-1"></i>Employers</span>
-        <span class="status-chip status-info"><?= number_format($totalRecords) ?> records</span>
+        <div class="d-flex gap-2">
+            <span class="status-chip status-info"><?= number_format($totalRecords) ?> records</span>
+            <span class="status-chip status-success"><?= number_format($totalVacancies) ?> vacancies</span>
+        </div>
     </div>
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
