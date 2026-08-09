@@ -400,6 +400,34 @@ $nicJoin = static function (?string $code, ?string $name): string {
         <div class="table-responsive">
             <table class="table table-bordered align-middle mb-0">
                 <thead>
+                    <?php
+                        // Extra source-only columns surface only in view mode
+                        // (they aren't editable per spec, so keeping them out
+                        // of the edit form keeps the row narrow).
+                        $extraJobCols = [
+                            'min_experience'         => 'Min Experience',
+                            'max_experience'         => 'Max Experience',
+                            'academic_preference'    => 'Academic Preference',
+                            'job_sector'             => 'Job Sector',
+                            'location'               => 'Location',
+                            'domain_skills'          => 'Domain Skills',
+                            'soft_skills'            => 'Soft Skills',
+                            'job_agency'             => 'Job Agency',
+                            'specialization'         => 'Specialization',
+                            'courses'                => 'Courses',
+                            'location_type'          => 'Location Type',
+                            'employment_mode'        => 'Employment Mode',
+                            'age_preference'         => 'Age Preference',
+                            'gender_preference'      => 'Gender Preference',
+                            'job_category'           => 'Job Category',
+                            'job_sub_category'       => 'Job Sub Category',
+                            'jobfair_only_job'       => 'Job Fair Only Job',
+                            'posted_in_job_fair'     => 'Posted in Job Fair',
+                            'number_of_applications' => '# Applications',
+                        ];
+                        $extraColCount = $isEdit ? 0 : count($extraJobCols);
+                        $totalCols = ($isEdit ? 14 : 13) + $extraColCount;
+                    ?>
                     <tr>
                         <th><?= $jobSortLink('job_id', 'Job ID') ?></th>
                         <th><?= $jobSortLink('jobtitle', 'Job Title') ?></th>
@@ -414,12 +442,18 @@ $nicJoin = static function (?string $code, ?string $name): string {
                         <th>Remarks Group</th>
                         <th>Remarks</th>
                         <th>Task Owner</th>
-                        <?php if ($isEdit): ?><th class="text-end">Save</th><?php endif; ?>
+                        <?php if ($isEdit): ?>
+                            <th class="text-end">Save</th>
+                        <?php else: ?>
+                            <?php foreach ($extraJobCols as $label): ?>
+                                <th class="small text-muted"><?= esc($label) ?></th>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
                     </tr>
                 </thead>
                 <tbody>
                 <?php if ($jobs === []): ?>
-                    <tr><td colspan="<?= $isEdit ? 14 : 13 ?>"><div class="empty-state"><i class="bi bi-inbox"></i>No jobs on file for this employer.</div></td></tr>
+                    <tr><td colspan="<?= (int) $totalCols ?>"><div class="empty-state"><i class="bi bi-inbox"></i>No jobs on file for this employer.</div></td></tr>
                 <?php endif; ?>
                 <?php foreach ($jobs as $job): ?>
                     <?php $status = (string) ($job['status'] ?? ''); ?>
@@ -473,6 +507,10 @@ $nicJoin = static function (?string $code, ?string $name): string {
                             <td><?= esc((string) ($job['remarks_group_name'] ?? '')) ?></td>
                             <td><?= nl2br(esc((string) ($job['remarks'] ?? ''))) ?></td>
                             <td class="small text-muted"><?= esc((string) ($job['task_owner_name'] ?? '')) ?></td>
+                            <?php foreach (array_keys($extraJobCols) as $ecol): ?>
+                                <?php $ev = (string) ($job[$ecol] ?? ''); ?>
+                                <td class="small"><?= $ev === '' ? '<span class="text-muted">&mdash;</span>' : nl2br(esc($ev)) ?></td>
+                            <?php endforeach; ?>
                         </tr>
                     <?php endif; ?>
                 <?php endforeach; ?>
