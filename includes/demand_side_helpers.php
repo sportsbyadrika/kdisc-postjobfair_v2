@@ -75,10 +75,62 @@ function demand_side_bootstrap(): void
         task_owner_id INT NULL,
         updated_by INT NULL,
         updated_at DATETIME NULL,
+        min_experience DECIMAL(4,1) NULL,
+        max_experience DECIMAL(4,1) NULL,
+        academic_preference VARCHAR(500) NULL,
+        job_sector VARCHAR(255) NULL,
+        location VARCHAR(500) NULL,
+        domain_skills TEXT NULL,
+        soft_skills TEXT NULL,
+        job_agency VARCHAR(255) NULL,
+        specialization VARCHAR(500) NULL,
+        courses TEXT NULL,
+        location_type VARCHAR(100) NULL,
+        employment_mode VARCHAR(100) NULL,
+        age_preference VARCHAR(100) NULL,
+        gender_preference VARCHAR(100) NULL,
+        job_category VARCHAR(255) NULL,
+        job_sub_category VARCHAR(255) NULL,
+        jobfair_only_job VARCHAR(20) NULL,
+        posted_in_job_fair VARCHAR(20) NULL,
+        number_of_applications INT NULL,
         UNIQUE KEY unique_job_id (job_id),
         KEY idx_emp_id (emp_id),
         KEY idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // Backfill columns on existing installs. SHOW COLUMNS + ALTER TABLE is
+    // idempotent-safe: each column is added only when absent.
+    $existing = [];
+    foreach ($db->query('SHOW COLUMNS FROM demand_employer_jobs')->fetchAll() as $col) {
+        $existing[(string) $col['Field']] = true;
+    }
+    $extraCols = [
+        'min_experience'         => 'DECIMAL(4,1) NULL',
+        'max_experience'         => 'DECIMAL(4,1) NULL',
+        'academic_preference'    => 'VARCHAR(500) NULL',
+        'job_sector'             => 'VARCHAR(255) NULL',
+        'location'               => 'VARCHAR(500) NULL',
+        'domain_skills'          => 'TEXT NULL',
+        'soft_skills'            => 'TEXT NULL',
+        'job_agency'             => 'VARCHAR(255) NULL',
+        'specialization'         => 'VARCHAR(500) NULL',
+        'courses'                => 'TEXT NULL',
+        'location_type'          => 'VARCHAR(100) NULL',
+        'employment_mode'        => 'VARCHAR(100) NULL',
+        'age_preference'         => 'VARCHAR(100) NULL',
+        'gender_preference'      => 'VARCHAR(100) NULL',
+        'job_category'           => 'VARCHAR(255) NULL',
+        'job_sub_category'       => 'VARCHAR(255) NULL',
+        'jobfair_only_job'       => 'VARCHAR(20) NULL',
+        'posted_in_job_fair'     => 'VARCHAR(20) NULL',
+        'number_of_applications' => 'INT NULL',
+    ];
+    foreach ($extraCols as $col => $def) {
+        if (!isset($existing[$col])) {
+            try { $db->query("ALTER TABLE demand_employer_jobs ADD COLUMN $col $def"); } catch (Throwable $e) { /* ignore */ }
+        }
+    }
 
     $db->query("CREATE TABLE IF NOT EXISTS demand_employer_edit_log (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -266,6 +318,25 @@ function demand_employer_job_upload_columns(): array
         'salary_slab'             => ['salary_slab'],
         'qualificationcategory'   => ['qualificationcategory', 'qualification_category', 'qualification'],
         'vk_flag'                 => ['vk_flag', 'vkflag'],
+        'min_experience'          => ['min_experience', 'minexperience', 'min_exp'],
+        'max_experience'          => ['max_experience', 'maxexperience', 'max_exp'],
+        'academic_preference'     => ['academic_preference', 'academicpreference'],
+        'job_sector'              => ['job_sector', 'jobsector'],
+        'location'                => ['location'],
+        'domain_skills'           => ['domain_skills', 'domainskills'],
+        'soft_skills'             => ['soft_skills', 'softskills'],
+        'job_agency'              => ['job_agency', 'jobagency'],
+        'specialization'          => ['specialization', 'specialisation'],
+        'courses'                 => ['courses'],
+        'location_type'           => ['location_type', 'locationtype'],
+        'employment_mode'         => ['employment_mode', 'employmentmode'],
+        'age_preference'          => ['age_preference', 'agepreference'],
+        'gender_preference'       => ['gender_preference', 'genderpreference'],
+        'job_category'            => ['job_category', 'jobcategory'],
+        'job_sub_category'        => ['job_sub_category', 'jobsubcategory', 'jobsub_category'],
+        'jobfair_only_job'        => ['jobfair_only_job', 'jobfaironlyjob', 'job_fair_only_job'],
+        'posted_in_job_fair'      => ['posted_in_job_fair', 'postedinjobfair'],
+        'number_of_applications'  => ['number_of_applications', 'numberofapplications', 'applications'],
     ];
 }
 

@@ -249,8 +249,18 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                 }
                 $upsert = db()->prepare("INSERT INTO demand_employer_jobs (
                         job_id, jobtitle, emp_id, emp_name, open_positions,
-                        salary_type, salary_slab, qualificationcategory, vk_flag
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        salary_type, salary_slab, qualificationcategory, vk_flag,
+                        min_experience, max_experience, academic_preference, job_sector, location,
+                        domain_skills, soft_skills, job_agency, specialization, courses,
+                        location_type, employment_mode, age_preference, gender_preference,
+                        job_category, job_sub_category, jobfair_only_job, posted_in_job_fair,
+                        number_of_applications
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, ?, ?, ?,
+                              ?, ?, ?, ?, ?,
+                              ?, ?, ?, ?,
+                              ?, ?, ?, ?,
+                              ?)
                     ON DUPLICATE KEY UPDATE
                         jobtitle = VALUES(jobtitle),
                         emp_id = VALUES(emp_id),
@@ -259,7 +269,26 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                         salary_type = VALUES(salary_type),
                         salary_slab = VALUES(salary_slab),
                         qualificationcategory = VALUES(qualificationcategory),
-                        vk_flag = VALUES(vk_flag)");
+                        vk_flag = VALUES(vk_flag),
+                        min_experience = VALUES(min_experience),
+                        max_experience = VALUES(max_experience),
+                        academic_preference = VALUES(academic_preference),
+                        job_sector = VALUES(job_sector),
+                        location = VALUES(location),
+                        domain_skills = VALUES(domain_skills),
+                        soft_skills = VALUES(soft_skills),
+                        job_agency = VALUES(job_agency),
+                        specialization = VALUES(specialization),
+                        courses = VALUES(courses),
+                        location_type = VALUES(location_type),
+                        employment_mode = VALUES(employment_mode),
+                        age_preference = VALUES(age_preference),
+                        gender_preference = VALUES(gender_preference),
+                        job_category = VALUES(job_category),
+                        job_sub_category = VALUES(job_sub_category),
+                        jobfair_only_job = VALUES(jobfair_only_job),
+                        posted_in_job_fair = VALUES(posted_in_job_fair),
+                        number_of_applications = VALUES(number_of_applications)");
                 while (($row = fgetcsv($fh)) !== false) {
                     $processed++;
                     $get = static fn(string $c): string => $colIndex[$c] < 0 ? '' : trim((string) ($row[$colIndex[$c]] ?? ''));
@@ -275,6 +304,13 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                         if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: emp_id $empId not found in Employers (upload Employer first)";
                         continue;
                     }
+                    // Small helper: numeric string preserving decimals (returns null for empty).
+                    $numOrNull = static function (string $v): ?string {
+                        $v = trim($v);
+                        if ($v === '') return null;
+                        if (!preg_match('/^-?\d+(\.\d+)?$/', $v)) return null;
+                        return $v;
+                    };
                     $upsert->execute([
                         $jid,
                         $get('jobtitle') ?: null,
@@ -285,6 +321,25 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                         $get('salary_slab') ?: null,
                         $get('qualificationcategory') ?: null,
                         $get('vk_flag') ?: null,
+                        $numOrNull($get('min_experience')),
+                        $numOrNull($get('max_experience')),
+                        $get('academic_preference') ?: null,
+                        $get('job_sector') ?: null,
+                        $get('location') ?: null,
+                        $get('domain_skills') ?: null,
+                        $get('soft_skills') ?: null,
+                        $get('job_agency') ?: null,
+                        $get('specialization') ?: null,
+                        $get('courses') ?: null,
+                        $get('location_type') ?: null,
+                        $get('employment_mode') ?: null,
+                        $get('age_preference') ?: null,
+                        $get('gender_preference') ?: null,
+                        $get('job_category') ?: null,
+                        $get('job_sub_category') ?: null,
+                        $get('jobfair_only_job') ?: null,
+                        $get('posted_in_job_fair') ?: null,
+                        demand_parse_int($get('number_of_applications')),
                     ]);
                     $affected = $upsert->affectedRows();
                     if ($affected === 1) $inserted++;
