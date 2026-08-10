@@ -21,10 +21,12 @@ if (($currentUser['role'] ?? '') !== 'administrator') {
 demand_side_bootstrap();
 
 $rawType = (string) ($_GET['type'] ?? $_POST['type'] ?? '');
+// 'posted_on' is kept as a legacy alias for the third tab; the canonical
+// name is now 'bulk_fields' since the tab updates more than posted_on.
 if ($rawType === 'jobs') {
     $type = 'jobs';
-} elseif ($rawType === 'posted_on') {
-    $type = 'posted_on';
+} elseif ($rawType === 'bulk_fields' || $rawType === 'posted_on') {
+    $type = 'bulk_fields';
 } else {
     $type = 'employer';
 }
@@ -40,12 +42,18 @@ if ($type === 'employer') {
     $aliasSet = demand_employer_job_upload_columns();
     $requiredCols = demand_employer_job_upload_required();
 } else {
-    // posted_on bulk update: only job_id + created_date -> written to posted_on.
+    // Bulk update of a handful of Job fields, keyed by job_id. Every column
+    // other than job_id is optional; blank cells are skipped so the existing
+    // value is preserved.
     $aliasSet = [
-        'job_id'       => ['job_id', 'jobid'],
-        'created_date' => ['created_date', 'createddate', 'posted_on', 'postedon', 'date'],
+        'job_id'          => ['job_id', 'jobid'],
+        'expiry_date'     => ['expiry_date', 'expirydate', 'expired_date', 'expireddate'],
+        'job_status_data' => ['job_status_data', 'jobstatusdata', 'job_status', 'jobstatus'],
+        'created_on'      => ['created_on', 'createdon', 'posted_on', 'postedon', 'created_date', 'createddate', 'date'],
+        'salary'          => ['salary', 'salary_slab', 'salaryslab'],
+        'posted_by'       => ['posted_by', 'postedby'],
     ];
-    $requiredCols = ['job_id', 'created_date'];
+    $requiredCols = ['job_id'];
 }
 
 function demand_map_headers(array $header, array $aliasSet): array
@@ -345,28 +353,25 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                     if ($affected === 1) $inserted++;
                     elseif ($affected >= 2) $updated++;
                 }
-            } elseif ($type === 'posted_on') {
-                // Bulk update of demand_employer_jobs.posted_on keyed by
-                // job_id. Each real change is logged and the row's
+            } elseif ($type === 'bulk_fields') {
+                // Bulk update of a small set of Job fields keyed by job_id:
+                //   Expiry Date       -> expired_date
+                //   Job Status data   -> job_status_data
+                //   Created On        -> posted_on
+                //   Salary            -> salary_slab
+                //   Posted by         -> posted_by
+                // Blank CSV cells are skipped (existing value preserved). Each
+                // real change is written to the job edit log and the row's
                 // task_owner_id is set to the uploading user.
-                $lookup = db()->prepare('SELECT id, posted_on FROM demand_employer_jobs WHERE job_id = ?');
-                $update = db()->prepare('UPDATE demand_employer_jobs
-                    SET posted_on = ?, task_owner_id = ?, updated_by = ?, updated_at = NOW()
-                    WHERE job_id = ?');
+                $lookup = db()->prepare('SELECT id, expired_date, job_status_data, posted_on, salary_slab, posted_by
+                    FROM demand_employer_jobs WHERE job_id = ?');
                 while (($row = fgetcsv($fh)) !== false) {
                     $processed++;
                     $get = static fn(string $c): string => $colIndex[$c] < 0 ? '' : trim((string) ($row[$colIndex[$c]] ?? ''));
                     $jid = demand_parse_int($get('job_id'));
-                    $rawDate = $get('created_date');
-                    $newDate = demand_parse_date($rawDate);
                     if ($jid === null || $jid <= 0) {
                         $skipped++;
                         if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: missing/invalid job_id";
-                        continue;
-                    }
-                    if ($rawDate === '' || $newDate === null) {
-                        $skipped++;
-                        if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: could not parse created_date '$rawDate'";
                         continue;
                     }
                     $lookup->execute([$jid]);
@@ -376,12 +381,106 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                         if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: job_id $jid not found";
                         continue;
                     }
-                    $oldDate = substr((string) ($existing['posted_on'] ?? ''), 0, 10);
-                    $update->execute([$newDate, $userId, $userId, $jid]);
-                    if ($oldDate !== $newDate) {
-                        demand_write_edit_log('job', (int) $existing['id'], 'posted_on', $oldDate, $newDate, $userId);
-                        $updated++;
+
+                    // Resolve each incoming field. If the CSV cell is blank
+                    // the field is left alone. Dates that can't be parsed
+                    // count as a row-level skip so the operator knows.
+                    $rowJobId = (int) $existing['id'];
+                    $updateFields = [];
+                    $updateParams = [];
+                    $logEntries = [];
+                    $rowError = null;
+
+                    // Expiry Date
+                    $rawExp = $get('expiry_date');
+                    if ($rawExp !== '') {
+                        $newExp = demand_parse_date($rawExp);
+                        if ($newExp === null) {
+                            $rowError = "expiry_date '$rawExp' could not be parsed";
+                        } else {
+                            $oldExp = substr((string) ($existing['expired_date'] ?? ''), 0, 10);
+                            if ($oldExp !== $newExp) {
+                                $updateFields[] = 'expired_date = ?';
+                                $updateParams[] = $newExp;
+                                $logEntries[] = ['expired_date', $oldExp, $newExp];
+                            }
+                        }
                     }
+                    // Created On -> posted_on
+                    if ($rowError === null) {
+                        $rawPost = $get('created_on');
+                        if ($rawPost !== '') {
+                            $newPost = demand_parse_date($rawPost);
+                            if ($newPost === null) {
+                                $rowError = "created_on '$rawPost' could not be parsed";
+                            } else {
+                                $oldPost = substr((string) ($existing['posted_on'] ?? ''), 0, 10);
+                                if ($oldPost !== $newPost) {
+                                    $updateFields[] = 'posted_on = ?';
+                                    $updateParams[] = $newPost;
+                                    $logEntries[] = ['posted_on', $oldPost, $newPost];
+                                }
+                            }
+                        }
+                    }
+                    // Job Status data (label = Job Status)
+                    if ($rowError === null) {
+                        $newStatusData = $get('job_status_data');
+                        if ($newStatusData !== '') {
+                            $oldStatusData = (string) ($existing['job_status_data'] ?? '');
+                            if ($oldStatusData !== $newStatusData) {
+                                $updateFields[] = 'job_status_data = ?';
+                                $updateParams[] = $newStatusData;
+                                $logEntries[] = ['job_status_data', $oldStatusData, $newStatusData];
+                            }
+                        }
+                    }
+                    // Salary -> salary_slab
+                    if ($rowError === null) {
+                        $newSalary = $get('salary');
+                        if ($newSalary !== '') {
+                            $oldSalary = (string) ($existing['salary_slab'] ?? '');
+                            if ($oldSalary !== $newSalary) {
+                                $updateFields[] = 'salary_slab = ?';
+                                $updateParams[] = $newSalary;
+                                $logEntries[] = ['salary_slab', $oldSalary, $newSalary];
+                            }
+                        }
+                    }
+                    // Posted by
+                    if ($rowError === null) {
+                        $newPostedBy = $get('posted_by');
+                        if ($newPostedBy !== '') {
+                            $oldPostedBy = (string) ($existing['posted_by'] ?? '');
+                            if ($oldPostedBy !== $newPostedBy) {
+                                $updateFields[] = 'posted_by = ?';
+                                $updateParams[] = $newPostedBy;
+                                $logEntries[] = ['posted_by', $oldPostedBy, $newPostedBy];
+                            }
+                        }
+                    }
+
+                    if ($rowError !== null) {
+                        $skipped++;
+                        if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: $rowError";
+                        continue;
+                    }
+                    if ($updateFields === []) {
+                        // Nothing to change for this row — counts as processed but not updated.
+                        continue;
+                    }
+                    $updateFields[] = 'task_owner_id = ?';
+                    $updateParams[] = $userId;
+                    $updateFields[] = 'updated_by = ?';
+                    $updateParams[] = $userId;
+                    $updateFields[] = 'updated_at = NOW()';
+                    $updateParams[] = $jid;
+                    $upd = db()->prepare('UPDATE demand_employer_jobs SET ' . implode(', ', $updateFields) . ' WHERE job_id = ?');
+                    $upd->execute($updateParams);
+                    foreach ($logEntries as [$field, $oldVal, $newVal]) {
+                        demand_write_edit_log('job', $rowJobId, $field, $oldVal, $newVal, $userId);
+                    }
+                    $updated++;
                 }
             }
             fclose($fh);
@@ -466,7 +565,7 @@ render_page_header('Demand Side · Upload Data', [
 <ul class="nav nav-pills mb-3">
     <li class="nav-item"><a class="nav-link <?= $type === 'employer' ? 'active' : '' ?>" href="/demand_side_upload.php?type=employer"><i class="bi bi-building me-1"></i>Upload Employer</a></li>
     <li class="nav-item"><a class="nav-link <?= $type === 'jobs' ? 'active' : '' ?>" href="/demand_side_upload.php?type=jobs"><i class="bi bi-briefcase me-1"></i>Upload Employer Jobs</a></li>
-    <li class="nav-item"><a class="nav-link <?= $type === 'posted_on' ? 'active' : '' ?>" href="/demand_side_upload.php?type=posted_on"><i class="bi bi-calendar-check me-1"></i>Bulk update Posted On</a></li>
+    <li class="nav-item"><a class="nav-link <?= $type === 'bulk_fields' ? 'active' : '' ?>" href="/demand_side_upload.php?type=bulk_fields"><i class="bi bi-pencil-square me-1"></i>Bulk update Job fields</a></li>
 </ul>
 
 <div class="card mb-3">
@@ -478,7 +577,7 @@ render_page_header('Demand Side · Upload Data', [
             <input type="hidden" name="action" value="preview">
             <input type="hidden" name="type" value="<?= esc($type) ?>">
             <div class="col-md-6">
-                <?php $csvLabel = ['employer' => 'Employer', 'jobs' => 'Employer Jobs', 'posted_on' => 'Posted On update']; ?>
+                <?php $csvLabel = ['employer' => 'Employer', 'jobs' => 'Employer Jobs', 'bulk_fields' => 'Bulk Job field update']; ?>
                 <label class="form-label">CSV file (<?= esc($csvLabel[$type]) ?>)</label>
                 <input type="file" class="form-control" name="csv_file" accept=".csv,text/csv" required>
             </div>
@@ -500,8 +599,17 @@ render_page_header('Demand Side · Upload Data', [
             <?php if ($type === 'jobs'): ?>
                 <div class="mt-2"><em>Note:</em> <code>emp_id</code> is a foreign key to <code>Employers.employer_id</code>&nbsp;— upload Employer first, then Employer Jobs. Rows whose <code>emp_id</code> isn't found in Employers are skipped and reported.</div>
                 <div class="mt-1"><em>Also:</em> <code>status</code>, <code>remarks</code>, <code>remarks_group</code>, <code>posted_on</code>, <code>posted_by</code>, <code>expired_date</code> and <code>corrected_open_position</code> are managed inside the app on the Edit screen, so they are not part of the upload.</div>
-            <?php elseif ($type === 'posted_on'): ?>
-                <div class="mt-2"><em>What it does:</em> for every CSV row, the <code>created_date</code> value is written into <code>posted_on</code> for the Employer Job whose <code>job_id</code> matches. Missing jobs are skipped. Each real change is logged in the Job Edit History and the row's Task Owner is set to you.</div>
+            <?php elseif ($type === 'bulk_fields'): ?>
+                <div class="mt-2"><em>What it does:</em> for every CSV row (keyed by <code>job_id</code>), matching Job Fields are refreshed:
+                    <ul class="mb-1 mt-1">
+                        <li><code>Expiry Date</code> &rarr; <code>expired_date</code></li>
+                        <li><code>Job Status data</code> &rarr; <code>job_status_data</code> (labelled <strong>Job Status</strong> in the view; never editable by users)</li>
+                        <li><code>Created On</code> &rarr; <code>posted_on</code></li>
+                        <li><code>Salary</code> &rarr; <code>salary_slab</code></li>
+                        <li><code>Posted by</code> &rarr; <code>posted_by</code></li>
+                    </ul>
+                    Blank CSV cells are skipped, so existing values are preserved. Missing jobs are skipped and reported. Each real change is logged in the Job Edit History and the row's Task Owner is set to you.
+                </div>
                 <div class="mt-1"><em>Accepted date formats:</em> <code>YYYY-MM-DD</code>, <code>DD/MM/YYYY</code>, <code>DD-MM-YYYY</code> or any string PHP's strtotime can parse.</div>
             <?php endif; ?>
         </div>
