@@ -144,8 +144,9 @@ $assignmentRows = db()->query($summarySql)->fetchAll();
 render_header('Assign Employers to Users', ['main_container_class' => 'container-fluid']);
 render_page_header('Demand Side · Assign Employers to Users', [
     'icon' => 'bi-people-arrows',
-    'subtitle' => 'Restrict what the Employer listing shows for a given user. Administrators always see all employers.',
-    'actions' => '<a class="btn btn-light" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>',
+    'subtitle' => 'Restrict what the Employer listing shows for a given user. Administrators can also be scoped through this page.',
+    'actions' => '<a class="btn btn-light me-1" href="/demand_side_assignment_distribution.php"><i class="bi bi-diagram-3 me-1"></i>Distribution Planner</a>'
+        . '<a class="btn btn-light" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>',
 ]);
 ?>
 
