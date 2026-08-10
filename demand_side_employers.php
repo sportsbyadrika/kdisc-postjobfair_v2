@@ -13,6 +13,10 @@ $jobIdFilter        = trim((string) ($_GET['job_id']        ?? ''));
 $jobAgencyFilter    = trim((string) ($_GET['jobagency']     ?? ''));
 $openMinFilter      = trim((string) ($_GET['open_min']      ?? ''));
 $openMaxFilter      = trim((string) ($_GET['open_max']      ?? ''));
+$categoryFilter     = trim((string) ($_GET['category']      ?? ''));
+$categories         = demand_get_categories();
+$categoryByName     = [];
+foreach ($categories as $c) { $categoryByName[(string) $c['name']] = $c; }
 $page = max((int) ($_GET['page'] ?? 1), 1);
 $perPage = 25;
 
@@ -71,6 +75,14 @@ if ($openMinFilter !== '' && ctype_digit($openMinFilter)) {
 if ($openMaxFilter !== '' && ctype_digit($openMaxFilter)) {
     $conds[] = 'COALESCE(j.total_open_positions, 0) <= ?';
     $params[] = (int) $openMaxFilter;
+}
+// Category filter — derived from the same total_open_positions aggregate,
+// so an employer belongs to whichever category range contains its total.
+if ($categoryFilter !== '' && isset($categoryByName[$categoryFilter])) {
+    $c = $categoryByName[$categoryFilter];
+    $conds[] = 'COALESCE(j.total_open_positions, 0) BETWEEN ? AND ?';
+    $params[] = (int) $c['min_positions'];
+    $params[] = (int) $c['max_positions'];
 }
 $whereSql = 'WHERE ' . implode(' AND ', $conds);
 
@@ -140,9 +152,10 @@ if (($_GET['download'] ?? '') === 'csv') {
         'reason_for_classification',
         'active_status', 'final_status', 'remarks',
         'created_datetime',
-        'jobs_count', 'total_open_positions',
+        'jobs_count', 'total_open_positions', 'category',
     ]);
     while ($er = $exportStmt->fetch()) {
+        $er['__cat'] = demand_category_for_positions((int) ($er['total_open_positions'] ?? 0), $categories);
         fputcsv($out, [
             (string) ($er['employer_id'] ?? ''),
             (string) ($er['clustered_employer_id'] ?? ''),
@@ -172,6 +185,7 @@ if (($_GET['download'] ?? '') === 'csv') {
             (string) ($er['created_datetime'] ?? ''),
             (string) ($er['jobs_count'] ?? 0),
             (string) ($er['total_open_positions'] ?? 0),
+            (string) ($er['__cat'] ?? ''),
         ]);
     }
     fclose($out);
@@ -303,6 +317,15 @@ render_page_header('Demand Side · Employer', [
                     <?php endforeach; ?>
                 </select>
             </div>
+            <div class="col-md-2">
+                <label class="form-label">Category</label>
+                <select class="form-select" name="category">
+                    <option value="">All</option>
+                    <?php foreach ($categories as $c): ?>
+                        <option value="<?= esc((string) $c['name']) ?>" <?= $categoryFilter === (string) $c['name'] ? 'selected' : '' ?>><?= esc((string) $c['name']) ?> (<?= number_format((int) $c['min_positions']) ?>–<?= number_format((int) $c['max_positions']) ?>)</option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
             <div class="col-md-2 d-flex gap-2">
                 <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply</button>
                 <a class="btn btn-light" href="/demand_side_employers.php">Reset</a>
@@ -351,6 +374,7 @@ render_page_header('Demand Side · Employer', [
                     <th>Type</th>
                     <th class="text-end">Jobs</th>
                     <th class="text-end">Open Positions</th>
+                    <th>Category</th>
                     <th>Active Status</th>
                     <th>Final Status</th>
                     <th class="text-end">Actions</th>
@@ -358,7 +382,7 @@ render_page_header('Demand Side · Employer', [
             </thead>
             <tbody>
                 <?php if ($rows === []): ?>
-                    <tr><td colspan="10"><div class="empty-state"><i class="bi bi-inbox"></i>No employers match the filters.</div></td></tr>
+                    <tr><td colspan="11"><div class="empty-state"><i class="bi bi-inbox"></i>No employers match the filters.</div></td></tr>
                 <?php endif; ?>
                 <?php $idx = $offset + 1; foreach ($rows as $row): ?>
                     <?php $jobsCount = (int) ($row['jobs_count'] ?? 0); ?>
@@ -376,6 +400,8 @@ render_page_header('Demand Side · Employer', [
                             <?php endif; ?>
                         </td>
                         <td class="text-end"><?= number_format((int) ($row['total_open_positions'] ?? 0)) ?></td>
+                        <?php $rowCat = demand_category_for_positions((int) ($row['total_open_positions'] ?? 0), $categories); ?>
+                        <td><?= $rowCat !== '' ? '<span class="status-chip status-info">' . esc($rowCat) . '</span>' : '<span class="text-muted">&mdash;</span>' ?></td>
                         <td><?= render_status_chip((string) ($row['active_status'] ?? '')) ?></td>
                         <td><?= esc((string) ($row['final_status'] ?? '')) ?></td>
                         <td class="text-end">

@@ -167,6 +167,30 @@ function demand_side_bootstrap(): void
         UNIQUE KEY unique_name (name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+    // Employer categories: admin-tunable open-positions ranges that classify
+    // every employer into Category 1..N. Values are min/max inclusive on the
+    // employer's SUM(open_positions).
+    $db->query("CREATE TABLE IF NOT EXISTS demand_employer_categories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(50) NOT NULL,
+        min_positions INT NOT NULL DEFAULT 0,
+        max_positions INT NOT NULL DEFAULT 2000000000,
+        sort_order INT NOT NULL DEFAULT 0,
+        UNIQUE KEY unique_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $seededCats = (int) $db->query('SELECT COUNT(*) FROM demand_employer_categories')->fetchColumn();
+    if ($seededCats === 0) {
+        $ins = $db->prepare('INSERT INTO demand_employer_categories (name, min_positions, max_positions, sort_order) VALUES (?, ?, ?, ?)');
+        foreach ([
+            ['Category 1', 10000, 1000000, 1],
+            ['Category 2', 1000,  10000,   2],
+            ['Category 3', 100,   1000,    3],
+            ['Category 4', 0,     100,     4],
+        ] as $seed) {
+            try { $ins->execute($seed); } catch (Throwable $e) { /* ignore */ }
+        }
+    }
+
     // Per-user employer scope. When a non-administrator user has one or more
     // rows here, the Demand Side Employer listing is filtered down to those
     // employer_ids only.
@@ -423,6 +447,31 @@ function demand_parse_employer_id_list(?string $raw): array
         $ids[(int) $part] = true;
     }
     return array_keys($ids);
+}
+
+/**
+ * Full category list (name + min/max positions), sorted highest-band first.
+ * Used to derive an employer's Category from its SUM(open_positions).
+ */
+function demand_get_categories(): array
+{
+    return db()->query('SELECT id, name, min_positions, max_positions FROM demand_employer_categories ORDER BY sort_order ASC, min_positions DESC')->fetchAll();
+}
+
+/**
+ * Given a positions count and the categories list, return the matching
+ * category name or empty string when none matches.
+ */
+function demand_category_for_positions(int $positions, array $categories): string
+{
+    foreach ($categories as $c) {
+        $min = (int) ($c['min_positions'] ?? 0);
+        $max = (int) ($c['max_positions'] ?? 0);
+        if ($positions >= $min && $positions <= $max) {
+            return (string) ($c['name'] ?? '');
+        }
+    }
+    return '';
 }
 
 /**

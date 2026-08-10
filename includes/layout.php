@@ -147,7 +147,7 @@ function render_header(string $title, array $options = []): void
                             <?php endif; /* !$isStateDsm — end of Job Fair/Masters/Reports block */ ?>
                             <?php if (is_admin($user)): ?>
                                 <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['demand_side_employers.php', 'demand_side_employer_edit.php', 'demand_side_upload.php', 'demand_side_stats.php', 'demand_side_assignments.php', 'demand_side_assignment_distribution.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-building me-1"></i>Demand Side</a>
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['demand_side_employers.php', 'demand_side_employer_edit.php', 'demand_side_upload.php', 'demand_side_stats.php', 'demand_side_assignments.php', 'demand_side_assignment_distribution.php', 'demand_side_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-building me-1"></i>Demand Side</a>
                                     <ul class="dropdown-menu">
                                         <li><a class="dropdown-item" href="/demand_side_employers.php"><i class="bi bi-building me-2"></i>Employer</a></li>
                                         <?php if (($user['role'] ?? '') === 'administrator'): ?>
@@ -155,6 +155,10 @@ function render_header(string $title, array $options = []): void
                                             <li><a class="dropdown-item" href="/demand_side_upload.php"><i class="bi bi-upload me-2"></i>Upload Data</a></li>
                                         <?php endif; ?>
                                         <li><a class="dropdown-item" href="/demand_side_stats.php"><i class="bi bi-bar-chart-line me-2"></i>Data Modification Statistics</a></li>
+                                        <?php if (($user['role'] ?? '') === 'administrator'): ?>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><a class="dropdown-item" href="/demand_side_settings.php"><i class="bi bi-gear me-2"></i>Settings</a></li>
+                                        <?php endif; ?>
                                     </ul>
                                 </li>
                                 <?php if (($user['role'] ?? '') === 'administrator'): ?>

@@ -15,10 +15,44 @@ $toFilter = trim((string) ($_GET['to'] ?? ''));
 $fromFilter = $fromFilter !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fromFilter) ? $fromFilter : '';
 $toFilter = $toFilter !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $toFilter) ? $toFilter : '';
 
+$categoryFilter = trim((string) ($_GET['category'] ?? ''));
+$categories = demand_get_categories();
+$categoryByName = [];
+foreach ($categories as $c) { $categoryByName[(string) $c['name']] = $c; }
+
+// If a Category is selected, resolve it to the employer_id set that fits
+// its open-positions range, then use that set to narrow every edit-log
+// query below.
+$categoryEmployerIds = null; // null = no filter, [] = empty set (no matches)
+if ($categoryFilter !== '' && isset($categoryByName[$categoryFilter])) {
+    $c = $categoryByName[$categoryFilter];
+    $stmt = db()->prepare("SELECT e.employer_id FROM demand_employers e
+        LEFT JOIN (SELECT emp_id, SUM(open_positions) AS positions_count FROM demand_employer_jobs GROUP BY emp_id) j ON j.emp_id = e.employer_id
+        WHERE COALESCE(j.positions_count, 0) BETWEEN ? AND ?");
+    $stmt->execute([(int) $c['min_positions'], (int) $c['max_positions']]);
+    $categoryEmployerIds = array_map(static fn(array $r): int => (int) $r['employer_id'], $stmt->fetchAll());
+}
+
+/** Helper: build a subquery that scopes edit logs by category when needed. */
+$categoryJobRowIdSubquery = null;
+$categoryEmployerRowIdSubquery = null;
+if ($categoryEmployerIds !== null) {
+    if ($categoryEmployerIds === []) {
+        // Force empty result — no employer_ids in category.
+        $categoryJobRowIdSubquery = '(SELECT id FROM demand_employer_jobs WHERE 1=0)';
+        $categoryEmployerRowIdSubquery = '(SELECT id FROM demand_employers WHERE 1=0)';
+    } else {
+        $eidList = implode(',', array_map('intval', $categoryEmployerIds));
+        $categoryJobRowIdSubquery = "(SELECT id FROM demand_employer_jobs WHERE emp_id IN ($eidList))";
+        $categoryEmployerRowIdSubquery = "(SELECT id FROM demand_employers WHERE employer_id IN ($eidList))";
+    }
+}
+
 $dateConds = ["field_name = 'status'"];
 $dateParams = [];
 if ($fromFilter !== '') { $dateConds[] = 'DATE(edited_at) >= ?'; $dateParams[] = $fromFilter; }
 if ($toFilter !== '')   { $dateConds[] = 'DATE(edited_at) <= ?'; $dateParams[] = $toFilter; }
+if ($categoryJobRowIdSubquery !== null) { $dateConds[] = "job_row_id IN $categoryJobRowIdSubquery"; }
 $dateWhere = 'WHERE ' . implode(' AND ', $dateConds);
 
 $dateSql = "SELECT
@@ -35,9 +69,33 @@ $dateStmt = db()->prepare($dateSql);
 $dateStmt->execute($dateParams);
 $dateRows = $dateStmt->fetchAll();
 
+// Distinct field names for the Correction Field filter dropdown on the
+// Edit-detail table. Union of both edit-log tables.
+$fieldOptions = array_map(
+    static fn(array $r): string => (string) $r['field_name'],
+    db()->query("SELECT DISTINCT field_name FROM (
+        SELECT field_name FROM demand_employer_edit_log
+        UNION
+        SELECT field_name FROM demand_employer_job_edit_log
+    ) t ORDER BY field_name ASC")->fetchAll()
+);
+
+// Correction Field filter — defaults to 'status'. Blank means "all fields".
+$fieldFilter = trim((string) ($_GET['field'] ?? 'status'));
+if ($fieldFilter !== '' && $fieldOptions !== [] && !in_array($fieldFilter, $fieldOptions, true)) {
+    $fieldFilter = 'status';
+}
+
 $userRows = [];
 $editDetailRows = [];
 if ($selectedDate !== '') {
+    // Scope filters that flow into both the user-wise and edit-detail queries.
+    $empLogScope = '';
+    $jobLogScope = '';
+    if ($categoryJobRowIdSubquery !== null) {
+        $empLogScope = " AND employer_row_id IN $categoryEmployerRowIdSubquery";
+        $jobLogScope = " AND job_row_id IN $categoryJobRowIdSubquery";
+    }
     $userSql = "SELECT
             u.id AS user_id,
             u.name AS user_name,
@@ -49,9 +107,9 @@ if ($selectedDate !== '') {
             SUM(CASE WHEN src = 'job' AND field_name = 'status' AND new_value = 'Corrected' THEN 1 ELSE 0 END) AS job_corrected,
             COUNT(*) AS total_edits
         FROM (
-            SELECT 'employer' AS src, edited_by, field_name, new_value FROM demand_employer_edit_log WHERE DATE(edited_at) = ?
+            SELECT 'employer' AS src, edited_by, field_name, new_value FROM demand_employer_edit_log WHERE DATE(edited_at) = ? $empLogScope
             UNION ALL
-            SELECT 'job'      AS src, edited_by, field_name, new_value FROM demand_employer_job_edit_log WHERE DATE(edited_at) = ?
+            SELECT 'job'      AS src, edited_by, field_name, new_value FROM demand_employer_job_edit_log WHERE DATE(edited_at) = ? $jobLogScope
         ) t
         LEFT JOIN users u ON u.id = t.edited_by
         GROUP BY u.id, u.name, u.role
@@ -62,6 +120,18 @@ if ($selectedDate !== '') {
 
     // Per-edit detail, joined through the emp_id -> employer_id FK so every
     // row shows which employer (and job title, for job edits) was touched.
+    // Additional Correction Field filter narrows to a single edit-log field.
+    $empExtra = '';
+    $jobExtra = '';
+    $detailParams = [$selectedDate];
+    if ($fieldFilter !== '') {
+        $empExtra = ' AND el.field_name = ?';
+        $jobExtra = ' AND jl.field_name = ?';
+        $detailParams[] = $fieldFilter;
+    }
+    $detailParams[] = $selectedDate;
+    if ($fieldFilter !== '') { $detailParams[] = $fieldFilter; }
+
     $detailSql = "(SELECT
             'Employer' AS entity,
             el.edited_at, el.field_name, el.old_value, el.new_value,
@@ -71,7 +141,7 @@ if ($selectedDate !== '') {
         FROM demand_employer_edit_log el
         LEFT JOIN users u ON u.id = el.edited_by
         LEFT JOIN demand_employers e ON e.id = el.employer_row_id
-        WHERE DATE(el.edited_at) = ?)
+        WHERE DATE(el.edited_at) = ? $empExtra $empLogScope)
         UNION ALL
         (SELECT
             'Job' AS entity,
@@ -83,12 +153,56 @@ if ($selectedDate !== '') {
         LEFT JOIN users u ON u.id = jl.edited_by
         LEFT JOIN demand_employer_jobs j ON j.id = jl.job_row_id
         LEFT JOIN demand_employers e ON e.employer_id = j.emp_id
-        WHERE DATE(jl.edited_at) = ?)
+        WHERE DATE(jl.edited_at) = ? $jobExtra $jobLogScope)
         ORDER BY edited_at DESC
         LIMIT 500";
     $detailStmt = db()->prepare($detailSql);
-    $detailStmt->execute([$selectedDate, $selectedDate]);
+    $detailStmt->execute($detailParams);
     $editDetailRows = $detailStmt->fetchAll();
+}
+
+// CSV download handlers. Streamed before any HTML output.
+$download = trim((string) ($_GET['download'] ?? ''));
+if ($download === 'users' && $userRows !== []) {
+    $filename = 'demand_stats_users_' . $selectedDate . '.csv';
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    $out = fopen('php://output', 'w'); fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['User', 'Role', 'Employer edits', 'Job edits', 'Job — Valid', 'Job — Invalid', 'Job — Corrected', 'Total (V+I+C)', 'Total edits']);
+    foreach ($userRows as $r) {
+        $v = (int) $r['job_valid']; $i = (int) $r['job_invalid']; $co = (int) $r['job_corrected'];
+        fputcsv($out, [
+            (string) ($r['user_name'] ?? ''),
+            (string) ($r['user_role'] ?? ''),
+            (int) $r['employer_edits'], (int) $r['job_edits'],
+            $v, $i, $co, $v + $i + $co, (int) $r['total_edits'],
+        ]);
+    }
+    fclose($out); exit;
+}
+if ($download === 'edits' && $editDetailRows !== []) {
+    $filename = 'demand_stats_edits_' . $selectedDate . '_' . ($fieldFilter !== '' ? $fieldFilter : 'all') . '.csv';
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    $out = fopen('php://output', 'w'); fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['When', 'Entity', 'Employer ID', 'Employer Name', 'Job ID', 'Job Title', 'Field', 'Old', 'New', 'Edited By']);
+    foreach ($editDetailRows as $r) {
+        fputcsv($out, [
+            (string) ($r['edited_at'] ?? ''),
+            (string) ($r['entity'] ?? ''),
+            (string) ($r['employer_id'] ?? ''),
+            (string) ($r['employer_name'] ?? ''),
+            (string) ($r['job_id'] ?? ''),
+            (string) ($r['job_title'] ?? ''),
+            (string) ($r['field_name'] ?? ''),
+            (string) ($r['old_value'] ?? ''),
+            (string) ($r['new_value'] ?? ''),
+            (string) ($r['editor_name'] ?? ''),
+        ]);
+    }
+    fclose($out); exit;
 }
 
 render_header('Demand Side · Data Modification Statistics', ['main_container_class' => 'container-fluid']);
@@ -110,6 +224,15 @@ render_page_header('Demand Side · Data Modification Statistics', [
             <div class="col-md-3">
                 <label class="form-label">To date</label>
                 <input type="date" class="form-control" name="to" value="<?= esc($toFilter) ?>">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Category</label>
+                <select class="form-select" name="category">
+                    <option value="">All Categories</option>
+                    <?php foreach ($categories as $c): ?>
+                        <option value="<?= esc((string) $c['name']) ?>" <?= $categoryFilter === (string) $c['name'] ? 'selected' : '' ?>><?= esc((string) $c['name']) ?> (<?= number_format((int) $c['min_positions']) ?>–<?= number_format((int) $c['max_positions']) ?>)</option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <?php if ($selectedDate !== ''): ?>
                 <input type="hidden" name="date" value="<?= esc($selectedDate) ?>">
@@ -135,26 +258,29 @@ render_page_header('Demand Side · Data Modification Statistics', [
                     <th class="text-end">Valid</th>
                     <th class="text-end">Invalid</th>
                     <th class="text-end">Corrected</th>
+                    <th class="text-end">Total (V+I+C)</th>
                     <th class="text-end">Total status changes</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($dateRows === []): ?>
-                    <tr><td colspan="5"><div class="empty-state"><i class="bi bi-inbox"></i>No employer_jobs status changes recorded in this range yet.</div></td></tr>
+                    <tr><td colspan="6"><div class="empty-state"><i class="bi bi-inbox"></i>No employer_jobs status changes recorded in this range yet.</div></td></tr>
                 <?php endif; ?>
                 <?php foreach ($dateRows as $row): ?>
                     <?php
                         $d = (string) $row['d'];
                         $url = '/demand_side_stats.php?' . http_build_query(array_filter([
-                            'date' => $d, 'from' => $fromFilter, 'to' => $toFilter,
+                            'date' => $d, 'from' => $fromFilter, 'to' => $toFilter, 'category' => $categoryFilter,
                         ], static fn($v): bool => $v !== ''));
                         $isSelected = $selectedDate === $d;
+                        $vicTotal = (int) $row['valid_count'] + (int) $row['invalid_count'] + (int) $row['corrected_count'];
                     ?>
                     <tr <?= $isSelected ? 'class="table-primary"' : '' ?>>
                         <td class="fw-semibold"><a href="<?= esc($url) ?>"><?= esc($d) ?></a></td>
                         <td class="text-end"><?= number_format((int) $row['valid_count']) ?></td>
                         <td class="text-end"><?= number_format((int) $row['invalid_count']) ?></td>
                         <td class="text-end"><?= number_format((int) $row['corrected_count']) ?></td>
+                        <td class="text-end fw-bold"><?= number_format($vicTotal) ?></td>
                         <td class="text-end fw-semibold"><?= number_format((int) $row['total_changes']) ?></td>
                     </tr>
                 <?php endforeach; ?>
@@ -164,10 +290,19 @@ render_page_header('Demand Side · Data Modification Statistics', [
 </div>
 
 <?php if ($selectedDate !== ''): ?>
+    <?php $userCsvUrl = '/demand_side_stats.php?' . http_build_query(array_filter([
+        'date' => $selectedDate, 'from' => $fromFilter, 'to' => $toFilter,
+        'category' => $categoryFilter, 'download' => 'users',
+    ], static fn($v): bool => $v !== '')); ?>
     <div class="card mb-4">
-        <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
             <span><i class="bi bi-people text-primary me-1"></i>User-wise correction counts on <?= esc($selectedDate) ?></span>
-            <span class="status-chip status-info"><?= number_format(count($userRows)) ?> users</span>
+            <div class="d-flex gap-2">
+                <?php if ($userRows !== []): ?>
+                    <a class="btn btn-sm btn-light" href="<?= esc($userCsvUrl) ?>"><i class="bi bi-download me-1"></i>Download CSV</a>
+                <?php endif; ?>
+                <span class="status-chip status-info"><?= number_format(count($userRows)) ?> users</span>
+            </div>
         </div>
         <div class="table-responsive">
             <table class="table table-bordered align-middle mb-0">
@@ -180,14 +315,16 @@ render_page_header('Demand Side · Data Modification Statistics', [
                         <th class="text-end">Job — Valid</th>
                         <th class="text-end">Job — Invalid</th>
                         <th class="text-end">Job — Corrected</th>
+                        <th class="text-end">Total (V+I+C)</th>
                         <th class="text-end">Total edits</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if ($userRows === []): ?>
-                        <tr><td colspan="8"><div class="empty-state"><i class="bi bi-inbox"></i>No user edits recorded on this date.</div></td></tr>
+                        <tr><td colspan="9"><div class="empty-state"><i class="bi bi-inbox"></i>No user edits recorded on this date.</div></td></tr>
                     <?php endif; ?>
                     <?php foreach ($userRows as $row): ?>
+                        <?php $vicUser = (int) $row['job_valid'] + (int) $row['job_invalid'] + (int) $row['job_corrected']; ?>
                         <tr>
                             <td class="fw-semibold"><?= esc((string) ($row['user_name'] ?? '(unknown)')) ?></td>
                             <td><span class="status-chip status-neutral"><?= esc(role_label((string) ($row['user_role'] ?? ''))) ?></span></td>
@@ -196,6 +333,7 @@ render_page_header('Demand Side · Data Modification Statistics', [
                             <td class="text-end"><?= number_format((int) $row['job_valid']) ?></td>
                             <td class="text-end"><?= number_format((int) $row['job_invalid']) ?></td>
                             <td class="text-end"><?= number_format((int) $row['job_corrected']) ?></td>
+                            <td class="text-end fw-bold"><?= number_format($vicUser) ?></td>
                             <td class="text-end fw-semibold"><?= number_format((int) $row['total_edits']) ?></td>
                         </tr>
                     <?php endforeach; ?>
@@ -204,10 +342,40 @@ render_page_header('Demand Side · Data Modification Statistics', [
         </div>
     </div>
 
+    <?php $editsCsvUrl = '/demand_side_stats.php?' . http_build_query(array_filter([
+        'date' => $selectedDate, 'from' => $fromFilter, 'to' => $toFilter,
+        'category' => $categoryFilter, 'field' => $fieldFilter, 'download' => 'edits',
+    ], static fn($v): bool => $v !== '')); ?>
     <div class="card mb-4">
-        <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
             <span><i class="bi bi-list-check text-primary me-1"></i>Edit detail on <?= esc($selectedDate) ?> <span class="text-muted small ms-1">(joined via emp_id → employer_id)</span></span>
-            <span class="status-chip status-info"><?= number_format(count($editDetailRows)) ?> edits</span>
+            <div class="d-flex gap-2">
+                <?php if ($editDetailRows !== []): ?>
+                    <a class="btn btn-sm btn-light" href="<?= esc($editsCsvUrl) ?>"><i class="bi bi-download me-1"></i>Download CSV</a>
+                <?php endif; ?>
+                <span class="status-chip status-info"><?= number_format(count($editDetailRows)) ?> edits</span>
+            </div>
+        </div>
+        <div class="card-body pb-2">
+            <form method="get" class="row g-2 align-items-end">
+                <input type="hidden" name="date" value="<?= esc($selectedDate) ?>">
+                <?php if ($fromFilter !== '') { echo '<input type="hidden" name="from" value="' . esc($fromFilter) . '">'; } ?>
+                <?php if ($toFilter !== '')   { echo '<input type="hidden" name="to" value="' . esc($toFilter) . '">';   } ?>
+                <?php if ($categoryFilter !== '') { echo '<input type="hidden" name="category" value="' . esc($categoryFilter) . '">'; } ?>
+                <div class="col-md-4">
+                    <label class="form-label small mb-1">Correction Field</label>
+                    <select class="form-select form-select-sm" name="field">
+                        <option value="" <?= $fieldFilter === '' ? 'selected' : '' ?>>All fields</option>
+                        <?php foreach ($fieldOptions as $f): ?>
+                            <option value="<?= esc($f) ?>" <?= $fieldFilter === $f ? 'selected' : '' ?>><?= esc(str_replace('_', ' ', $f)) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex gap-2">
+                    <button class="btn btn-sm btn-primary"><i class="bi bi-funnel me-1"></i>Apply</button>
+                    <a class="btn btn-sm btn-light" href="/demand_side_stats.php?<?= esc(http_build_query(array_filter(['date' => $selectedDate, 'from' => $fromFilter, 'to' => $toFilter, 'category' => $categoryFilter], static fn($v): bool => $v !== ''))) ?>">Reset field</a>
+                </div>
+            </form>
         </div>
         <div class="table-responsive">
             <table class="table table-striped table-bordered align-middle mb-0">
