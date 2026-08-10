@@ -94,6 +94,7 @@ function demand_side_bootstrap(): void
         jobfair_only_job VARCHAR(20) NULL,
         posted_in_job_fair VARCHAR(20) NULL,
         number_of_applications INT NULL,
+        job_status_data VARCHAR(100) NULL,
         UNIQUE KEY unique_job_id (job_id),
         KEY idx_emp_id (emp_id),
         KEY idx_status (status)
@@ -125,6 +126,7 @@ function demand_side_bootstrap(): void
         'jobfair_only_job'       => 'VARCHAR(20) NULL',
         'posted_in_job_fair'     => 'VARCHAR(20) NULL',
         'number_of_applications' => 'INT NULL',
+        'job_status_data'        => 'VARCHAR(100) NULL',
     ];
     foreach ($extraCols as $col => $def) {
         if (!isset($existing[$col])) {

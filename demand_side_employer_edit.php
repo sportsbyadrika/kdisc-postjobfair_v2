@@ -405,6 +405,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
                         // (they aren't editable per spec, so keeping them out
                         // of the edit form keeps the row narrow).
                         $extraJobCols = [
+                            'job_status_data'        => 'Job Status',
                             'min_experience'         => 'Min Experience',
                             'max_experience'         => 'Max Experience',
                             'academic_preference'    => 'Academic Preference',
