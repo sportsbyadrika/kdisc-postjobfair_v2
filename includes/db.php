@@ -65,7 +65,10 @@ class DatabaseStatement
             return false;
         }
 
-        return $this->result->fetch_assoc();
+        // mysqli_result::fetch_assoc() returns array|null|false: null on
+        // exhausted result, false on error. The declared return type rejects
+        // null, so we normalise it to false ("no row").
+        return $this->result->fetch_assoc() ?? false;
     }
 
     public function fetchAll(): array
