@@ -19,22 +19,21 @@ $perPage = 25;
 $conds = ['1=1'];
 $params = [];
 
-// Per-user employer scope: when the current user is NOT an administrator
-// and has one or more rows in demand_user_employer_assignments, restrict
-// the listing (and its diagnostic) to that set of employer_ids only.
+// Per-user employer scope: any user (administrator included) with one or
+// more rows in demand_user_employer_assignments has their Employer listing
+// restricted to that set of employer_ids. Users with no assignment rows
+// see the full list — so an admin who hasn't been given a scope keeps
+// seeing everything, matching backwards-compatible behaviour.
 $viewerRow = current_user();
 $viewerId = (int) ($viewerRow['id'] ?? 0);
 $viewerIsAdministrator = (($viewerRow['role'] ?? '') === 'administrator');
-$scopedEmployerIds = [];
+$scopedEmployerIds = demand_get_assigned_employer_ids($viewerId);
 $scopeActive = false;
-if (!$viewerIsAdministrator) {
-    $scopedEmployerIds = demand_get_assigned_employer_ids($viewerId);
-    if ($scopedEmployerIds !== []) {
-        $scopeActive = true;
-        $ph = implode(',', array_fill(0, count($scopedEmployerIds), '?'));
-        $conds[] = "e.employer_id IN ($ph)";
-        foreach ($scopedEmployerIds as $sid) { $params[] = $sid; }
-    }
+if ($scopedEmployerIds !== []) {
+    $scopeActive = true;
+    $ph = implode(',', array_fill(0, count($scopedEmployerIds), '?'));
+    $conds[] = "e.employer_id IN ($ph)";
+    foreach ($scopedEmployerIds as $sid) { $params[] = $sid; }
 }
 if ($employerIdFilter !== '' && ctype_digit($employerIdFilter)) {
     $conds[] = 'e.employer_id = ?';
@@ -201,11 +200,11 @@ $listStmt->execute([...$params, $perPage, $offset]);
 $rows = $listStmt->fetchAll();
 
 // Diagnostic: Employer Jobs whose emp_id doesn't match any Employer.
-// Admin-only — the orphan count is a global data-quality signal that a
-// scoped user shouldn't see (and would misleadingly compare against a
-// filtered listing).
+// Shown only to unscoped administrators — the orphan count is a global
+// data-quality signal that would misleadingly compare against a filtered
+// listing for anyone with an assignment scope in effect.
 $orphanCount = 0;
-if ($viewerIsAdministrator) {
+if ($viewerIsAdministrator && !$scopeActive) {
     $orphanCount = (int) db()->query('SELECT COUNT(*) FROM demand_employer_jobs j
         LEFT JOIN demand_employers e ON e.employer_id = j.emp_id
         WHERE e.employer_id IS NULL')->fetchColumn();

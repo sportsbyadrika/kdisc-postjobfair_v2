@@ -101,8 +101,10 @@ if (is_post() && ($action === 'preview' || $action === 'save')) {
     $formUserId = $editUserId;
 }
 
-/* User list for the dropdown. */
-$userOptions = db()->query("SELECT id, name, role FROM users WHERE active_status = 1 AND role <> 'administrator' ORDER BY name ASC")->fetchAll();
+/* User list for the dropdown. Administrator users are included too — their
+   assignments narrow what they see on the Employer listing exactly the same
+   way as non-admin users. */
+$userOptions = db()->query("SELECT id, name, role FROM users WHERE active_status = 1 ORDER BY name ASC")->fetchAll();
 $userRoleOptions = [];
 foreach ($userOptions as $u) {
     $r = (string) ($u['role'] ?? '');
