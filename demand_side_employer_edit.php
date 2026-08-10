@@ -464,7 +464,30 @@ $nicJoin = static function (?string $code, ?string $name): string {
                             <input type="hidden" name="job_row_id" value="<?= (int) $job['id'] ?>">
                             <tr>
                                 <td><?= (int) $job['job_id'] ?></td>
-                                <td class="fw-semibold" style="min-width:180px;"><?= esc((string) ($job['jobtitle'] ?? '')) ?></td>
+                                <?php
+                                    // Color-code the job_status_data badge shown under the Job Title in edit mode.
+                                    // Comes from the bulk upload only (never editable inline).
+                                    $jsd = trim((string) ($job['job_status_data'] ?? ''));
+                                    $jsdKey = strtolower(preg_replace('/[^a-z0-9]+/i', '', $jsd));
+                                    $jsdBg = '#e2e3e5'; $jsdFg = '#495057'; // default neutral
+                                    if ($jsdKey === '') {
+                                        // no badge
+                                    } elseif (in_array($jsdKey, ['active', 'open', 'valid', 'live'], true)) {
+                                        $jsdBg = '#d1e7dd'; $jsdFg = '#0f5132';
+                                    } elseif (in_array($jsdKey, ['expired', 'closed', 'inactive', 'invalid'], true)) {
+                                        $jsdBg = '#f8d7da'; $jsdFg = '#842029';
+                                    } elseif (in_array($jsdKey, ['draft', 'pending', 'unpublished', 'onhold', 'hold'], true)) {
+                                        $jsdBg = '#fff3cd'; $jsdFg = '#664d03';
+                                    } elseif (in_array($jsdKey, ['corrected', 'updated', 'modified'], true)) {
+                                        $jsdBg = '#cfe2ff'; $jsdFg = '#084298';
+                                    }
+                                ?>
+                                <td class="fw-semibold" style="min-width:180px;">
+                                    <div><?= esc((string) ($job['jobtitle'] ?? '')) ?></div>
+                                    <?php if ($jsd !== ''): ?>
+                                        <div class="mt-1"><span class="small px-2 py-1 rounded" style="background: <?= $jsdBg ?>; color: <?= $jsdFg ?>; font-weight: 600;"><?= esc($jsd) ?></span></div>
+                                    <?php endif; ?>
+                                </td>
                                 <td class="text-end"><?= (int) ($job['open_positions'] ?? 0) ?></td>
                                 <td class="small text-muted"><?= esc((string) ($job['salary_type'] ?? '')) ?><br><?= esc((string) ($job['salary_slab'] ?? '')) ?></td>
                                 <td class="small text-muted"><?= esc((string) ($job['qualificationcategory'] ?? '')) ?></td>
