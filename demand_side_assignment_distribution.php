@@ -18,12 +18,16 @@ if (($currentUser['role'] ?? '') !== 'administrator') {
 
 demand_side_bootstrap();
 
-/* Read filter — one or more roles. */
+/* Read filter — one or more roles + optional category. */
 $selectedRoles = $_GET['role'] ?? $_POST['role'] ?? [];
 if (!is_array($selectedRoles)) {
     $selectedRoles = $selectedRoles === '' ? [] : [$selectedRoles];
 }
 $selectedRoles = array_values(array_unique(array_filter(array_map('strval', $selectedRoles), static fn(string $v): bool => $v !== '')));
+$categoryFilter = trim((string) ($_GET['category'] ?? $_POST['category'] ?? ''));
+$categories = demand_get_categories();
+$categoryByName = [];
+foreach ($categories as $c) { $categoryByName[(string) $c['name']] = $c; }
 
 /* Distinct roles across active users, so the multi-select always reflects
    who's actually assignable. */
@@ -43,12 +47,18 @@ if ($selectedRoles !== []) {
 
 /* Global pool: every employer that owns at least one job, with that
    employer's job count. Employers with zero jobs are excluded because
-   they add no measurable workload. */
-$poolRows = db()->query("SELECT e.employer_id, e.employer_name, COUNT(j.id) AS jobs_count
+   they add no measurable workload. Optional Category filter narrows the
+   pool to employers whose SUM(open_positions) falls in that range. */
+$poolSql = "SELECT e.employer_id, e.employer_name, COUNT(j.id) AS jobs_count, COALESCE(SUM(j.open_positions), 0) AS positions_count
     FROM demand_employers e
     INNER JOIN demand_employer_jobs j ON j.emp_id = e.employer_id
-    GROUP BY e.employer_id, e.employer_name
-    ORDER BY jobs_count DESC, e.employer_id ASC")->fetchAll();
+    GROUP BY e.employer_id, e.employer_name";
+if ($categoryFilter !== '' && isset($categoryByName[$categoryFilter])) {
+    $c = $categoryByName[$categoryFilter];
+    $poolSql .= " HAVING positions_count BETWEEN " . (int) $c['min_positions'] . ' AND ' . (int) $c['max_positions'];
+}
+$poolSql .= ' ORDER BY jobs_count DESC, e.employer_id ASC';
+$poolRows = db()->query($poolSql)->fetchAll();
 
 $totalEmployersInPool = count($poolRows);
 $totalJobsInPool = 0;
@@ -140,6 +150,17 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                     <label class="form-check-label" for="<?= esc($cid) ?>"><?= esc(role_label($role)) ?></label>
                 </div>
             <?php endforeach; ?>
+        </div>
+        <div class="row g-3 mt-1">
+            <div class="col-md-4">
+                <label class="form-label small mb-1">Category (optional — narrows the employer pool)</label>
+                <select class="form-select form-select-sm" name="category">
+                    <option value="">All Categories</option>
+                    <?php foreach ($categories as $c): ?>
+                        <option value="<?= esc((string) $c['name']) ?>" <?= $categoryFilter === (string) $c['name'] ? 'selected' : '' ?>><?= esc((string) $c['name']) ?> (<?= number_format((int) $c['min_positions']) ?>–<?= number_format((int) $c['max_positions']) ?>)</option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
         </div>
         <div class="mt-3 d-flex gap-2">
             <button class="btn btn-primary"><i class="bi bi-people me-1"></i>Show distribution</button>
@@ -238,6 +259,9 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                     <?php foreach ($selectedRoles as $sr): ?>
                         <input type="hidden" name="role[]" value="<?= esc($sr) ?>">
                     <?php endforeach; ?>
+                    <?php if ($categoryFilter !== ''): ?>
+                        <input type="hidden" name="category" value="<?= esc($categoryFilter) ?>">
+                    <?php endif; ?>
                     <input type="hidden" name="action" value="apply">
                     <button class="btn btn-success"><i class="bi bi-check2-circle me-1"></i>Apply as assignments</button>
                     <a href="/demand_side_assignments.php" class="btn btn-light">Go to Assignments list</a>
