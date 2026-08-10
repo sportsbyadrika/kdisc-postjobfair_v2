@@ -64,6 +64,151 @@ if (is_post() && $mode === 'edit') {
             $employerStmt->execute([$employerRowId]);
             $employer = $employerStmt->fetch();
         }
+    } elseif ($action === 'save_job_field') {
+        // AJAX per-field autosave. Returns JSON so the client can show
+        // subtle Saving / Saved / error feedback without a full page reload.
+        header('Content-Type: application/json');
+        $jobRowId = (int) ($_POST['job_row_id'] ?? 0);
+        $field    = (string) ($_POST['field'] ?? '');
+        $value    = (string) ($_POST['value'] ?? '');
+        $editableJob = [
+            'posted_on'                => 'date',
+            'posted_by'                => 'text',
+            'expired_date'             => 'date',
+            'corrected_open_position'  => 'int',
+            'status'                   => 'enum',
+            'remarks'                  => 'text',
+            'remarks_group_id'         => 'int',
+        ];
+        if ($jobRowId <= 0 || !isset($editableJob[$field])) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Invalid field or job']);
+            exit;
+        }
+        $jobStmt = db()->prepare('SELECT * FROM demand_employer_jobs WHERE id = ? AND emp_id = ?');
+        $jobStmt->execute([$jobRowId, (int) $employer['employer_id']]);
+        $existingJob = $jobStmt->fetch();
+        if (!$existingJob) {
+            http_response_code(404);
+            echo json_encode(['ok' => false, 'error' => 'Job not found']);
+            exit;
+        }
+        // Coerce the incoming value per its expected type.
+        switch ($editableJob[$field]) {
+            case 'date':
+                $newDb = demand_parse_date($value);
+                if ($value !== '' && $newDb === null) {
+                    echo json_encode(['ok' => false, 'error' => "Bad date '$value'"]);
+                    exit;
+                }
+                break;
+            case 'int':
+                if (trim($value) === '') { $newDb = null; }
+                else {
+                    $newDb = demand_parse_int($value);
+                    if ($newDb === null) { echo json_encode(['ok' => false, 'error' => 'Not an integer']); exit; }
+                }
+                break;
+            case 'enum':
+                $allowed = demand_employer_job_status_options();
+                if ($value !== '' && !in_array($value, $allowed, true)) {
+                    echo json_encode(['ok' => false, 'error' => 'Invalid status']);
+                    exit;
+                }
+                $newDb = $value === '' ? null : $value;
+                break;
+            default: // text
+                $newDb = trim($value) === '' ? null : trim($value);
+        }
+        // Server-side mirror of the Valid/Invalid rules so a tampered call
+        // can't persist forbidden values.
+        $currentStatus = (string) ($existingJob['status'] ?? '');
+        if ($field === 'status') {
+            $currentStatus = (string) $newDb;
+        }
+        if ($field === 'corrected_open_position' && ($currentStatus === 'Valid' || $currentStatus === 'Invalid')) {
+            $newDb = null;
+        }
+        if ($field === 'remarks_group_id' && $currentStatus === 'Valid') {
+            $newDb = null;
+        }
+        // Compute old-value string for the edit log using the same shape the
+        // field's storage naturally serialises to.
+        $oldRaw = $existingJob[$field] ?? null;
+        $oldStr = $field === 'posted_on' || $field === 'expired_date'
+            ? substr((string) ($oldRaw ?? ''), 0, 10)
+            : (string) ($oldRaw ?? '');
+        $newStr = $field === 'posted_on' || $field === 'expired_date'
+            ? (string) ($newDb ?? '')
+            : (string) ($newDb ?? '');
+        $upd = db()->prepare("UPDATE demand_employer_jobs SET $field = ?, task_owner_id = ?, updated_by = ?, updated_at = NOW() WHERE id = ?");
+        $upd->execute([$newDb, $userId, $userId, $jobRowId]);
+        if ($oldStr !== $newStr) {
+            demand_write_edit_log('job', $jobRowId, $field, $oldStr, $newStr, $userId);
+        }
+        echo json_encode(['ok' => true, 'stored' => $newStr]);
+        exit;
+    } elseif ($action === 'bulk_update_jobs') {
+        // Bulk apply Status / Remarks Group / Remarks to a checkbox-selected
+        // set of job rows. Blank field values are skipped so the operator
+        // can update a subset.
+        $ids = $_POST['job_ids'] ?? [];
+        if (!is_array($ids)) { $ids = [$ids]; }
+        $ids = array_values(array_unique(array_map('intval', $ids)));
+        $ids = array_values(array_filter($ids, static fn(int $v): bool => $v > 0));
+        $bStatus         = trim((string) ($_POST['bulk_status'] ?? ''));
+        $bRemarksGroupId = trim((string) ($_POST['bulk_remarks_group_id'] ?? ''));
+        $bRemarks        = trim((string) ($_POST['bulk_remarks'] ?? ''));
+        $bRemarksGroupId = ($bRemarksGroupId === '' ? null : (int) $bRemarksGroupId);
+        $allowed = demand_employer_job_status_options();
+        if ($ids === []) {
+            $flashMessage = 'Bulk update: no rows were selected.';
+            $flashType = 'warning';
+        } elseif ($bStatus !== '' && !in_array($bStatus, $allowed, true)) {
+            $flashMessage = 'Invalid status value for bulk update.';
+            $flashType = 'danger';
+        } else {
+            $ph = implode(',', array_fill(0, count($ids), '?'));
+            $rows = db()->prepare("SELECT * FROM demand_employer_jobs WHERE emp_id = ? AND id IN ($ph)");
+            $rows->execute([(int) $employer['employer_id'], ...$ids]);
+            $affected = 0;
+            foreach ($rows->fetchAll() as $r) {
+                $rid = (int) $r['id'];
+                $sets = []; $params = [];
+                $statusNow = (string) ($r['status'] ?? '');
+                if ($bStatus !== '') {
+                    $sets[] = 'status = ?'; $params[] = $bStatus;
+                    demand_write_edit_log('job', $rid, 'status', $statusNow, $bStatus, $userId);
+                    $statusNow = $bStatus;
+                    // Apply the same Valid/Invalid rules.
+                    if ($bStatus === 'Valid') {
+                        $sets[] = 'corrected_open_position = ?'; $params[] = null;
+                        $sets[] = 'remarks_group_id = ?';         $params[] = null;
+                        demand_write_edit_log('job', $rid, 'corrected_open_position', (string) ($r['corrected_open_position'] ?? ''), '', $userId);
+                        demand_write_edit_log('job', $rid, 'remarks_group_id', (string) ($r['remarks_group_id'] ?? ''), '', $userId);
+                    } elseif ($bStatus === 'Invalid') {
+                        $sets[] = 'corrected_open_position = ?'; $params[] = null;
+                        demand_write_edit_log('job', $rid, 'corrected_open_position', (string) ($r['corrected_open_position'] ?? ''), '', $userId);
+                    }
+                }
+                if ($bRemarksGroupId !== null && $statusNow !== 'Valid') {
+                    $sets[] = 'remarks_group_id = ?'; $params[] = $bRemarksGroupId;
+                    demand_write_edit_log('job', $rid, 'remarks_group_id', (string) ($r['remarks_group_id'] ?? ''), (string) $bRemarksGroupId, $userId);
+                }
+                if ($bRemarks !== '') {
+                    $sets[] = 'remarks = ?'; $params[] = $bRemarks;
+                    demand_write_edit_log('job', $rid, 'remarks', (string) ($r['remarks'] ?? ''), $bRemarks, $userId);
+                }
+                if ($sets === []) { continue; }
+                $sets[] = 'task_owner_id = ?'; $params[] = $userId;
+                $sets[] = 'updated_by = ?';    $params[] = $userId;
+                $sets[] = 'updated_at = NOW()';
+                $params[] = $rid;
+                db()->prepare('UPDATE demand_employer_jobs SET ' . implode(', ', $sets) . ' WHERE id = ?')->execute($params);
+                $affected++;
+            }
+            $flashMessage = "Bulk update applied to $affected row(s).";
+        }
     } elseif ($action === 'save_job') {
         $jobRowId = (int) ($_POST['job_row_id'] ?? 0);
         if ($jobRowId <= 0) {
@@ -393,6 +538,11 @@ $nicJoin = static function (?string $code, ?string $name): string {
             <div class="col-md-4 d-flex gap-2">
                 <button class="btn btn-sm btn-primary"><i class="bi bi-search me-1"></i>Search</button>
                 <a class="btn btn-sm btn-light" href="/demand_side_employer_edit.php?id=<?= $employerRowId ?>&mode=<?= esc($mode) ?>#jobs">Reset</a>
+                <?php if ($isEdit): ?>
+                    <button type="button" class="btn btn-sm btn-warning ms-auto" id="bulkUpdateBtn" data-bs-toggle="modal" data-bs-target="#bulkUpdateModal" disabled>
+                        <i class="bi bi-list-check me-1"></i>Bulk Update <span class="badge bg-dark ms-1" id="bulkUpdateCount">0</span>
+                    </button>
+                <?php endif; ?>
             </div>
         </form>
     </div>
@@ -427,11 +577,29 @@ $nicJoin = static function (?string $code, ?string $name): string {
                             'number_of_applications' => '# Applications',
                         ];
                         $extraColCount = $isEdit ? 0 : count($extraJobCols);
-                        $totalCols = ($isEdit ? 14 : 13) + $extraColCount;
+                        // Edit mode is now narrower — 10 cols (checkbox + 9 data).
+                        // View mode keeps its full 13 + extras layout.
+                        $editCols = 10;
+                        $viewCols = 13;
+                        $totalCols = ($isEdit ? $editCols : $viewCols) + $extraColCount;
                     ?>
+                    <?php if ($isEdit): ?>
+                    <tr>
+                        <th><input type="checkbox" id="jobsSelectAll" title="Select all"></th>
+                        <th><?= $jobSortLink('job_id', 'Job ID') ?></th>
+                        <th>Job Title</th>
+                        <th class="text-end"><?= $jobSortLink('open_positions', 'Open Positions') ?></th>
+                        <th>Qualification<br><span class="small text-muted">Salary</span></th>
+                        <th><?= $jobSortLink('posted_on', 'Posted On') ?><br><span class="small text-muted">Expired Date</span></th>
+                        <th>Posted By</th>
+                        <th>Status<br><span class="small text-muted">Corr. Open Pos.</span></th>
+                        <th>Remarks Group<br><span class="small text-muted">Remarks</span></th>
+                        <th>Task Owner</th>
+                    </tr>
+                    <?php else: ?>
                     <tr>
                         <th><?= $jobSortLink('job_id', 'Job ID') ?></th>
-                        <th><?= $jobSortLink('jobtitle', 'Job Title') ?></th>
+                        <th>Job Title</th>
                         <th class="text-end"><?= $jobSortLink('open_positions', 'Open Positions') ?></th>
                         <th>Salary</th>
                         <th>Qualification</th>
@@ -443,79 +611,73 @@ $nicJoin = static function (?string $code, ?string $name): string {
                         <th>Remarks Group</th>
                         <th>Remarks</th>
                         <th>Task Owner</th>
-                        <?php if ($isEdit): ?>
-                            <th class="text-end">Save</th>
-                        <?php else: ?>
-                            <?php foreach ($extraJobCols as $label): ?>
-                                <th class="small text-muted"><?= esc($label) ?></th>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
+                        <?php foreach ($extraJobCols as $label): ?>
+                            <th class="small text-muted"><?= esc($label) ?></th>
+                        <?php endforeach; ?>
                     </tr>
+                    <?php endif; ?>
                 </thead>
                 <tbody>
                 <?php if ($jobs === []): ?>
                     <tr><td colspan="<?= (int) $totalCols ?>"><div class="empty-state"><i class="bi bi-inbox"></i>No jobs on file for this employer.</div></td></tr>
                 <?php endif; ?>
                 <?php foreach ($jobs as $job): ?>
-                    <?php $status = (string) ($job['status'] ?? ''); ?>
+                    <?php
+                        $status = (string) ($job['status'] ?? '');
+                        // Color-code job_status_data badge (shared between modes)
+                        $jsd = trim((string) ($job['job_status_data'] ?? ''));
+                        $jsdKey = strtolower(preg_replace('/[^a-z0-9]+/i', '', $jsd));
+                        $jsdBg = '#e2e3e5'; $jsdFg = '#495057';
+                        if ($jsdKey === '') { /* no badge */ }
+                        elseif (in_array($jsdKey, ['active', 'open', 'valid', 'live'], true)) { $jsdBg = '#d1e7dd'; $jsdFg = '#0f5132'; }
+                        elseif (in_array($jsdKey, ['expired', 'closed', 'inactive', 'invalid'], true)) { $jsdBg = '#f8d7da'; $jsdFg = '#842029'; }
+                        elseif (in_array($jsdKey, ['draft', 'pending', 'unpublished', 'onhold', 'hold'], true)) { $jsdBg = '#fff3cd'; $jsdFg = '#664d03'; }
+                        elseif (in_array($jsdKey, ['corrected', 'updated', 'modified'], true)) { $jsdBg = '#cfe2ff'; $jsdFg = '#084298'; }
+                    ?>
                     <?php if ($isEdit): ?>
-                        <form method="post">
-                            <input type="hidden" name="action" value="save_job">
-                            <input type="hidden" name="job_row_id" value="<?= (int) $job['id'] ?>">
-                            <tr>
-                                <td><?= (int) $job['job_id'] ?></td>
-                                <?php
-                                    // Color-code the job_status_data badge shown under the Job Title in edit mode.
-                                    // Comes from the bulk upload only (never editable inline).
-                                    $jsd = trim((string) ($job['job_status_data'] ?? ''));
-                                    $jsdKey = strtolower(preg_replace('/[^a-z0-9]+/i', '', $jsd));
-                                    $jsdBg = '#e2e3e5'; $jsdFg = '#495057'; // default neutral
-                                    if ($jsdKey === '') {
-                                        // no badge
-                                    } elseif (in_array($jsdKey, ['active', 'open', 'valid', 'live'], true)) {
-                                        $jsdBg = '#d1e7dd'; $jsdFg = '#0f5132';
-                                    } elseif (in_array($jsdKey, ['expired', 'closed', 'inactive', 'invalid'], true)) {
-                                        $jsdBg = '#f8d7da'; $jsdFg = '#842029';
-                                    } elseif (in_array($jsdKey, ['draft', 'pending', 'unpublished', 'onhold', 'hold'], true)) {
-                                        $jsdBg = '#fff3cd'; $jsdFg = '#664d03';
-                                    } elseif (in_array($jsdKey, ['corrected', 'updated', 'modified'], true)) {
-                                        $jsdBg = '#cfe2ff'; $jsdFg = '#084298';
-                                    }
-                                ?>
-                                <td class="fw-semibold" style="min-width:180px;">
-                                    <div><?= esc((string) ($job['jobtitle'] ?? '')) ?></div>
-                                    <?php if ($jsd !== ''): ?>
-                                        <div class="mt-1"><span class="small px-2 py-1 rounded" style="background: <?= $jsdBg ?>; color: <?= $jsdFg ?>; font-weight: 600;"><?= esc($jsd) ?></span></div>
-                                    <?php endif; ?>
-                                </td>
-                                <td class="text-end"><?= (int) ($job['open_positions'] ?? 0) ?></td>
-                                <td class="small text-muted"><?= esc((string) ($job['salary_type'] ?? '')) ?><br><?= esc((string) ($job['salary_slab'] ?? '')) ?></td>
-                                <td class="small text-muted"><?= esc((string) ($job['qualificationcategory'] ?? '')) ?></td>
-                                <td><input type="date" class="form-control form-control-sm" name="posted_on" value="<?= esc(substr((string) ($job['posted_on'] ?? ''), 0, 10)) ?>"></td>
-                                <td><input type="text" class="form-control form-control-sm" name="posted_by" value="<?= esc((string) ($job['posted_by'] ?? '')) ?>" style="min-width:120px;"></td>
-                                <td><input type="date" class="form-control form-control-sm" name="expired_date" value="<?= esc(substr((string) ($job['expired_date'] ?? ''), 0, 10)) ?>"></td>
-                                <td>
-                                    <select class="form-select form-select-sm js-job-status" name="status" style="min-width:120px;">
-                                        <option value="">Select</option>
-                                        <?php foreach (demand_employer_job_status_options() as $opt): ?>
-                                            <option value="<?= esc($opt) ?>" <?= $status === $opt ? 'selected' : '' ?>><?= esc($opt) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </td>
-                                <td><input type="number" class="form-control form-control-sm text-end js-job-corrected" name="corrected_open_position" value="<?= esc((string) ($job['corrected_open_position'] ?? '')) ?>" style="min-width:100px;"></td>
-                                <td>
-                                    <select class="form-select form-select-sm js-job-remarks-group" name="remarks_group_id" style="min-width:150px;">
-                                        <option value="">Select</option>
-                                        <?php foreach ($remarksGroups as $rg): ?>
-                                            <option value="<?= (int) $rg['id'] ?>" <?= (int) ($job['remarks_group_id'] ?? 0) === (int) $rg['id'] ? 'selected' : '' ?>><?= esc((string) $rg['name']) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </td>
-                                <td><textarea class="form-control form-control-sm" name="remarks" rows="2" style="min-width:180px;"><?= esc((string) ($job['remarks'] ?? '')) ?></textarea></td>
-                                <td class="small text-muted"><?= esc((string) ($job['task_owner_name'] ?? '')) ?></td>
-                                <td class="text-end"><button class="btn btn-sm btn-primary"><i class="bi bi-save"></i></button></td>
-                            </tr>
-                        </form>
+                        <tr data-job-row-id="<?= (int) $job['id'] ?>" data-job-id="<?= (int) $job['job_id'] ?>">
+                            <td><input type="checkbox" class="js-bulk-row" value="<?= (int) $job['id'] ?>"></td>
+                            <td><?= (int) $job['job_id'] ?></td>
+                            <td class="fw-semibold" style="min-width:180px;">
+                                <div><?= esc((string) ($job['jobtitle'] ?? '')) ?></div>
+                                <?php if ($jsd !== ''): ?>
+                                    <div class="mt-1"><span class="small px-2 py-1 rounded" style="background: <?= $jsdBg ?>; color: <?= $jsdFg ?>; font-weight: 600;"><?= esc($jsd) ?></span></div>
+                                <?php endif; ?>
+                            </td>
+                            <td class="text-end"><?= (int) ($job['open_positions'] ?? 0) ?></td>
+                            <td class="small text-muted" style="min-width:140px;">
+                                <div><?= esc((string) ($job['qualificationcategory'] ?? '')) ?></div>
+                                <hr class="my-1">
+                                <div><?= esc((string) ($job['salary_type'] ?? '')) ?><?= trim((string) ($job['salary_slab'] ?? '')) !== '' ? ' · ' . esc((string) ($job['salary_slab'] ?? '')) : '' ?></div>
+                            </td>
+                            <td style="min-width:150px;">
+                                <input type="date" class="form-control form-control-sm js-autosave" data-field="posted_on" value="<?= esc(substr((string) ($job['posted_on'] ?? ''), 0, 10)) ?>">
+                                <input type="date" class="form-control form-control-sm js-autosave mt-1" data-field="expired_date" value="<?= esc(substr((string) ($job['expired_date'] ?? ''), 0, 10)) ?>">
+                            </td>
+                            <td><input type="text" class="form-control form-control-sm js-autosave" data-field="posted_by" value="<?= esc((string) ($job['posted_by'] ?? '')) ?>" style="min-width:110px;"></td>
+                            <td style="min-width:130px;">
+                                <select class="form-select form-select-sm js-job-status js-autosave" data-field="status">
+                                    <option value="">Select</option>
+                                    <?php foreach (demand_employer_job_status_options() as $opt): ?>
+                                        <option value="<?= esc($opt) ?>" <?= $status === $opt ? 'selected' : '' ?>><?= esc($opt) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <input type="number" class="form-control form-control-sm text-end js-job-corrected js-autosave mt-1" data-field="corrected_open_position" value="<?= esc((string) ($job['corrected_open_position'] ?? '')) ?>" placeholder="Corrected">
+                            </td>
+                            <td style="min-width:180px;">
+                                <select class="form-select form-select-sm js-job-remarks-group js-autosave" data-field="remarks_group_id">
+                                    <option value="">Select</option>
+                                    <?php foreach ($remarksGroups as $rg): ?>
+                                        <option value="<?= (int) $rg['id'] ?>" <?= (int) ($job['remarks_group_id'] ?? 0) === (int) $rg['id'] ? 'selected' : '' ?>><?= esc((string) $rg['name']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <textarea class="form-control form-control-sm js-autosave mt-1" data-field="remarks" rows="2" placeholder="Remarks"><?= esc((string) ($job['remarks'] ?? '')) ?></textarea>
+                            </td>
+                            <td class="small text-muted">
+                                <?= esc((string) ($job['task_owner_name'] ?? '')) ?>
+                                <div class="small mt-1 js-row-save-status text-muted" style="min-height:1em;"></div>
+                            </td>
+                        </tr>
                     <?php else: ?>
                         <tr>
                             <td><?= (int) $job['job_id'] ?></td>
@@ -640,6 +802,145 @@ $nicJoin = static function (?string $code, ?string $name): string {
         sel.addEventListener('change', () => applyRule(sel));
     });
 })();
+
+/* Auto-save every editable job field on change / blur via AJAX. Shows a
+ * subtle Saving / Saved / error caption in the Task Owner cell. */
+(function () {
+    function autoSave(input) {
+        const row = input.closest('tr');
+        const rowId = row?.getAttribute('data-job-row-id');
+        const field = input.getAttribute('data-field');
+        const status = row?.querySelector('.js-row-save-status');
+        if (!rowId || !field) return;
+        if (input.disabled) return;
+        const original = input.getAttribute('data-original');
+        const current = input.value;
+        if (original !== null && original === current) return;
+        input.setAttribute('data-original', current);
+        if (status) { status.textContent = 'Saving…'; status.className = 'small mt-1 js-row-save-status text-muted'; }
+        const body = new URLSearchParams();
+        body.append('action', 'save_job_field');
+        body.append('job_row_id', rowId);
+        body.append('field', field);
+        body.append('value', current);
+        fetch(window.location.pathname + '?id=<?= (int) $employerRowId ?>&mode=edit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString(),
+        })
+        .then((r) => r.json().catch(() => ({ ok: false, error: 'Bad response' })))
+        .then((data) => {
+            if (!status) return;
+            if (data && data.ok) {
+                status.textContent = 'Saved';
+                status.className = 'small mt-1 js-row-save-status text-success';
+                setTimeout(() => { if (status.textContent === 'Saved') status.textContent = ''; }, 2000);
+            } else {
+                status.textContent = (data && data.error) ? data.error : 'Save failed';
+                status.className = 'small mt-1 js-row-save-status text-danger';
+            }
+        })
+        .catch(() => {
+            if (status) { status.textContent = 'Network error'; status.className = 'small mt-1 js-row-save-status text-danger'; }
+        });
+    }
+    document.querySelectorAll('.js-autosave').forEach((el) => {
+        el.setAttribute('data-original', el.value);
+        const evt = (el.tagName === 'SELECT' || el.type === 'date' || el.type === 'checkbox') ? 'change' : 'blur';
+        el.addEventListener(evt, () => autoSave(el));
+        // When Status changes, the client rule may clear+disable other fields —
+        // fire an autosave on those too so the server matches.
+        if (el.classList.contains('js-job-status')) {
+            el.addEventListener('change', () => {
+                const row = el.closest('tr');
+                ['.js-job-corrected', '.js-job-remarks-group'].forEach((sel) => {
+                    const dep = row?.querySelector(sel);
+                    if (dep) autoSave(dep);
+                });
+            });
+        }
+    });
+})();
+
+/* Bulk-update: header checkbox toggles all rows; every checkbox change
+ * updates the enable state + count badge on the Bulk Update button. */
+(function () {
+    const selAll = document.getElementById('jobsSelectAll');
+    const btn = document.getElementById('bulkUpdateBtn');
+    const badge = document.getElementById('bulkUpdateCount');
+    const rows = () => Array.from(document.querySelectorAll('.js-bulk-row'));
+    function refresh() {
+        const checked = rows().filter((cb) => cb.checked);
+        if (badge) badge.textContent = String(checked.length);
+        if (btn) btn.disabled = (checked.length === 0);
+    }
+    selAll?.addEventListener('change', () => {
+        rows().forEach((cb) => { cb.checked = selAll.checked; });
+        refresh();
+    });
+    rows().forEach((cb) => cb.addEventListener('change', refresh));
+    refresh();
+
+    const bulkForm = document.getElementById('bulkUpdateForm');
+    bulkForm?.addEventListener('submit', (ev) => {
+        const checked = rows().filter((cb) => cb.checked).map((cb) => cb.value);
+        if (checked.length === 0) { ev.preventDefault(); return; }
+        // Inject the selected job_ids as hidden fields.
+        checked.forEach((v) => {
+            const inp = document.createElement('input');
+            inp.type = 'hidden'; inp.name = 'job_ids[]'; inp.value = v;
+            bulkForm.appendChild(inp);
+        });
+    });
+})();
 </script>
+
+<?php if ($isEdit): ?>
+<!-- Bulk-update modal — appears when the user clicks the Bulk Update button
+     with at least one row checked. Blank fields are skipped, so an update
+     can touch only the columns the operator cares about. -->
+<div class="modal fade" id="bulkUpdateModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" id="bulkUpdateForm">
+                <input type="hidden" name="action" value="bulk_update_jobs">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-list-check me-1"></i>Bulk update selected jobs</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Fields left blank are skipped, so you can update any subset. Same Valid/Invalid rules apply: <em>Valid</em> clears Corrected Open Position and Remarks Group on every selected row.</p>
+                    <div class="mb-3">
+                        <label class="form-label">Status</label>
+                        <select class="form-select" name="bulk_status">
+                            <option value="">— leave unchanged —</option>
+                            <?php foreach (demand_employer_job_status_options() as $opt): ?>
+                                <option value="<?= esc($opt) ?>"><?= esc($opt) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Remarks Group</label>
+                        <select class="form-select" name="bulk_remarks_group_id">
+                            <option value="">— leave unchanged —</option>
+                            <?php foreach ($remarksGroups as $rg): ?>
+                                <option value="<?= (int) $rg['id'] ?>"><?= esc((string) $rg['name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Remarks</label>
+                        <textarea class="form-control" name="bulk_remarks" rows="3" placeholder="Leave blank to keep existing remarks"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning"><i class="bi bi-check2-circle me-1"></i>Apply to selected rows</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <?php render_footer(); ?>
