@@ -8,6 +8,7 @@ function role_label(string $role): string
         'crm_member' => 'CRM Member',
         'district_user' => 'District User',
         'state_dsm' => 'State DSM',
+        'dsm_admin' => 'DSM Admin',
         default => ucwords(str_replace('_', ' ', $role)),
     };
 }
@@ -94,11 +95,15 @@ function render_header(string $title, array $options = []): void
                             </li>
                         <?php else: ?>
                             <?php
-                                // State DSM sees a slimmer menu: only Dashboard and Demand Side.
-                                // Hide Job Fair, Masters, Reports and Administration for that role.
-                                $isStateDsm = (($user['role'] ?? '') === 'state_dsm');
+                                // State DSM and DSM Admin see a slimmer top menu — Dashboard
+                                // and Demand Side only (DSM Admin additionally gets
+                                // Administration). Job Fair, Masters and Reports are hidden.
+                                $role = (string) ($user['role'] ?? '');
+                                $isDemandOnly = ($role === 'state_dsm' || $role === 'dsm_admin');
+                                // Aliased for backwards-compat with other blocks in this file.
+                                $isStateDsm = ($role === 'state_dsm');
                             ?>
-                            <?php if (!$isStateDsm): ?>
+                            <?php if (!$isDemandOnly): ?>
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'notifications.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'job_fair_conversion_data_export.php', 'manage_candidate.php', 'crm_process.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
                                 <ul class="dropdown-menu">
@@ -144,14 +149,16 @@ function render_header(string $title, array $options = []): void
                                     <li><a class="dropdown-item" href="/district_discrepancy_report.php"><i class="bi bi-exclamation-diamond me-2"></i>Discrepancy Report</a></li>
                                 </ul>
                             </li>
-                            <?php endif; /* !$isStateDsm — end of Job Fair/Masters/Reports block */ ?>
+                            <?php endif; /* !$isDemandOnly — end of Job Fair/Masters/Reports block */ ?>
                             <?php if (is_admin($user)): ?>
                                 <li class="nav-item dropdown">
                                     <a class="nav-link dropdown-toggle<?= $isActive(['demand_side_employers.php', 'demand_side_employer_edit.php', 'demand_side_upload.php', 'demand_side_stats.php', 'demand_side_assignments.php', 'demand_side_assignment_distribution.php', 'demand_side_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-building me-1"></i>Demand Side</a>
                                     <ul class="dropdown-menu">
                                         <li><a class="dropdown-item" href="/demand_side_employers.php"><i class="bi bi-building me-2"></i>Employer</a></li>
-                                        <?php if (($user['role'] ?? '') === 'administrator'): ?>
+                                        <?php if (is_manage_admin($user)): ?>
                                             <li><a class="dropdown-item ps-4" href="/demand_side_assignments.php"><i class="bi bi-people-arrows me-2"></i>Assign Employers to Users</a></li>
+                                        <?php endif; ?>
+                                        <?php if (($user['role'] ?? '') === 'administrator'): ?>
                                             <li><a class="dropdown-item" href="/demand_side_upload.php"><i class="bi bi-upload me-2"></i>Upload Data</a></li>
                                         <?php endif; ?>
                                         <li><a class="dropdown-item" href="/demand_side_stats.php"><i class="bi bi-bar-chart-line me-2"></i>Data Modification Statistics</a></li>
@@ -161,7 +168,7 @@ function render_header(string $title, array $options = []): void
                                         <?php endif; ?>
                                     </ul>
                                 </li>
-                                <?php if (($user['role'] ?? '') === 'administrator'): ?>
+                                <?php if (is_manage_admin($user)): ?>
                                     <li class="nav-item dropdown">
                                         <a class="nav-link dropdown-toggle<?= $isActive(['users.php', 'reports.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
                                         <ul class="dropdown-menu">

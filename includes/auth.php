@@ -33,12 +33,28 @@ function require_admin(): void
 
 function is_admin(array $user): bool
 {
-    return in_array($user['role'] ?? '', ['administrator', 'state_dsm'], true);
+    // Broad "admin group" — anyone with elevated access to Demand Side +
+    // Statistics. Administrator, State DSM and DSM Admin all qualify.
+    return in_array($user['role'] ?? '', ['administrator', 'state_dsm', 'dsm_admin'], true);
 }
 
 function is_state_dsm(array $user): bool
 {
     return ($user['role'] ?? '') === 'state_dsm';
+}
+
+function is_dsm_admin(array $user): bool
+{
+    return ($user['role'] ?? '') === 'dsm_admin';
+}
+
+/**
+ * User is administrator OR dsm_admin — can manage users, assign employers,
+ * see Administration. Narrower than is_admin (excludes State DSM).
+ */
+function is_manage_admin(array $user): bool
+{
+    return in_array($user['role'] ?? '', ['administrator', 'dsm_admin'], true);
 }
 
 function is_district_user(array $user): bool
