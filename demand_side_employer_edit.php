@@ -306,6 +306,17 @@ if ($jobTitleSearch !== '') {
     $jobConds[] = 'j.jobtitle LIKE ?';
     $jobParams[] = '%' . $jobTitleSearch . '%';
 }
+// Per-user job scope: if the viewer has any job assignments AND this
+// employer isn't already fully assigned to them via employer scope, narrow
+// the Jobs list to the assigned jobs only.
+$viewerAssignedJobs = demand_get_assigned_job_ids($userId);
+$viewerAssignedEmployers = demand_get_assigned_employer_ids($userId);
+$isFullEmployerScope = in_array((int) $employer['employer_id'], $viewerAssignedEmployers, true);
+if ($viewerAssignedJobs !== [] && !$isFullEmployerScope) {
+    $ph = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
+    $jobConds[] = "j.job_id IN ($ph)";
+    foreach ($viewerAssignedJobs as $jid) { $jobParams[] = $jid; }
+}
 $jobWhereSql = 'WHERE ' . implode(' AND ', $jobConds);
 $jobOrderSql = 'ORDER BY ' . $allowedJobSort[$jobSort] . ' ' . ($jobDir === 'desc' ? 'DESC' : 'ASC');
 

@@ -18,7 +18,7 @@ if (($currentUser['role'] ?? '') !== 'administrator') {
 
 demand_side_bootstrap();
 
-/* Read filter — one or more roles + optional category. */
+/* Read filters — roles + optional category + explicit user pick + split unit. */
 $selectedRoles = $_GET['role'] ?? $_POST['role'] ?? [];
 if (!is_array($selectedRoles)) {
     $selectedRoles = $selectedRoles === '' ? [] : [$selectedRoles];
@@ -28,6 +28,16 @@ $categoryFilter = trim((string) ($_GET['category'] ?? $_POST['category'] ?? ''))
 $categories = demand_get_categories();
 $categoryByName = [];
 foreach ($categories as $c) { $categoryByName[(string) $c['name']] = $c; }
+
+$splitBy = (string) ($_GET['split_by'] ?? $_POST['split_by'] ?? 'employer');
+if (!in_array($splitBy, ['employer', 'job'], true)) { $splitBy = 'employer'; }
+
+// Explicit picked user IDs. Empty = "use all matched users" (first pass).
+$pickedUserIds = $_GET['user_id'] ?? $_POST['user_id'] ?? [];
+if (!is_array($pickedUserIds)) { $pickedUserIds = [$pickedUserIds]; }
+$pickedUserIds = array_values(array_unique(array_map('intval', $pickedUserIds)));
+$pickedUserIds = array_values(array_filter($pickedUserIds, static fn(int $v): bool => $v > 0));
+$hasExplicitPick = ($pickedUserIds !== []) || (($_GET['picked'] ?? $_POST['picked'] ?? '') === '1');
 
 /* Distinct roles across active users, so the multi-select always reflects
    who's actually assignable. */
@@ -45,56 +55,102 @@ if ($selectedRoles !== []) {
     $matchingUsers = $stmt->fetchAll();
 }
 
-/* Global pool: every employer that owns at least one job, with that
-   employer's job count. Employers with zero jobs are excluded because
-   they add no measurable workload. Optional Category filter narrows the
-   pool to employers whose SUM(open_positions) falls in that range. */
-$poolSql = "SELECT e.employer_id, e.employer_name, COUNT(j.id) AS jobs_count, COALESCE(SUM(j.open_positions), 0) AS positions_count
-    FROM demand_employers e
-    INNER JOIN demand_employer_jobs j ON j.emp_id = e.employer_id
-    GROUP BY e.employer_id, e.employer_name";
-if ($categoryFilter !== '' && isset($categoryByName[$categoryFilter])) {
-    $c = $categoryByName[$categoryFilter];
-    $poolSql .= " HAVING positions_count BETWEEN " . (int) $c['min_positions'] . ' AND ' . (int) $c['max_positions'];
+// Restrict participating users to the explicit pick if the admin has
+// confirmed one. Before confirmation, all matched users participate so the
+// initial preview still shows something sensible.
+$participatingUsers = $matchingUsers;
+if ($hasExplicitPick) {
+    $participatingUsers = array_values(array_filter(
+        $matchingUsers,
+        static fn(array $u): bool => in_array((int) $u['id'], $pickedUserIds, true)
+    ));
 }
-$poolSql .= ' ORDER BY jobs_count DESC, e.employer_id ASC';
-$poolRows = db()->query($poolSql)->fetchAll();
 
-$totalEmployersInPool = count($poolRows);
+/* Global pool. Two shapes: employer pool (each row is a whole employer +
+   its jobs) or job pool (each row is one job carrying open_positions).
+   Category filter narrows the pool to employers whose SUM(open_positions)
+   sits in the chosen range. */
+if ($splitBy === 'job') {
+    // Job-level pool. Each row is one job. Category filter is applied at
+    // the employer level (the job's owner must be in the category).
+    $poolSql = "SELECT j.job_id, j.emp_id, e.employer_name, j.jobtitle, COALESCE(j.open_positions, 0) AS positions_count
+        FROM demand_employer_jobs j
+        INNER JOIN demand_employers e ON e.employer_id = j.emp_id";
+    if ($categoryFilter !== '' && isset($categoryByName[$categoryFilter])) {
+        $c = $categoryByName[$categoryFilter];
+        $poolSql .= " WHERE j.emp_id IN (
+            SELECT emp_id FROM (
+                SELECT emp_id, SUM(open_positions) AS s FROM demand_employer_jobs GROUP BY emp_id
+            ) t WHERE t.s BETWEEN " . (int) $c['min_positions'] . ' AND ' . (int) $c['max_positions'] . "
+        )";
+    }
+    $poolSql .= " ORDER BY positions_count DESC, j.job_id ASC";
+    $poolRows = db()->query($poolSql)->fetchAll();
+} else {
+    $poolSql = "SELECT e.employer_id, e.employer_name, COUNT(j.id) AS jobs_count, COALESCE(SUM(j.open_positions), 0) AS positions_count
+        FROM demand_employers e
+        INNER JOIN demand_employer_jobs j ON j.emp_id = e.employer_id
+        GROUP BY e.employer_id, e.employer_name";
+    if ($categoryFilter !== '' && isset($categoryByName[$categoryFilter])) {
+        $c = $categoryByName[$categoryFilter];
+        $poolSql .= " HAVING positions_count BETWEEN " . (int) $c['min_positions'] . ' AND ' . (int) $c['max_positions'];
+    }
+    $poolSql .= ' ORDER BY jobs_count DESC, e.employer_id ASC';
+    $poolRows = db()->query($poolSql)->fetchAll();
+}
+
 $totalJobsInPool = 0;
-foreach ($poolRows as $pr) { $totalJobsInPool += (int) $pr['jobs_count']; }
+$totalPositionsInPool = 0;
+$totalEmployerIdsInPool = [];
+if ($splitBy === 'job') {
+    $totalJobsInPool = count($poolRows);
+    foreach ($poolRows as $pr) {
+        $totalPositionsInPool += (int) $pr['positions_count'];
+        $totalEmployerIdsInPool[(int) $pr['emp_id']] = true;
+    }
+    $totalEmployersInPool = count($totalEmployerIdsInPool);
+} else {
+    $totalEmployersInPool = count($poolRows);
+    foreach ($poolRows as $pr) {
+        $totalJobsInPool += (int) $pr['jobs_count'];
+        $totalPositionsInPool += (int) $pr['positions_count'];
+    }
+}
 
-/* Distribution: greedy fair split. Sort employers by jobs_count DESC
-   (already done above), then repeatedly assign the next employer to the
-   user with the smallest running job count. Keeps whole employers
-   together, which is what makes the emp_id -> employer_id scope useful
-   downstream. */
+/* Distribution: greedy fair split. Sort pool rows by jobs_count / positions
+   DESC (already done above), then assign each item to the user with the
+   smallest running load. Whole units (employer OR job) stay with a single
+   user, which keeps the scope join clean downstream. */
 $distribution = [];
-foreach ($matchingUsers as $u) {
+foreach ($participatingUsers as $u) {
     $distribution[(int) $u['id']] = [
         'user_id'     => (int) $u['id'],
         'user_name'   => (string) $u['name'],
         'user_role'   => (string) $u['role'],
         'jobs_count'  => 0,
         'employer_ids' => [],
+        'job_ids'      => [],
     ];
 }
 if ($distribution !== [] && $poolRows !== []) {
     foreach ($poolRows as $pr) {
-        // Pick the user with the smallest running jobs_count; ties broken
-        // by whoever has fewer employers so we spread reach evenly.
         $chosen = null;
         foreach ($distribution as $uid => $slot) {
+            $chosenSlot = $chosen !== null ? $distribution[$chosen] : null;
             if ($chosen === null
-                || $slot['jobs_count'] < $distribution[$chosen]['jobs_count']
-                || ($slot['jobs_count'] === $distribution[$chosen]['jobs_count']
-                    && count($slot['employer_ids']) < count($distribution[$chosen]['employer_ids']))
+                || $slot['jobs_count'] < $chosenSlot['jobs_count']
+                || ($slot['jobs_count'] === $chosenSlot['jobs_count']
+                    && count($slot['employer_ids']) + count($slot['job_ids']) < count($chosenSlot['employer_ids']) + count($chosenSlot['job_ids']))
             ) {
                 $chosen = $uid;
             }
         }
-        if ($chosen !== null) {
-            $distribution[$chosen]['jobs_count']  += (int) $pr['jobs_count'];
+        if ($chosen === null) { continue; }
+        if ($splitBy === 'job') {
+            $distribution[$chosen]['jobs_count']  += 1;
+            $distribution[$chosen]['job_ids'][]    = (int) $pr['job_id'];
+        } else {
+            $distribution[$chosen]['jobs_count']   += (int) $pr['jobs_count'];
             $distribution[$chosen]['employer_ids'][] = (int) $pr['employer_id'];
         }
     }
@@ -107,23 +163,37 @@ $flashMessage = null;
 $flashType = 'success';
 if (is_post() && ($_POST['action'] ?? '') === 'apply' && $distributionRows !== []) {
     $inserted = 0; $replaced = 0;
-    $del = db()->prepare('DELETE FROM demand_user_employer_assignments WHERE user_id = ?');
-    $ins = db()->prepare('INSERT INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
-    foreach ($distributionRows as $slot) {
-        $del->execute([$slot['user_id']]);
-        $replaced += $del->affectedRows();
-        foreach ($slot['employer_ids'] as $eid) {
-            try { $ins->execute([$slot['user_id'], $eid, $userId]); $inserted++; } catch (Throwable $e) { /* dup/FK ignore */ }
+    if ($splitBy === 'job') {
+        $del = db()->prepare('DELETE FROM demand_user_job_assignments WHERE user_id = ?');
+        $ins = db()->prepare('INSERT INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
+        foreach ($distributionRows as $slot) {
+            $del->execute([$slot['user_id']]);
+            $replaced += $del->affectedRows();
+            foreach ($slot['job_ids'] as $jid) {
+                try { $ins->execute([$slot['user_id'], $jid, $userId]); $inserted++; } catch (Throwable $e) { /* dup ignore */ }
+            }
         }
+        $flashMessage = "Distribution applied: $inserted job assignment(s) written across " . count($distributionRows) . ' user(s). (' . $replaced . ' prior job assignment row(s) were replaced.)';
+    } else {
+        $del = db()->prepare('DELETE FROM demand_user_employer_assignments WHERE user_id = ?');
+        $ins = db()->prepare('INSERT INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
+        foreach ($distributionRows as $slot) {
+            $del->execute([$slot['user_id']]);
+            $replaced += $del->affectedRows();
+            foreach ($slot['employer_ids'] as $eid) {
+                try { $ins->execute([$slot['user_id'], $eid, $userId]); $inserted++; } catch (Throwable $e) { /* dup/FK ignore */ }
+            }
+        }
+        $flashMessage = "Distribution applied: $inserted employer assignment(s) written across " . count($distributionRows) . ' user(s). (' . $replaced . ' prior employer assignment row(s) were replaced.)';
     }
-    $flashMessage = "Distribution applied: $inserted employer assignment(s) written across " . count($distributionRows) . ' user(s). (' . $replaced . ' prior assignment row(s) were replaced.)';
 }
 
 /* Fair-share reference (informational — what the ideal even split looks
    like before greedy quantisation). */
-$userCount = count($matchingUsers);
+$userCount = count($participatingUsers);
 $fairJobsShare = $userCount > 0 ? $totalJobsInPool / $userCount : 0.0;
 $fairEmployersShare = $userCount > 0 ? $totalEmployersInPool / $userCount : 0.0;
+$fairPositionsShare = $userCount > 0 ? $totalPositionsInPool / $userCount : 0.0;
 
 render_header('Assignment Distribution', ['main_container_class' => 'container-fluid']);
 render_page_header('Demand Side · Assignment Distribution Planner', [
@@ -153,7 +223,7 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
         </div>
         <div class="row g-3 mt-1">
             <div class="col-md-4">
-                <label class="form-label small mb-1">Category (optional — narrows the employer pool)</label>
+                <label class="form-label small mb-1">Category (optional — narrows the pool)</label>
                 <select class="form-select form-select-sm" name="category">
                     <option value="">All Categories</option>
                     <?php foreach ($categories as $c): ?>
@@ -161,13 +231,60 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                     <?php endforeach; ?>
                 </select>
             </div>
+            <div class="col-md-4">
+                <label class="form-label small mb-1">Split by</label>
+                <div class="btn-group" role="group">
+                    <input type="radio" class="btn-check" name="split_by" id="split_employer" value="employer" <?= $splitBy === 'employer' ? 'checked' : '' ?>>
+                    <label class="btn btn-sm btn-outline-primary" for="split_employer"><i class="bi bi-building me-1"></i>Whole employers</label>
+                    <input type="radio" class="btn-check" name="split_by" id="split_job" value="job" <?= $splitBy === 'job' ? 'checked' : '' ?>>
+                    <label class="btn btn-sm btn-outline-primary" for="split_job"><i class="bi bi-briefcase me-1"></i>Individual jobs</label>
+                </div>
+                <div class="small text-muted mt-1">Employer split keeps whole employers with one user; Job split divides at the job level.</div>
+            </div>
         </div>
+        <?php if ($matchingUsers !== []): ?>
+            <div class="row g-3 mt-1">
+                <div class="col-12">
+                    <label class="form-label small mb-1">Users to include (<?= count($matchingUsers) ?> matched)</label>
+                    <div class="border rounded p-2 bg-light-subtle" style="max-height:180px; overflow-y:auto;">
+                        <div class="mb-2">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="userPickAll">Select all</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="userPickNone">Clear</button>
+                        </div>
+                        <div class="d-flex flex-wrap gap-3">
+                            <?php foreach ($matchingUsers as $u): ?>
+                                <?php
+                                    $uid = (int) $u['id'];
+                                    $cid = 'upick-' . $uid;
+                                    $checked = !$hasExplicitPick || in_array($uid, $pickedUserIds, true);
+                                ?>
+                                <div class="form-check">
+                                    <input class="form-check-input js-user-pick" type="checkbox" name="user_id[]" value="<?= $uid ?>" id="<?= esc($cid) ?>" <?= $checked ? 'checked' : '' ?>>
+                                    <label class="form-check-label" for="<?= esc($cid) ?>"><?= esc((string) $u['name']) ?> · <span class="small text-muted"><?= esc(role_label((string) $u['role'])) ?></span></label>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                    <div class="small text-muted mt-1">Uncheck anyone who shouldn't be part of the split (e.g. users who don't cover this category).</div>
+                    <input type="hidden" name="picked" value="1">
+                </div>
+            </div>
+        <?php endif; ?>
         <div class="mt-3 d-flex gap-2">
             <button class="btn btn-primary"><i class="bi bi-people me-1"></i>Show distribution</button>
             <a class="btn btn-light" href="/demand_side_assignment_distribution.php">Reset</a>
         </div>
     </div>
 </form>
+<script>
+(function () {
+    const all = document.getElementById('userPickAll');
+    const none = document.getElementById('userPickNone');
+    const boxes = () => Array.from(document.querySelectorAll('.js-user-pick'));
+    all?.addEventListener('click', () => boxes().forEach((cb) => cb.checked = true));
+    none?.addEventListener('click', () => boxes().forEach((cb) => cb.checked = false));
+})();
+</script>
 
 <?php if ($selectedRoles === []): ?>
     <div class="alert alert-info">Pick one or more User Types above to preview the split.</div>
@@ -206,7 +323,7 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                 <div class="card-body">
                     <p class="stat-label">Fair share / user</p>
                     <p class="stat-value"><?= number_format($fairJobsShare, 1) ?></p>
-                    <span class="data-meta"><?= number_format($fairEmployersShare, 1) ?> employers each (ideal split)</span>
+                    <span class="data-meta"><?= number_format($fairEmployersShare, 1) ?> employers · <?= number_format($fairPositionsShare, 1) ?> positions each (ideal)</span>
                 </div>
             </div>
         </div>
@@ -224,10 +341,10 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                         <th>Sl No</th>
                         <th>User</th>
                         <th>Role</th>
-                        <th class="text-end">Employers assigned</th>
-                        <th class="text-end">Jobs assigned</th>
+                        <th class="text-end"><?= $splitBy === 'job' ? 'Employers reached' : 'Employers assigned' ?></th>
+                        <th class="text-end"><?= $splitBy === 'job' ? 'Jobs assigned' : 'Jobs (via employers)' ?></th>
                         <th class="text-end">Share of jobs</th>
-                        <th>Assigned Employer IDs</th>
+                        <th>Assigned IDs</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -235,17 +352,21 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                         <tr><td colspan="7"><div class="empty-state"><i class="bi bi-inbox"></i>No users matched the selected user types.</div></td></tr>
                     <?php endif; ?>
                     <?php $i = 1; foreach ($distributionRows as $slot): ?>
-                        <?php $share = $totalJobsInPool > 0 ? (int) $slot['jobs_count'] / $totalJobsInPool * 100 : 0; ?>
+                        <?php
+                            $share = $totalJobsInPool > 0 ? (int) $slot['jobs_count'] / $totalJobsInPool * 100 : 0;
+                            $ids = $splitBy === 'job' ? $slot['job_ids'] : $slot['employer_ids'];
+                            $empReached = $splitBy === 'job' ? count(array_unique(array_map(static fn($jid) => null, $slot['job_ids']))) : count($slot['employer_ids']);
+                        ?>
                         <tr>
                             <td><?= $i++ ?></td>
                             <td class="fw-semibold"><?= esc((string) $slot['user_name']) ?></td>
                             <td><span class="status-chip status-neutral"><?= esc(role_label((string) $slot['user_role'])) ?></span></td>
-                            <td class="text-end fw-bold"><?= number_format(count($slot['employer_ids'])) ?></td>
+                            <td class="text-end fw-bold"><?= number_format($splitBy === 'job' ? 0 : count($slot['employer_ids'])) ?></td>
                             <td class="text-end fw-bold"><?= number_format((int) $slot['jobs_count']) ?></td>
                             <td class="text-end"><?= number_format($share, 1) ?>%</td>
                             <td class="small text-muted" style="max-width:380px;">
-                                <div class="text-truncate" title="<?= esc(implode(', ', $slot['employer_ids'])) ?>">
-                                    <?= esc(implode(', ', $slot['employer_ids'])) ?>
+                                <div class="text-truncate" title="<?= esc(implode(', ', $ids)) ?>">
+                                    <?= esc(implode(', ', $ids)) ?>
                                 </div>
                             </td>
                         </tr>
@@ -262,6 +383,11 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                     <?php if ($categoryFilter !== ''): ?>
                         <input type="hidden" name="category" value="<?= esc($categoryFilter) ?>">
                     <?php endif; ?>
+                    <input type="hidden" name="split_by" value="<?= esc($splitBy) ?>">
+                    <input type="hidden" name="picked" value="1">
+                    <?php foreach ($participatingUsers as $u): ?>
+                        <input type="hidden" name="user_id[]" value="<?= (int) $u['id'] ?>">
+                    <?php endforeach; ?>
                     <input type="hidden" name="action" value="apply">
                     <button class="btn btn-success"><i class="bi bi-check2-circle me-1"></i>Apply as assignments</button>
                     <a href="/demand_side_assignments.php" class="btn btn-light">Go to Assignments list</a>
