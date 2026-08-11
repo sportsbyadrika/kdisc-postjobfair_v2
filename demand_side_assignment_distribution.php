@@ -6,11 +6,11 @@ require_admin();
 
 $currentUser = current_user();
 $userId = (int) ($currentUser['id'] ?? 0);
-if (($currentUser['role'] ?? '') !== 'administrator') {
+if (!is_manage_admin($currentUser)) {
     http_response_code(403);
     render_header('Access denied');
-    render_page_header('Access denied', ['icon' => 'bi-shield-lock', 'subtitle' => 'Only the Administrator role can plan employer assignments.']);
-    echo '<div class="alert alert-danger">Only Administrator can access the assignment distribution planner.</div>';
+    render_page_header('Access denied', ['icon' => 'bi-shield-lock', 'subtitle' => 'Only Administrator or DSM Admin can plan employer assignments.']);
+    echo '<div class="alert alert-danger">Only Administrator and DSM Admin can access the assignment distribution planner.</div>';
     echo '<a class="btn btn-primary" href="/demand_side_assignments.php"><i class="bi bi-arrow-left me-1"></i>Back to Assignments</a>';
     render_footer();
     exit;

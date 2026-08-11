@@ -6,11 +6,11 @@ require_admin();
 
 $currentUser = current_user();
 $userId = (int) ($currentUser['id'] ?? 0);
-if (($currentUser['role'] ?? '') !== 'administrator') {
+if (!is_manage_admin($currentUser)) {
     http_response_code(403);
     render_header('Access denied');
-    render_page_header('Access denied', ['icon' => 'bi-shield-lock', 'subtitle' => 'Only the Administrator role can assign employers.']);
-    echo '<div class="alert alert-danger">Only Administrator can manage employer assignments.</div>';
+    render_page_header('Access denied', ['icon' => 'bi-shield-lock', 'subtitle' => 'Only Administrator or DSM Admin can assign employers.']);
+    echo '<div class="alert alert-danger">Only Administrator and DSM Admin can manage employer assignments.</div>';
     echo '<a class="btn btn-primary" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>';
     render_footer();
     exit;

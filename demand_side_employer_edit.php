@@ -33,6 +33,23 @@ if (!$employer) {
     exit;
 }
 
+// Access scope: non-administrators must have this employer in their
+// assignment scope (either directly or via any of its assigned jobs).
+if (($currentUser['role'] ?? '') !== 'administrator') {
+    $eid = (int) $employer['employer_id'];
+    $inEmployerScope = in_array($eid, demand_get_assigned_employer_ids($userId), true);
+    $inJobScope      = in_array($eid, demand_get_employer_ids_from_assigned_jobs($userId), true);
+    if (!$inEmployerScope && !$inJobScope) {
+        http_response_code(403);
+        render_header('Access denied');
+        render_page_header('Access denied', ['icon' => 'bi-shield-lock', 'subtitle' => 'This employer is not part of your assignment scope.']);
+        echo '<div class="alert alert-danger">This employer isn\'t in your assigned scope. Contact your Administrator or DSM Admin.</div>';
+        echo '<a class="btn btn-primary" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>';
+        render_footer();
+        exit;
+    }
+}
+
 /* ------------------------------------------------------------------------- *
  * Save handlers (mode=edit)
  * ------------------------------------------------------------------------- */

@@ -23,9 +23,10 @@ $perPage = 25;
 $conds = ['1=1'];
 $params = [];
 
-// Per-user scope: union of employer-scope assignments and employer_ids
-// reached via job-scope assignments. Users with no assignment rows of
-// either kind still see the full list (backwards compatible).
+// Per-user scope: only Administrator sees every employer. Every other role
+// (State DSM, DSM Admin, CRM, District User, …) is scoped to the union of
+// their employer-scope assignments and employer_ids reached via job-scope
+// assignments. No assignments = empty result (previously "see everything").
 $viewerRow = current_user();
 $viewerId = (int) ($viewerRow['id'] ?? 0);
 $viewerIsAdministrator = (($viewerRow['role'] ?? '') === 'administrator');
@@ -33,11 +34,17 @@ $scopedFromEmployers = demand_get_assigned_employer_ids($viewerId);
 $scopedFromJobs      = demand_get_employer_ids_from_assigned_jobs($viewerId);
 $scopedEmployerIds   = array_values(array_unique(array_merge($scopedFromEmployers, $scopedFromJobs)));
 $scopeActive = false;
-if ($scopedEmployerIds !== []) {
+if (!$viewerIsAdministrator) {
     $scopeActive = true;
-    $ph = implode(',', array_fill(0, count($scopedEmployerIds), '?'));
-    $conds[] = "e.employer_id IN ($ph)";
-    foreach ($scopedEmployerIds as $sid) { $params[] = $sid; }
+    if ($scopedEmployerIds === []) {
+        // Non-admin without any assignments — hide everything until an
+        // administrator (or DSM Admin) gives them a scope.
+        $conds[] = '1=0';
+    } else {
+        $ph = implode(',', array_fill(0, count($scopedEmployerIds), '?'));
+        $conds[] = "e.employer_id IN ($ph)";
+        foreach ($scopedEmployerIds as $sid) { $params[] = $sid; }
+    }
 }
 if ($employerIdFilter !== '' && ctype_digit($employerIdFilter)) {
     $conds[] = 'e.employer_id = ?';
@@ -335,12 +342,21 @@ render_page_header('Demand Side · Employer', [
 </form>
 
 <?php if ($scopeActive): ?>
-    <div class="alert alert-info d-flex align-items-start gap-2">
-        <i class="bi bi-info-circle-fill mt-1"></i>
-        <div>
-            You are viewing an assigned subset: <strong><?= number_format(count($scopedEmployerIds)) ?> employer(s)</strong> out of the full master list. Contact the Administrator to change your assignment.
+    <?php if ($scopedEmployerIds === []): ?>
+        <div class="alert alert-warning d-flex align-items-start gap-2">
+            <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+            <div>
+                No employer or job assignments have been given to your account. Contact the Administrator or DSM Admin to assign employers/jobs before you can see any records here.
+            </div>
         </div>
-    </div>
+    <?php else: ?>
+        <div class="alert alert-info d-flex align-items-start gap-2">
+            <i class="bi bi-info-circle-fill mt-1"></i>
+            <div>
+                You are viewing an assigned subset: <strong><?= number_format(count($scopedEmployerIds)) ?> employer(s)</strong> out of the full master list. Contact the Administrator to change your assignment.
+            </div>
+        </div>
+    <?php endif; ?>
 <?php endif; ?>
 
 <?php if ($orphanCount > 0): ?>
