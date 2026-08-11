@@ -132,6 +132,34 @@ foreach ($agencyRows as $ar) {
     foreach (array_keys($agencyTotals) as $k) { $agencyTotals[$k] += (int) ($ar[$k] ?? 0); }
 }
 
+/* ------------------------------------------------------------------------- *
+ * Table 3 — Active users who have NO rows in either assignment table yet.
+ * Sorted by role then name so admins can spot gaps at a glance. Optional
+ * role filter (?unassigned_role=...) narrows it further.
+ * ------------------------------------------------------------------------- */
+$unassignedRoleFilter = trim((string) ($_GET['unassigned_role'] ?? ''));
+$unassignedParams = [];
+$unassignedSql = "SELECT id, name, role
+    FROM users
+    WHERE active_status = 1
+      AND id NOT IN (SELECT DISTINCT user_id FROM demand_user_employer_assignments)
+      AND id NOT IN (SELECT DISTINCT user_id FROM demand_user_job_assignments)";
+if ($unassignedRoleFilter !== '') {
+    $unassignedSql .= ' AND role = ?';
+    $unassignedParams[] = $unassignedRoleFilter;
+}
+$unassignedSql .= ' ORDER BY role ASC, name ASC';
+$unassignedStmt = db()->prepare($unassignedSql);
+$unassignedStmt->execute($unassignedParams);
+$unassignedRows = $unassignedStmt->fetchAll();
+
+// Role dropdown options for the unassigned filter — pulled from the same
+// active-users pool so we only offer roles that actually exist.
+$unassignedRoleOptions = array_map(
+    static fn(array $r): string => (string) $r['role'],
+    db()->query("SELECT DISTINCT role FROM users WHERE active_status = 1 AND role IS NOT NULL AND role <> '' ORDER BY role ASC")->fetchAll()
+);
+
 render_header('Assignment Report', ['main_container_class' => 'container-fluid']);
 render_page_header('Demand Side · Assignment Report', [
     'icon' => 'bi-file-earmark-bar-graph',
@@ -248,6 +276,52 @@ render_page_header('Demand Side · Assignment Report', [
         <em>Jobs Assigned</em> = distinct jobs reached by at least one user (either via that user's employer scope OR their job scope).
         <em>Edit Completed Jobs</em> = distinct jobs with at least one <code>status</code> field change in the edit log.
         <em>Effective Vacancies</em> = <code>open_positions</code> where status = <strong>Valid</strong>, plus <code>COALESCE(corrected_open_position, open_positions)</code> where status = <strong>Corrected</strong>. Invalid and Not-Yet-Started rows contribute zero.
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span><i class="bi bi-person-slash text-primary me-1"></i>Users with no assignment yet</span>
+        <form method="get" class="d-inline-flex align-items-center gap-2">
+            <label class="form-label small mb-0" for="unassigned_role">Filter by role</label>
+            <select class="form-select form-select-sm" name="unassigned_role" id="unassigned_role" onchange="this.form.submit()" style="width:auto;">
+                <option value="">All roles</option>
+                <?php foreach ($unassignedRoleOptions as $r): ?>
+                    <option value="<?= esc($r) ?>" <?= $unassignedRoleFilter === $r ? 'selected' : '' ?>><?= esc(role_label($r)) ?></option>
+                <?php endforeach; ?>
+            </select>
+            <span class="status-chip status-info"><?= number_format(count($unassignedRows)) ?> users</span>
+        </form>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Sl No</th>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if ($unassignedRows === []): ?>
+                    <tr><td colspan="4"><div class="empty-state"><i class="bi bi-check-circle-fill text-success"></i>Every active user has at least one assignment. 🎉</div></td></tr>
+                <?php endif; ?>
+                <?php $i = 1; foreach ($unassignedRows as $u): ?>
+                    <tr>
+                        <td><?= $i++ ?></td>
+                        <td class="fw-semibold"><?= esc((string) $u['name']) ?></td>
+                        <td><span class="status-chip status-neutral"><?= esc(role_label((string) $u['role'])) ?></span></td>
+                        <td class="text-end">
+                            <a class="btn btn-sm btn-outline-primary" href="/demand_side_assignments.php?user_id=<?= (int) $u['id'] ?>"><i class="bi bi-plus-lg me-1"></i>Assign now</a>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <div class="card-footer small text-muted">
+        These active users have zero rows in both <code>demand_user_employer_assignments</code> and <code>demand_user_job_assignments</code>. Use the Assign now button to open the Assign Employers form pre-scoped to the user.
     </div>
 </div>
 
