@@ -205,6 +205,21 @@ function demand_side_bootstrap(): void
         KEY idx_employer_id (employer_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+    // Per-user JOB scope. Works alongside the employer-level scope: a user's
+    // visible employers on the listing is the union of employer_ids assigned
+    // directly and employer_ids that own any assigned job. On the employer
+    // view, the Jobs list is further narrowed to the assigned jobs.
+    $db->query("CREATE TABLE IF NOT EXISTS demand_user_job_assignments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        job_id INT NOT NULL,
+        assigned_by INT NULL,
+        assigned_at DATETIME NOT NULL,
+        UNIQUE KEY unique_user_job (user_id, job_id),
+        KEY idx_user_id (user_id),
+        KEY idx_job_id (job_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     // Foreign key: demand_employer_jobs.emp_id -> demand_employers.employer_id.
     // Older installations that were created before the FK existed will pick it
     // up here; the ALTER is skipped silently if orphaned rows or a non-InnoDB
@@ -483,6 +498,32 @@ function demand_get_assigned_employer_ids(int $userId): array
 {
     if ($userId <= 0) return [];
     $stmt = db()->prepare('SELECT employer_id FROM demand_user_employer_assignments WHERE user_id = ? ORDER BY employer_id ASC');
+    $stmt->execute([$userId]);
+    return array_map(static fn(array $r): int => (int) $r['employer_id'], $stmt->fetchAll());
+}
+
+/**
+ * Job IDs assigned directly to a user (independent of Employer assignments).
+ */
+function demand_get_assigned_job_ids(int $userId): array
+{
+    if ($userId <= 0) return [];
+    $stmt = db()->prepare('SELECT job_id FROM demand_user_job_assignments WHERE user_id = ? ORDER BY job_id ASC');
+    $stmt->execute([$userId]);
+    return array_map(static fn(array $r): int => (int) $r['job_id'], $stmt->fetchAll());
+}
+
+/**
+ * Employer IDs that own any job assigned to the user. Used to widen the
+ * scope on the Employer listing to include employers reached via jobs.
+ */
+function demand_get_employer_ids_from_assigned_jobs(int $userId): array
+{
+    if ($userId <= 0) return [];
+    $stmt = db()->prepare('SELECT DISTINCT j.emp_id AS employer_id
+        FROM demand_user_job_assignments a
+        INNER JOIN demand_employer_jobs j ON j.job_id = a.job_id
+        WHERE a.user_id = ?');
     $stmt->execute([$userId]);
     return array_map(static fn(array $r): int => (int) $r['employer_id'], $stmt->fetchAll());
 }

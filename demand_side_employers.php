@@ -23,15 +23,15 @@ $perPage = 25;
 $conds = ['1=1'];
 $params = [];
 
-// Per-user employer scope: any user (administrator included) with one or
-// more rows in demand_user_employer_assignments has their Employer listing
-// restricted to that set of employer_ids. Users with no assignment rows
-// see the full list — so an admin who hasn't been given a scope keeps
-// seeing everything, matching backwards-compatible behaviour.
+// Per-user scope: union of employer-scope assignments and employer_ids
+// reached via job-scope assignments. Users with no assignment rows of
+// either kind still see the full list (backwards compatible).
 $viewerRow = current_user();
 $viewerId = (int) ($viewerRow['id'] ?? 0);
 $viewerIsAdministrator = (($viewerRow['role'] ?? '') === 'administrator');
-$scopedEmployerIds = demand_get_assigned_employer_ids($viewerId);
+$scopedFromEmployers = demand_get_assigned_employer_ids($viewerId);
+$scopedFromJobs      = demand_get_employer_ids_from_assigned_jobs($viewerId);
+$scopedEmployerIds   = array_values(array_unique(array_merge($scopedFromEmployers, $scopedFromJobs)));
 $scopeActive = false;
 if ($scopedEmployerIds !== []) {
     $scopeActive = true;

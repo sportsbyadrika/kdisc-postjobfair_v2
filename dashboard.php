@@ -16,6 +16,9 @@ $demandStatusValid = 0;
 $demandStatusInvalid = 0;
 $demandStatusCorrected = 0;
 $demandStatusNotStarted = 0;
+$demandStatusValidPositions = 0;
+$demandStatusInvalidPositions = 0;
+$demandStatusCorrectedPositions = 0;
 if ($isAdmin) {
     $totalUsers = (int) db()->query('SELECT COUNT(*) FROM users WHERE active_status = 1')->fetchColumn();
     // Demand-side snapshot for the admin / state_dsm dashboard. Wrapped in a
@@ -30,6 +33,11 @@ if ($isAdmin) {
         $demandStatusInvalid = (int) db()->query("SELECT COUNT(*) FROM demand_employer_jobs WHERE status = 'Invalid'")->fetchColumn();
         $demandStatusCorrected = (int) db()->query("SELECT COUNT(*) FROM demand_employer_jobs WHERE status = 'Corrected'")->fetchColumn();
         $demandStatusNotStarted = (int) db()->query("SELECT COUNT(*) FROM demand_employer_jobs WHERE status IS NULL OR TRIM(status) = ''")->fetchColumn();
+        // Affected open positions per status. Corrected uses the operator's
+        // corrected_open_position when set, otherwise the original count.
+        $demandStatusValidPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status = 'Valid'")->fetchColumn();
+        $demandStatusInvalidPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status = 'Invalid'")->fetchColumn();
+        $demandStatusCorrectedPositions = (int) db()->query("SELECT COALESCE(SUM(COALESCE(corrected_open_position, open_positions)), 0) FROM demand_employer_jobs WHERE status = 'Corrected'")->fetchColumn();
     } catch (Throwable $e) { /* demand-side tables not yet available */ }
 }
 
@@ -301,10 +309,10 @@ render_header('Dashboard');
     <div class="row g-3">
         <?php
             $editStatCards = [
-                ['label' => 'Valid',           'value' => $demandStatusValid,       'tone' => 'success', 'icon' => 'bi-check-circle-fill'],
-                ['label' => 'Invalid',         'value' => $demandStatusInvalid,     'tone' => 'danger',  'icon' => 'bi-x-circle-fill'],
-                ['label' => 'Corrected',       'value' => $demandStatusCorrected,   'tone' => 'warning', 'icon' => 'bi-pencil-square'],
-                ['label' => 'Not Yet Started', 'value' => $demandStatusNotStarted,  'tone' => 'neutral', 'icon' => 'bi-hourglass-split'],
+                ['label' => 'Valid',           'value' => $demandStatusValid,       'positions' => $demandStatusValidPositions,     'tone' => 'success', 'icon' => 'bi-check-circle-fill'],
+                ['label' => 'Invalid',         'value' => $demandStatusInvalid,     'positions' => $demandStatusInvalidPositions,   'tone' => 'danger',  'icon' => 'bi-x-circle-fill'],
+                ['label' => 'Corrected',       'value' => $demandStatusCorrected,   'positions' => $demandStatusCorrectedPositions, 'tone' => 'warning', 'icon' => 'bi-pencil-square'],
+                ['label' => 'Not Yet Started', 'value' => $demandStatusNotStarted,  'positions' => null,                            'tone' => 'neutral', 'icon' => 'bi-hourglass-split'],
             ];
         ?>
         <?php foreach ($editStatCards as $card): ?>
@@ -314,6 +322,9 @@ render_header('Dashboard');
                         <div>
                             <p class="stat-label"><?= esc($card['label']) ?></p>
                             <p class="stat-value"><?= number_format((int) $card['value']) ?></p>
+                            <?php if ($card['positions'] !== null): ?>
+                                <div class="small text-muted mb-1"><i class="bi bi-person-plus me-1"></i><strong><?= number_format((int) $card['positions']) ?></strong> affected open positions</div>
+                            <?php endif; ?>
                             <a class="stat-link" href="/demand_side_stats.php">View statistics <i class="bi bi-arrow-right-short"></i></a>
                         </div>
                         <span class="stat-icon-box tone-<?= esc($card['tone']) ?>"><i class="bi <?= esc($card['icon']) ?>"></i></span>
