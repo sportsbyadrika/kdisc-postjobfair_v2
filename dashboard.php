@@ -19,6 +19,7 @@ $demandStatusNotStarted = 0;
 $demandStatusValidPositions = 0;
 $demandStatusInvalidPositions = 0;
 $demandStatusCorrectedPositions = 0;
+$demandStatusNotStartedPositions = 0;
 if ($isAdmin) {
     $totalUsers = (int) db()->query('SELECT COUNT(*) FROM users WHERE active_status = 1')->fetchColumn();
     // Demand-side snapshot for the admin / state_dsm dashboard. Wrapped in a
@@ -38,6 +39,7 @@ if ($isAdmin) {
         $demandStatusValidPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status = 'Valid'")->fetchColumn();
         $demandStatusInvalidPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status = 'Invalid'")->fetchColumn();
         $demandStatusCorrectedPositions = (int) db()->query("SELECT COALESCE(SUM(COALESCE(corrected_open_position, open_positions)), 0) FROM demand_employer_jobs WHERE status = 'Corrected'")->fetchColumn();
+        $demandStatusNotStartedPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status IS NULL OR TRIM(status) = ''")->fetchColumn();
     } catch (Throwable $e) { /* demand-side tables not yet available */ }
 }
 
@@ -292,7 +294,7 @@ render_header('Dashboard');
                 ['label' => 'Valid',           'value' => $demandStatusValid,       'positions' => $demandStatusValidPositions,     'positions_label' => 'verified open positions', 'tone' => 'success', 'icon' => 'bi-check-circle-fill'],
                 ['label' => 'Invalid',         'value' => $demandStatusInvalid,     'positions' => $demandStatusInvalidPositions,   'positions_label' => 'affected open positions', 'tone' => 'danger',  'icon' => 'bi-x-circle-fill'],
                 ['label' => 'Corrected',       'value' => $demandStatusCorrected,   'positions' => $demandStatusCorrectedPositions, 'positions_label' => 'affected open positions', 'tone' => 'warning', 'icon' => 'bi-pencil-square'],
-                ['label' => 'Not Yet Started', 'value' => $demandStatusNotStarted,  'positions' => null,                            'positions_label' => null,                       'tone' => 'neutral', 'icon' => 'bi-hourglass-split'],
+                ['label' => 'Not Yet Started', 'value' => $demandStatusNotStarted,  'positions' => $demandStatusNotStartedPositions, 'positions_label' => 'affected open positions', 'tone' => 'neutral', 'icon' => 'bi-hourglass-split'],
             ];
         ?>
         <?php foreach ($editStatCards as $card): ?>
