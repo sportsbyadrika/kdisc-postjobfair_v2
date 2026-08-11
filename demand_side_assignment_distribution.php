@@ -70,15 +70,18 @@ if ($hasExplicitPick) {
    its jobs) or job pool (each row is one job carrying open_positions).
    Category filter narrows the pool to employers whose SUM(open_positions)
    sits in the chosen range. */
+// Distribute only non-assigned units: employers already sitting in
+// demand_user_employer_assignments (or jobs in demand_user_job_assignments
+// when split_by=job) are excluded from the pool. Prevents re-assigning
+// something that already has an owner and keeps the fair-split meaningful.
 if ($splitBy === 'job') {
-    // Job-level pool. Each row is one job. Category filter is applied at
-    // the employer level (the job's owner must be in the category).
     $poolSql = "SELECT j.job_id, j.emp_id, e.employer_name, j.jobtitle, COALESCE(j.open_positions, 0) AS positions_count
         FROM demand_employer_jobs j
-        INNER JOIN demand_employers e ON e.employer_id = j.emp_id";
+        INNER JOIN demand_employers e ON e.employer_id = j.emp_id
+        WHERE j.job_id NOT IN (SELECT job_id FROM demand_user_job_assignments)";
     if ($categoryFilter !== '' && isset($categoryByName[$categoryFilter])) {
         $c = $categoryByName[$categoryFilter];
-        $poolSql .= " WHERE j.emp_id IN (
+        $poolSql .= " AND j.emp_id IN (
             SELECT emp_id FROM (
                 SELECT emp_id, SUM(open_positions) AS s FROM demand_employer_jobs GROUP BY emp_id
             ) t WHERE t.s BETWEEN " . (int) $c['min_positions'] . ' AND ' . (int) $c['max_positions'] . "
@@ -90,6 +93,7 @@ if ($splitBy === 'job') {
     $poolSql = "SELECT e.employer_id, e.employer_name, COUNT(j.id) AS jobs_count, COALESCE(SUM(j.open_positions), 0) AS positions_count
         FROM demand_employers e
         INNER JOIN demand_employer_jobs j ON j.emp_id = e.employer_id
+        WHERE e.employer_id NOT IN (SELECT employer_id FROM demand_user_employer_assignments)
         GROUP BY e.employer_id, e.employer_name";
     if ($categoryFilter !== '' && isset($categoryByName[$categoryFilter])) {
         $c = $categoryByName[$categoryFilter];
@@ -239,7 +243,7 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                     <input type="radio" class="btn-check" name="split_by" id="split_job" value="job" <?= $splitBy === 'job' ? 'checked' : '' ?>>
                     <label class="btn btn-sm btn-outline-primary" for="split_job"><i class="bi bi-briefcase me-1"></i>Individual jobs</label>
                 </div>
-                <div class="small text-muted mt-1">Employer split keeps whole employers with one user; Job split divides at the job level.</div>
+                <div class="small text-muted mt-1">Employer split keeps whole employers with one user; Job split divides at the job level. <strong>Only unassigned units are distributed</strong> — anything already sitting in an existing assignment is skipped.</div>
             </div>
         </div>
         <?php if ($matchingUsers !== []): ?>
