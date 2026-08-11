@@ -323,32 +323,50 @@ if ($jobTitleSearch !== '') {
     $jobConds[] = 'j.jobtitle LIKE ?';
     $jobParams[] = '%' . $jobTitleSearch . '%';
 }
-// Per-user job scope: if the viewer has any job assignments AND this
-// employer isn't already fully assigned to them via employer scope, narrow
-// the Jobs list to the assigned jobs only.
-$viewerAssignedJobs = demand_get_assigned_job_ids($userId);
-$viewerAssignedEmployers = demand_get_assigned_employer_ids($userId);
-$isFullEmployerScope = in_array((int) $employer['employer_id'], $viewerAssignedEmployers, true);
-if ($viewerAssignedJobs !== [] && !$isFullEmployerScope) {
-    $ph = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
-    $jobConds[] = "j.job_id IN ($ph)";
-    foreach ($viewerAssignedJobs as $jid) { $jobParams[] = $jid; }
+// Per-user job scope. Rule per requirement:
+//   - if the viewer has ANY job_ids assigned, the Jobs list is narrowed to
+//     exactly those job_ids (even when the employer itself is also in
+//     their employer scope);
+//   - if the viewer has NO job_ids assigned, they see every job of the
+//     assigned employer.
+// Administrator is unscoped anywhere else so we still let them through.
+if (($currentUser['role'] ?? '') !== 'administrator') {
+    $viewerAssignedJobs = demand_get_assigned_job_ids($userId);
+    if ($viewerAssignedJobs !== []) {
+        $ph = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
+        $jobConds[] = "j.job_id IN ($ph)";
+        foreach ($viewerAssignedJobs as $jid) { $jobParams[] = $jid; }
+    }
 }
 $jobWhereSql = 'WHERE ' . implode(' AND ', $jobConds);
 $jobOrderSql = 'ORDER BY ' . $allowedJobSort[$jobSort] . ' ' . ($jobDir === 'desc' ? 'DESC' : 'ASC');
 
-$jobsStmt = db()->prepare("SELECT j.*, u.name AS task_owner_name, rg.name AS remarks_group_name
-    FROM demand_employer_jobs j
-    LEFT JOIN users u ON u.id = j.task_owner_id
-    LEFT JOIN demand_remarks_groups rg ON rg.id = j.remarks_group_id
-    $jobWhereSql
-    $jobOrderSql");
-$jobsStmt->execute($jobParams);
-$jobs = $jobsStmt->fetchAll();
+// Pagination for the Jobs listing (view + edit). Page size restricted to
+// multiples of 25 so the server never renders more than 200 job rows at
+// a time. CSV download below still returns the full filtered set.
+$jobsPerPageAllowed = [25, 50, 100, 200];
+$jobsPerPage = (int) ($_GET['jobs_per_page'] ?? 25);
+if (!in_array($jobsPerPage, $jobsPerPageAllowed, true)) { $jobsPerPage = 25; }
+$jobsPage = max(1, (int) ($_GET['page'] ?? 1));
+// jobs_page is a legacy alias in case a bookmarked URL uses it; page wins.
+if ($jobsPage === 1 && ($_GET['jobs_page'] ?? '') !== '') {
+    $jobsPage = max(1, (int) $_GET['jobs_page']);
+}
 
-// CSV download of the visible job_id list (respects the search filters +
-// column sort + per-user job scope). Streamed before any HTML is emitted.
+$jobsCountStmt = db()->prepare("SELECT COUNT(*) FROM demand_employer_jobs j $jobWhereSql");
+$jobsCountStmt->execute($jobParams);
+$jobsMatchingCount = (int) $jobsCountStmt->fetchColumn();
+$jobsTotalPages = max(1, (int) ceil($jobsMatchingCount / $jobsPerPage));
+$jobsPage = min($jobsPage, $jobsTotalPages);
+$jobsOffset = ($jobsPage - 1) * $jobsPerPage;
+
+// CSV download — always the full filtered set, not just the current page.
 if (($_GET['jobs_download'] ?? '') === 'csv') {
+    $fullStmt = db()->prepare("SELECT j.job_id, j.jobtitle, j.open_positions, j.status, j.posted_on, j.expired_date
+        FROM demand_employer_jobs j
+        $jobWhereSql
+        $jobOrderSql");
+    $fullStmt->execute($jobParams);
     $filename = 'employer_' . (int) $employer['employer_id'] . '_jobs_' . date('Ymd_His') . '.csv';
     while (ob_get_level() > 0) { ob_end_clean(); }
     header('Content-Type: text/csv; charset=utf-8');
@@ -356,7 +374,7 @@ if (($_GET['jobs_download'] ?? '') === 'csv') {
     $out = fopen('php://output', 'w');
     fwrite($out, "\xEF\xBB\xBF"); // Excel-friendly BOM
     fputcsv($out, ['job_id', 'jobtitle', 'open_positions', 'status', 'posted_on', 'expired_date']);
-    foreach ($jobs as $jr) {
+    while ($jr = $fullStmt->fetch()) {
         fputcsv($out, [
             (int) ($jr['job_id'] ?? 0),
             (string) ($jr['jobtitle'] ?? ''),
@@ -370,6 +388,16 @@ if (($_GET['jobs_download'] ?? '') === 'csv') {
     exit;
 }
 
+$jobsStmt = db()->prepare("SELECT j.*, u.name AS task_owner_name, rg.name AS remarks_group_name
+    FROM demand_employer_jobs j
+    LEFT JOIN users u ON u.id = j.task_owner_id
+    LEFT JOIN demand_remarks_groups rg ON rg.id = j.remarks_group_id
+    $jobWhereSql
+    $jobOrderSql
+    LIMIT ? OFFSET ?");
+$jobsStmt->execute([...$jobParams, $jobsPerPage, $jobsOffset]);
+$jobs = $jobsStmt->fetchAll();
+
 // Vacancies total across ALL jobs for this employer (independent of the
 // current search) so the header chip always shows the true figure.
 $vacStmt = db()->prepare('SELECT COUNT(*) AS jobs_count, COALESCE(SUM(open_positions), 0) AS positions
@@ -379,8 +407,10 @@ $vacRow = $vacStmt->fetch() ?: ['jobs_count' => 0, 'positions' => 0];
 $employerJobsCount = (int) $vacRow['jobs_count'];
 $employerVacancies = (int) $vacRow['positions'];
 
-// URL builder for column-sort links.
-$jobSortLink = static function (string $col, string $label) use ($jobSort, $jobDir, $jobIdSearch, $jobTitleSearch): string {
+// URL builder for column-sort links. Sort resets to page 1 (per-page size
+// is preserved) so the operator doesn't land on an out-of-range page after
+// re-sorting.
+$jobSortLink = static function (string $col, string $label) use ($jobSort, $jobDir, $jobIdSearch, $jobTitleSearch, $jobsPerPage): string {
     $nextDir = ($jobSort === $col && $jobDir === 'asc') ? 'desc' : 'asc';
     $params = array_filter([
         'id'               => (int) ($_GET['id'] ?? 0),
@@ -389,6 +419,8 @@ $jobSortLink = static function (string $col, string $label) use ($jobSort, $jobD
         'job_title_search' => $jobTitleSearch,
         'job_sort'         => $col,
         'job_dir'          => $nextDir,
+        'jobs_per_page'    => $jobsPerPage,
+        'page'        => 1,
     ], static fn($v): bool => $v !== '' && $v !== 0);
     $arrow = '';
     if ($jobSort === $col) {
@@ -566,8 +598,8 @@ $nicJoin = static function (?string $code, ?string $name): string {
         <span><i class="bi bi-briefcase text-primary me-1"></i>Employer Jobs <span class="text-muted small ms-1">emp_id = <?= (int) $employer['employer_id'] ?></span></span>
         <div class="d-flex align-items-center gap-2">
             <?php $showing = count($jobs); ?>
-            <?php if ($showing !== $employerJobsCount): ?>
-                <span class="status-chip status-neutral"><?= number_format($showing) ?> shown</span>
+            <?php if ($showing !== $employerJobsCount || $jobsMatchingCount !== $employerJobsCount): ?>
+                <span class="status-chip status-neutral" title="Rows on this page / rows matching current filter"><?= number_format($showing) ?> on page · <?= number_format($jobsMatchingCount) ?> matched</span>
             <?php endif; ?>
             <span class="status-chip status-info"><?= number_format($employerJobsCount) ?> jobs</span>
             <span class="status-chip status-success"><?= number_format($employerVacancies) ?> vacancies</span>
@@ -579,13 +611,21 @@ $nicJoin = static function (?string $code, ?string $name): string {
             <input type="hidden" name="mode" value="<?= esc($mode) ?>">
             <input type="hidden" name="job_sort" value="<?= esc($jobSort) ?>">
             <input type="hidden" name="job_dir" value="<?= esc($jobDir) ?>">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label class="form-label small mb-1">Job IDs <span class="text-muted">(comma separated)</span></label>
                 <input type="text" class="form-control form-control-sm" name="job_ids_search" value="<?= esc($jobIdSearch) ?>" placeholder="e.g. 1234, 5678">
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label class="form-label small mb-1">Job Title contains</label>
                 <input type="text" class="form-control form-control-sm" name="job_title_search" value="<?= esc($jobTitleSearch) ?>" placeholder="Search title">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small mb-1">Per page</label>
+                <select class="form-select form-select-sm" name="jobs_per_page" onchange="this.form.submit()">
+                    <?php foreach ($jobsPerPageAllowed as $pp): ?>
+                        <option value="<?= (int) $pp ?>" <?= $jobsPerPage === $pp ? 'selected' : '' ?>><?= (int) $pp ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <div class="col-md-4 d-flex gap-2 flex-wrap">
                 <button class="btn btn-sm btn-primary"><i class="bi bi-search me-1"></i>Search</button>
@@ -601,7 +641,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
                         'jobs_download' => 'csv',
                     ], static fn($v): bool => $v !== '' && $v !== null));
                 ?>
-                <a class="btn btn-sm btn-light" href="<?= esc($jobsCsvUrl) ?>" title="Download visible job_ids as CSV"><i class="bi bi-download me-1"></i>Download CSV</a>
+                <a class="btn btn-sm btn-light" href="<?= esc($jobsCsvUrl) ?>" title="Download the full filtered result set as CSV"><i class="bi bi-download me-1"></i>Download CSV</a>
                 <?php if ($isEdit): ?>
                     <button type="button" class="btn btn-sm btn-warning ms-auto" id="bulkUpdateBtn" data-bs-toggle="modal" data-bs-target="#bulkUpdateModal" disabled>
                         <i class="bi bi-list-check me-1"></i>Bulk Update <span class="badge bg-dark ms-1" id="bulkUpdateCount">0</span>
@@ -609,6 +649,20 @@ $nicJoin = static function (?string $code, ?string $name): string {
                 <?php endif; ?>
             </div>
         </form>
+    </div>
+    <?php
+        $jobsPaginationBase = array_filter([
+            'id'               => $employerRowId,
+            'mode'             => $mode,
+            'job_ids_search'   => $jobIdSearch,
+            'job_title_search' => $jobTitleSearch,
+            'job_sort'         => $jobSort,
+            'job_dir'          => $jobDir,
+            'jobs_per_page'    => $jobsPerPage,
+        ], static fn($v): bool => $v !== '' && $v !== null && $v !== 0);
+    ?>
+    <div class="card-body pt-0 pb-2">
+        <?php render_pagination($jobsPage, $jobsTotalPages, $jobsMatchingCount, $jobsPerPage, '/demand_side_employer_edit.php', $jobsPaginationBase, 'Employer Jobs pagination'); ?>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">
@@ -767,6 +821,9 @@ $nicJoin = static function (?string $code, ?string $name): string {
                 </tbody>
             </table>
         </div>
+    </div>
+    <div class="card-body pt-2 pb-3">
+        <?php render_pagination($jobsPage, $jobsTotalPages, $jobsMatchingCount, $jobsPerPage, '/demand_side_employer_edit.php', $jobsPaginationBase, 'Employer Jobs pagination'); ?>
     </div>
 </div>
 
