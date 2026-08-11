@@ -435,18 +435,35 @@ $employerLogs = db()->prepare('SELECT l.*, u.name AS editor_name FROM demand_emp
 $employerLogs->execute([$employerRowId]);
 $employerLogRows = $employerLogs->fetchAll();
 
-$jobIds = array_map(static fn(array $j): int => (int) $j['id'], $jobs);
+// Employer Jobs Edit History — paginated, scoped to ALL jobs of the current
+// employer (not just the jobs on the current page). Page size restricted to
+// multiples of 25 so the response stays small.
+$histPerPageAllowed = [25, 50, 100, 200];
+$histPerPage = (int) ($_GET['hist_per_page'] ?? 25);
+if (!in_array($histPerPage, $histPerPageAllowed, true)) { $histPerPage = 25; }
+$histPage = max(1, (int) ($_GET['hist_page'] ?? 1));
+
+$empIdForHist = (int) $employer['employer_id'];
+$histCountStmt = db()->prepare('SELECT COUNT(*)
+    FROM demand_employer_job_edit_log l
+    INNER JOIN demand_employer_jobs j ON j.id = l.job_row_id
+    WHERE j.emp_id = ?');
+$histCountStmt->execute([$empIdForHist]);
+$histTotalCount = (int) $histCountStmt->fetchColumn();
+$histTotalPages = max(1, (int) ceil($histTotalCount / $histPerPage));
+$histPage = min($histPage, $histTotalPages);
+$histOffset = ($histPage - 1) * $histPerPage;
+
 $jobLogRows = [];
-if ($jobIds !== []) {
-    $placeholders = implode(',', array_fill(0, count($jobIds), '?'));
-    $stmt = db()->prepare("SELECT l.*, u.name AS editor_name, j.job_id
+if ($histTotalCount > 0) {
+    $stmt = db()->prepare('SELECT l.*, u.name AS editor_name, j.job_id
         FROM demand_employer_job_edit_log l
         LEFT JOIN users u ON u.id = l.edited_by
-        LEFT JOIN demand_employer_jobs j ON j.id = l.job_row_id
-        WHERE l.job_row_id IN ($placeholders)
+        INNER JOIN demand_employer_jobs j ON j.id = l.job_row_id
+        WHERE j.emp_id = ?
         ORDER BY l.edited_at DESC, l.id DESC
-        LIMIT 500");
-    $stmt->execute($jobIds);
+        LIMIT ? OFFSET ?');
+    $stmt->execute([$empIdForHist, $histPerPage, $histOffset]);
     $jobLogRows = $stmt->fetchAll();
 }
 
@@ -858,7 +875,38 @@ $nicJoin = static function (?string $code, ?string $name): string {
     </div>
     <div class="col-lg-6">
         <div class="card">
-            <div class="card-header"><i class="bi bi-clock-history text-primary me-1"></i>Employer Jobs Edit History</div>
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span><i class="bi bi-clock-history text-primary me-1"></i>Employer Jobs Edit History</span>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="status-chip status-info"><?= number_format($histTotalCount) ?> entries</span>
+                    <?php
+                        // Per-page selector — GET form so we can carry all
+                        // relevant scope params through without touching the
+                        // Jobs table's own page state.
+                        $histFormBase = array_filter([
+                            'id' => $employerRowId,
+                            'mode' => $mode,
+                            'job_ids_search' => $jobIdSearch,
+                            'job_title_search' => $jobTitleSearch,
+                            'job_sort' => $jobSort,
+                            'job_dir' => $jobDir,
+                            'jobs_per_page' => $jobsPerPage,
+                            'page' => $jobsPage,
+                        ], static fn($v): bool => $v !== '' && $v !== null && $v !== 0);
+                    ?>
+                    <form method="get" class="d-inline">
+                        <?php foreach ($histFormBase as $k => $v): ?>
+                            <input type="hidden" name="<?= esc((string) $k) ?>" value="<?= esc((string) $v) ?>">
+                        <?php endforeach; ?>
+                        <input type="hidden" name="hist_page" value="1">
+                        <select class="form-select form-select-sm" name="hist_per_page" onchange="this.form.submit()" style="width:auto;">
+                            <?php foreach ($histPerPageAllowed as $pp): ?>
+                                <option value="<?= (int) $pp ?>" <?= $histPerPage === $pp ? 'selected' : '' ?>><?= (int) $pp ?>/pg</option>
+                            <?php endforeach; ?>
+                        </select>
+                    </form>
+                </div>
+            </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
                     <table class="table table-sm align-middle mb-0">
@@ -883,6 +931,41 @@ $nicJoin = static function (?string $code, ?string $name): string {
                     </table>
                 </div>
             </div>
+            <?php if ($histTotalPages > 1): ?>
+                <?php
+                    $histLink = static function (int $p) use ($histFormBase, $histPerPage): string {
+                        $params = $histFormBase;
+                        $params['hist_per_page'] = $histPerPage;
+                        $params['hist_page'] = $p;
+                        return '/demand_side_employer_edit.php?' . http_build_query($params);
+                    };
+                    // Small window around the current page.
+                    $windowStart = max(1, $histPage - 2);
+                    $windowEnd = min($histTotalPages, $histPage + 2);
+                ?>
+                <div class="card-footer d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div class="small text-muted">
+                        Showing <?= number_format(($histPage - 1) * $histPerPage + 1) ?>&ndash;<?= number_format(min($histPage * $histPerPage, $histTotalCount)) ?> of <?= number_format($histTotalCount) ?>
+                    </div>
+                    <nav aria-label="Employer Jobs Edit History pagination">
+                        <ul class="pagination pagination-sm mb-0">
+                            <li class="page-item <?= $histPage <= 1 ? 'disabled' : '' ?>"><a class="page-link" href="<?= $histPage <= 1 ? '#' : esc($histLink($histPage - 1)) ?>">Prev</a></li>
+                            <?php if ($windowStart > 1): ?>
+                                <li class="page-item"><a class="page-link" href="<?= esc($histLink(1)) ?>">1</a></li>
+                                <?php if ($windowStart > 2): ?><li class="page-item disabled"><span class="page-link">&hellip;</span></li><?php endif; ?>
+                            <?php endif; ?>
+                            <?php for ($p = $windowStart; $p <= $windowEnd; $p++): ?>
+                                <li class="page-item <?= $p === $histPage ? 'active' : '' ?>"><a class="page-link" href="<?= esc($histLink($p)) ?>"><?= $p ?></a></li>
+                            <?php endfor; ?>
+                            <?php if ($windowEnd < $histTotalPages): ?>
+                                <?php if ($windowEnd < $histTotalPages - 1): ?><li class="page-item disabled"><span class="page-link">&hellip;</span></li><?php endif; ?>
+                                <li class="page-item"><a class="page-link" href="<?= esc($histLink($histTotalPages)) ?>"><?= (int) $histTotalPages ?></a></li>
+                            <?php endif; ?>
+                            <li class="page-item <?= $histPage >= $histTotalPages ? 'disabled' : '' ?>"><a class="page-link" href="<?= $histPage >= $histTotalPages ? '#' : esc($histLink($histPage + 1)) ?>">Next</a></li>
+                        </ul>
+                    </nav>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
