@@ -86,6 +86,12 @@ if ($fieldFilter !== '' && $fieldOptions !== [] && !in_array($fieldFilter, $fiel
     $fieldFilter = 'status';
 }
 
+// Extra edit-detail filters — set by click-through from the User-wise table.
+$editorIdFilter = (int) ($_GET['editor_id'] ?? 0);
+$entityFilter   = strtolower(trim((string) ($_GET['entity_filter'] ?? '')));
+if (!in_array($entityFilter, ['', 'employer', 'job'], true)) { $entityFilter = ''; }
+$newValueFilter = trim((string) ($_GET['new_value_filter'] ?? ''));
+
 $userRows = [];
 $editDetailRows = [];
 if ($selectedDate !== '') {
@@ -119,43 +125,75 @@ if ($selectedDate !== '') {
     $userRows = $userStmt->fetchAll();
 
     // Per-edit detail, joined through the emp_id -> employer_id FK so every
-    // row shows which employer (and job title, for job edits) was touched.
-    // Additional Correction Field filter narrows to a single edit-log field.
-    $empExtra = '';
-    $jobExtra = '';
-    $detailParams = [$selectedDate];
+    // row shows which employer (and job title / current remarks, for job
+    // edits) was touched. Extra filters honour the User-wise click-through
+    // (editor_id, entity_filter, new_value_filter) plus the existing
+    // Correction Field filter.
+    $empParts = [];
+    $jobParts = [];
+    $empBind = [$selectedDate];
+    $jobBind = [$selectedDate];
     if ($fieldFilter !== '') {
-        $empExtra = ' AND el.field_name = ?';
-        $jobExtra = ' AND jl.field_name = ?';
-        $detailParams[] = $fieldFilter;
+        $empParts[] = 'el.field_name = ?';
+        $jobParts[] = 'jl.field_name = ?';
+        $empBind[] = $fieldFilter; $jobBind[] = $fieldFilter;
     }
-    $detailParams[] = $selectedDate;
-    if ($fieldFilter !== '') { $detailParams[] = $fieldFilter; }
+    if ($editorIdFilter > 0) {
+        $empParts[] = 'el.edited_by = ?';
+        $jobParts[] = 'jl.edited_by = ?';
+        $empBind[] = $editorIdFilter; $jobBind[] = $editorIdFilter;
+    }
+    if ($newValueFilter !== '') {
+        $empParts[] = 'el.new_value = ?';
+        $jobParts[] = 'jl.new_value = ?';
+        $empBind[] = $newValueFilter; $jobBind[] = $newValueFilter;
+    }
+    $empExtra = $empParts === [] ? '' : ' AND ' . implode(' AND ', $empParts);
+    $jobExtra = $jobParts === [] ? '' : ' AND ' . implode(' AND ', $jobParts);
 
-    $detailSql = "(SELECT
+    $empBranch = "(SELECT
             'Employer' AS entity,
             el.edited_at, el.field_name, el.old_value, el.new_value,
-            u.name AS editor_name,
+            u.name AS editor_name, u.id AS editor_id,
             e.employer_id AS employer_id, e.employer_name,
-            NULL AS job_id, NULL AS job_title
+            NULL AS job_id, NULL AS job_title,
+            e.active_status AS current_status,
+            e.remarks AS current_remarks,
+            NULL AS current_remarks_group_name,
+            NULL AS current_corrected_open_position,
+            NULL AS current_open_positions
         FROM demand_employer_edit_log el
         LEFT JOIN users u ON u.id = el.edited_by
         LEFT JOIN demand_employers e ON e.id = el.employer_row_id
-        WHERE DATE(el.edited_at) = ? $empExtra $empLogScope)
-        UNION ALL
-        (SELECT
+        WHERE DATE(el.edited_at) = ? $empExtra $empLogScope)";
+    $jobBranch = "(SELECT
             'Job' AS entity,
             jl.edited_at, jl.field_name, jl.old_value, jl.new_value,
-            u.name AS editor_name,
+            u.name AS editor_name, u.id AS editor_id,
             j.emp_id AS employer_id, e.employer_name,
-            j.job_id, j.jobtitle
+            j.job_id, j.jobtitle,
+            j.status AS current_status,
+            j.remarks AS current_remarks,
+            rg.name AS current_remarks_group_name,
+            j.corrected_open_position AS current_corrected_open_position,
+            j.open_positions AS current_open_positions
         FROM demand_employer_job_edit_log jl
         LEFT JOIN users u ON u.id = jl.edited_by
         LEFT JOIN demand_employer_jobs j ON j.id = jl.job_row_id
         LEFT JOIN demand_employers e ON e.employer_id = j.emp_id
-        WHERE DATE(jl.edited_at) = ? $jobExtra $jobLogScope)
-        ORDER BY edited_at DESC
-        LIMIT 500";
+        LEFT JOIN demand_remarks_groups rg ON rg.id = j.remarks_group_id
+        WHERE DATE(jl.edited_at) = ? $jobExtra $jobLogScope)";
+
+    if ($entityFilter === 'employer') {
+        $detailSql = $empBranch . ' ORDER BY edited_at DESC LIMIT 500';
+        $detailParams = $empBind;
+    } elseif ($entityFilter === 'job') {
+        $detailSql = $jobBranch . ' ORDER BY edited_at DESC LIMIT 500';
+        $detailParams = $jobBind;
+    } else {
+        $detailSql = $empBranch . ' UNION ALL ' . $jobBranch . ' ORDER BY edited_at DESC LIMIT 500';
+        $detailParams = array_merge($empBind, $jobBind);
+    }
     $detailStmt = db()->prepare($detailSql);
     $detailStmt->execute($detailParams);
     $editDetailRows = $detailStmt->fetchAll();
@@ -323,18 +361,39 @@ render_page_header('Demand Side · Data Modification Statistics', [
                     <?php if ($userRows === []): ?>
                         <tr><td colspan="9"><div class="empty-state"><i class="bi bi-inbox"></i>No user edits recorded on this date.</div></td></tr>
                     <?php endif; ?>
+                    <?php
+                        // Build a click-through URL that jumps back to this page with
+                        // the Edit-detail filters set to a specific slice.
+                        $filterUrl = static function (int $uid, string $entity = '', string $newValue = '', string $field = '') use ($selectedDate, $fromFilter, $toFilter, $categoryFilter): string {
+                            return '/demand_side_stats.php?' . http_build_query(array_filter([
+                                'date' => $selectedDate, 'from' => $fromFilter, 'to' => $toFilter,
+                                'category' => $categoryFilter,
+                                'editor_id' => $uid,
+                                'entity_filter' => $entity,
+                                'new_value_filter' => $newValue,
+                                'field' => $field,
+                            ], static fn($v): bool => $v !== '' && $v !== 0)) . '#editDetailCard';
+                        };
+                        $countLink = static function (int $value, string $url): string {
+                            if ($value === 0) { return '<span class="text-muted">0</span>'; }
+                            return '<a href="' . esc($url) . '" class="text-decoration-none">' . number_format($value) . '</a>';
+                        };
+                    ?>
                     <?php foreach ($userRows as $row): ?>
-                        <?php $vicUser = (int) $row['job_valid'] + (int) $row['job_invalid'] + (int) $row['job_corrected']; ?>
+                        <?php
+                            $uid = (int) ($row['user_id'] ?? 0);
+                            $vicUser = (int) $row['job_valid'] + (int) $row['job_invalid'] + (int) $row['job_corrected'];
+                        ?>
                         <tr>
                             <td class="fw-semibold"><?= esc((string) ($row['user_name'] ?? '(unknown)')) ?></td>
                             <td><span class="status-chip status-neutral"><?= esc(role_label((string) ($row['user_role'] ?? ''))) ?></span></td>
-                            <td class="text-end"><?= number_format((int) $row['employer_edits']) ?></td>
-                            <td class="text-end"><?= number_format((int) $row['job_edits']) ?></td>
-                            <td class="text-end"><?= number_format((int) $row['job_valid']) ?></td>
-                            <td class="text-end"><?= number_format((int) $row['job_invalid']) ?></td>
-                            <td class="text-end"><?= number_format((int) $row['job_corrected']) ?></td>
-                            <td class="text-end fw-bold"><?= number_format($vicUser) ?></td>
-                            <td class="text-end fw-semibold"><?= number_format((int) $row['total_edits']) ?></td>
+                            <td class="text-end"><?= $countLink((int) $row['employer_edits'], $filterUrl($uid, 'employer')) ?></td>
+                            <td class="text-end"><?= $countLink((int) $row['job_edits'],      $filterUrl($uid, 'job')) ?></td>
+                            <td class="text-end"><?= $countLink((int) $row['job_valid'],     $filterUrl($uid, 'job', 'Valid',     'status')) ?></td>
+                            <td class="text-end"><?= $countLink((int) $row['job_invalid'],   $filterUrl($uid, 'job', 'Invalid',   'status')) ?></td>
+                            <td class="text-end"><?= $countLink((int) $row['job_corrected'], $filterUrl($uid, 'job', 'Corrected', 'status')) ?></td>
+                            <td class="text-end fw-bold"><?= $countLink($vicUser, $filterUrl($uid, 'job', '', 'status')) ?></td>
+                            <td class="text-end fw-semibold"><?= $countLink((int) $row['total_edits'], $filterUrl($uid)) ?></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -344,12 +403,34 @@ render_page_header('Demand Side · Data Modification Statistics', [
 
     <?php $editsCsvUrl = '/demand_side_stats.php?' . http_build_query(array_filter([
         'date' => $selectedDate, 'from' => $fromFilter, 'to' => $toFilter,
-        'category' => $categoryFilter, 'field' => $fieldFilter, 'download' => 'edits',
-    ], static fn($v): bool => $v !== '')); ?>
-    <div class="card mb-4">
+        'category' => $categoryFilter, 'field' => $fieldFilter,
+        'editor_id' => $editorIdFilter > 0 ? $editorIdFilter : '',
+        'entity_filter' => $entityFilter, 'new_value_filter' => $newValueFilter,
+        'download' => 'edits',
+    ], static fn($v): bool => $v !== '' && $v !== 0)); ?>
+    <div class="card mb-4" id="editDetailCard">
         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
             <span><i class="bi bi-list-check text-primary me-1"></i>Edit detail on <?= esc($selectedDate) ?> <span class="text-muted small ms-1">(joined via emp_id → employer_id)</span></span>
-            <div class="d-flex gap-2">
+            <div class="d-flex gap-2 align-items-center flex-wrap">
+                <?php if ($editorIdFilter > 0 || $entityFilter !== '' || $newValueFilter !== ''): ?>
+                    <?php
+                        // Look up editor name for the chip label.
+                        $editorName = '';
+                        if ($editorIdFilter > 0) {
+                            $s = db()->prepare('SELECT name FROM users WHERE id = ?');
+                            $s->execute([$editorIdFilter]);
+                            $editorName = (string) ($s->fetchColumn() ?: ('#' . $editorIdFilter));
+                        }
+                        $clearUrl = '/demand_side_stats.php?' . http_build_query(array_filter([
+                            'date' => $selectedDate, 'from' => $fromFilter, 'to' => $toFilter,
+                            'category' => $categoryFilter, 'field' => $fieldFilter,
+                        ], static fn($v): bool => $v !== '')) . '#editDetailCard';
+                    ?>
+                    <?php if ($editorName !== ''): ?><span class="status-chip status-primary"><i class="bi bi-person-fill me-1"></i><?= esc($editorName) ?></span><?php endif; ?>
+                    <?php if ($entityFilter !== ''): ?><span class="status-chip status-primary"><?= esc(ucfirst($entityFilter)) ?></span><?php endif; ?>
+                    <?php if ($newValueFilter !== ''): ?><span class="status-chip status-primary"><?= esc($newValueFilter) ?></span><?php endif; ?>
+                    <a class="btn btn-sm btn-outline-secondary" href="<?= esc($clearUrl) ?>"><i class="bi bi-x-lg me-1"></i>Clear user filters</a>
+                <?php endif; ?>
                 <?php if ($editDetailRows !== []): ?>
                     <a class="btn btn-sm btn-light" href="<?= esc($editsCsvUrl) ?>"><i class="bi bi-download me-1"></i>Download CSV</a>
                 <?php endif; ?>
@@ -417,7 +498,38 @@ render_page_header('Demand Side · Data Modification Statistics', [
                             </td>
                             <td class="small"><?= esc((string) $er['field_name']) ?></td>
                             <td class="small text-muted"><?= esc((string) ($er['old_value'] ?? '')) ?></td>
-                            <td class="small fw-bold"><?= esc((string) ($er['new_value'] ?? '')) ?></td>
+                            <?php
+                                $newVal = (string) ($er['new_value'] ?? '');
+                                $bg = ''; $fg = '';
+                                if ($er['field_name'] === 'status') {
+                                    if ($newVal === 'Valid')     { $bg = '#d1e7dd'; $fg = '#0f5132'; }
+                                    elseif ($newVal === 'Invalid') { $bg = '#f8d7da'; $fg = '#842029'; }
+                                    elseif ($newVal === 'Corrected'){ $bg = '#ffe5d0'; $fg = '#8a4b00'; }
+                                }
+                                // Modal-trigger data attributes — always populated so
+                                // clicking any New cell (status or otherwise) opens the
+                                // record-details modal for that row.
+                                $modalAttrs = 'data-bs-toggle="modal" data-bs-target="#editDetailModal"'
+                                    . ' data-entity="' . esc((string) $er['entity']) . '"'
+                                    . ' data-when="' . esc((string) $er['edited_at']) . '"'
+                                    . ' data-editor="' . esc((string) ($er['editor_name'] ?? '')) . '"'
+                                    . ' data-field="' . esc((string) $er['field_name']) . '"'
+                                    . ' data-old="' . esc((string) ($er['old_value'] ?? '')) . '"'
+                                    . ' data-new="' . esc($newVal) . '"'
+                                    . ' data-employer-id="' . (int) ($er['employer_id'] ?? 0) . '"'
+                                    . ' data-employer-name="' . esc((string) ($er['employer_name'] ?? '')) . '"'
+                                    . ' data-job-id="' . (int) ($er['job_id'] ?? 0) . '"'
+                                    . ' data-job-title="' . esc((string) ($er['job_title'] ?? '')) . '"'
+                                    . ' data-current-status="' . esc((string) ($er['current_status'] ?? '')) . '"'
+                                    . ' data-current-remarks="' . esc((string) ($er['current_remarks'] ?? '')) . '"'
+                                    . ' data-current-remarks-group="' . esc((string) ($er['current_remarks_group_name'] ?? '')) . '"'
+                                    . ' data-current-corrected-open-position="' . esc((string) ($er['current_corrected_open_position'] ?? '')) . '"'
+                                    . ' data-current-open-positions="' . esc((string) ($er['current_open_positions'] ?? '')) . '"';
+                                $style = ($bg !== '') ? 'background:' . $bg . '; color:' . $fg . '; cursor:pointer;' : 'cursor:pointer;';
+                            ?>
+                            <td class="small fw-bold js-edit-detail-open" style="<?= $style ?>" title="Click for full record details" <?= $modalAttrs ?>>
+                                <?= esc($newVal) ?> <i class="bi bi-info-circle small ms-1"></i>
+                            </td>
                             <td class="small"><?= esc((string) ($er['editor_name'] ?? '')) ?></td>
                         </tr>
                     <?php endforeach; ?>
@@ -426,5 +538,116 @@ render_page_header('Demand Side · Data Modification Statistics', [
         </div>
     </div>
 <?php endif; ?>
+
+<!-- Record details modal — populated on click from the Edit-detail cell's
+     data-* attributes. Works for both Job and Employer edits; sections
+     that don't apply to the current entity are hidden by the JS. -->
+<div class="modal fade" id="editDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-info-circle me-1"></i>Edit record details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="small text-muted">When</div>
+                        <div class="fw-semibold" id="editModalWhen">—</div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Entity</div>
+                        <div class="fw-semibold" id="editModalEntity">—</div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="small text-muted">Edited By</div>
+                        <div class="fw-semibold" id="editModalEditor">—</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="small text-muted">Employer</div>
+                        <div class="fw-semibold" id="editModalEmployer">—</div>
+                    </div>
+                    <div class="col-md-6 js-jobonly">
+                        <div class="small text-muted">Job</div>
+                        <div class="fw-semibold" id="editModalJob">—</div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="small text-muted">Field changed</div>
+                        <div class="fw-semibold" id="editModalField">—</div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="small text-muted">Old value</div>
+                        <div class="fw-semibold" id="editModalOld">—</div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="small text-muted">New value</div>
+                        <div class="fw-semibold" id="editModalNew">—</div>
+                    </div>
+                </div>
+                <hr>
+                <h6 class="text-muted text-uppercase small mb-2">Current record state</h6>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <div class="small text-muted">Current Status</div>
+                        <div class="fw-semibold" id="editModalCurrentStatus">—</div>
+                    </div>
+                    <div class="col-md-4 js-jobonly">
+                        <div class="small text-muted">Open Positions</div>
+                        <div class="fw-semibold" id="editModalOpen">—</div>
+                    </div>
+                    <div class="col-md-4 js-jobonly">
+                        <div class="small text-muted">Corrected Open Position</div>
+                        <div class="fw-semibold" id="editModalCorrected">—</div>
+                    </div>
+                    <div class="col-md-6 js-jobonly">
+                        <div class="small text-muted">Remarks Group</div>
+                        <div class="fw-semibold" id="editModalRemarksGroup">—</div>
+                    </div>
+                    <div class="col-md-12">
+                        <div class="small text-muted">Remarks entered</div>
+                        <div class="border rounded p-2 bg-light-subtle" id="editModalRemarks" style="min-height:2rem; white-space:pre-wrap;">—</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    const modal = document.getElementById('editDetailModal');
+    if (!modal) return;
+    modal.addEventListener('show.bs.modal', (ev) => {
+        const btn = ev.relatedTarget;
+        if (!btn) return;
+        const d = btn.dataset;
+        const setText = (id, v) => {
+            const el = document.getElementById(id);
+            if (el) { el.textContent = (v && v.trim() !== '') ? v : '—'; }
+        };
+        setText('editModalWhen',           d.when || '');
+        setText('editModalEntity',         d.entity || '');
+        setText('editModalEditor',         d.editor || '');
+        const empText = (d.employerName || '') + ((d.employerId && d.employerId !== '0') ? ' (ID ' + d.employerId + ')' : '');
+        setText('editModalEmployer',       empText.trim());
+        const jobText = (d.jobTitle || '') + ((d.jobId && d.jobId !== '0') ? ' (Job ID ' + d.jobId + ')' : '');
+        setText('editModalJob',            jobText.trim());
+        setText('editModalField',          (d.field || '').replaceAll('_', ' '));
+        setText('editModalOld',            d.old || '');
+        setText('editModalNew',            d.new || '');
+        setText('editModalCurrentStatus',  d.currentStatus || '');
+        setText('editModalOpen',           d.currentOpenPositions || '');
+        setText('editModalCorrected',      d.currentCorrectedOpenPosition || '');
+        setText('editModalRemarksGroup',   d.currentRemarksGroup || '');
+        setText('editModalRemarks',        d.currentRemarks || '');
+        // Hide Job-only sections when the entity is Employer.
+        const isJob = (d.entity === 'Job');
+        modal.querySelectorAll('.js-jobonly').forEach((el) => { el.style.display = isJob ? '' : 'none'; });
+    });
+})();
+</script>
 
 <?php render_footer(); ?>
