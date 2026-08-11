@@ -634,7 +634,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
                     <tr>
                         <th><input type="checkbox" id="jobsSelectAll" title="Select all"></th>
                         <th><?= $jobSortLink('job_id', 'Job ID') ?></th>
-                        <th>Job Title</th>
+                        <th><?= $jobSortLink('jobtitle', 'Job Title') ?></th>
                         <th class="text-end"><?= $jobSortLink('open_positions', 'Open Positions') ?></th>
                         <th>Qualification<br><span class="small text-muted">Salary</span></th>
                         <th><?= $jobSortLink('posted_on', 'Posted On') ?><br><span class="small text-muted">Expired Date</span></th>
@@ -646,7 +646,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
                     <?php else: ?>
                     <tr>
                         <th><?= $jobSortLink('job_id', 'Job ID') ?></th>
-                        <th>Job Title</th>
+                        <th><?= $jobSortLink('jobtitle', 'Job Title') ?></th>
                         <th class="text-end"><?= $jobSortLink('open_positions', 'Open Positions') ?></th>
                         <th>Salary</th>
                         <th>Qualification</th>
