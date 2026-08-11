@@ -166,29 +166,33 @@ $distributionRows = array_values($distribution);
 $flashMessage = null;
 $flashType = 'success';
 if (is_post() && ($_POST['action'] ?? '') === 'apply' && $distributionRows !== []) {
-    $inserted = 0; $replaced = 0;
+    // Append-only apply. Existing assignments (manual OR automated) are
+    // never touched — only the newly split rows are inserted. Duplicates
+    // are silently ignored via INSERT IGNORE on the UNIQUE (user_id, *_id)
+    // key so nothing collides with prior state.
+    $inserted = 0; $skippedExisting = 0;
     if ($splitBy === 'job') {
-        $del = db()->prepare('DELETE FROM demand_user_job_assignments WHERE user_id = ?');
-        $ins = db()->prepare('INSERT INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
+        $ins = db()->prepare('INSERT IGNORE INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
         foreach ($distributionRows as $slot) {
-            $del->execute([$slot['user_id']]);
-            $replaced += $del->affectedRows();
             foreach ($slot['job_ids'] as $jid) {
-                try { $ins->execute([$slot['user_id'], $jid, $userId]); $inserted++; } catch (Throwable $e) { /* dup ignore */ }
+                try {
+                    $ins->execute([$slot['user_id'], $jid, $userId]);
+                    if ($ins->affectedRows() > 0) { $inserted++; } else { $skippedExisting++; }
+                } catch (Throwable $e) { /* FK issue — skip */ }
             }
         }
-        $flashMessage = "Distribution applied: $inserted job assignment(s) written across " . count($distributionRows) . ' user(s). (' . $replaced . ' prior job assignment row(s) were replaced.)';
+        $flashMessage = "Distribution applied (append only): $inserted new job assignment(s) written across " . count($distributionRows) . ' user(s). Prior assignments were untouched' . ($skippedExisting > 0 ? "; $skippedExisting duplicate row(s) skipped." : '.');
     } else {
-        $del = db()->prepare('DELETE FROM demand_user_employer_assignments WHERE user_id = ?');
-        $ins = db()->prepare('INSERT INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
+        $ins = db()->prepare('INSERT IGNORE INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
         foreach ($distributionRows as $slot) {
-            $del->execute([$slot['user_id']]);
-            $replaced += $del->affectedRows();
             foreach ($slot['employer_ids'] as $eid) {
-                try { $ins->execute([$slot['user_id'], $eid, $userId]); $inserted++; } catch (Throwable $e) { /* dup/FK ignore */ }
+                try {
+                    $ins->execute([$slot['user_id'], $eid, $userId]);
+                    if ($ins->affectedRows() > 0) { $inserted++; } else { $skippedExisting++; }
+                } catch (Throwable $e) { /* FK issue — skip */ }
             }
         }
-        $flashMessage = "Distribution applied: $inserted employer assignment(s) written across " . count($distributionRows) . ' user(s). (' . $replaced . ' prior employer assignment row(s) were replaced.)';
+        $flashMessage = "Distribution applied (append only): $inserted new employer assignment(s) written across " . count($distributionRows) . ' user(s). Prior assignments were untouched' . ($skippedExisting > 0 ? "; $skippedExisting duplicate row(s) skipped." : '.');
     }
 }
 
@@ -380,7 +384,7 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
         </div>
         <?php if ($distributionRows !== [] && $totalEmployersInPool > 0): ?>
             <div class="card-body border-top">
-                <form method="post" onsubmit="return confirm('Apply this distribution? Existing employer assignments for the <?= count($distributionRows) ?> matched user(s) will be REPLACED with the new split.');">
+                <form method="post" onsubmit="return confirm('Apply this distribution to <?= count($distributionRows) ?> user(s)? Existing assignments (manual or automated) will be KEPT — only the newly split rows are added.');">
                     <?php foreach ($selectedRoles as $sr): ?>
                         <input type="hidden" name="role[]" value="<?= esc($sr) ?>">
                     <?php endforeach; ?>
@@ -399,6 +403,7 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                 <p class="small text-muted mt-2 mb-0">
                     Whole employers are kept together (each employer_id sits with exactly one user), so the emp_id → employer_id foreign key still scopes the Employer listing cleanly.
                     The greedy algorithm sorts employers by job count DESC and assigns each to the user with the fewest running jobs, which tends to keep every user within ±1 employer of the ideal split.
+                    <br><strong>Append only</strong> — Apply never deletes existing assignments (manual or automated); it just inserts the newly split rows. Duplicates (already-assigned user + id pairs) are silently skipped.
                 </p>
             </div>
         <?php endif; ?>
