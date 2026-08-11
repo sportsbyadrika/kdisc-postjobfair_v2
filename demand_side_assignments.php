@@ -22,100 +22,117 @@ $flashMessage = null;
 $flashType = 'success';
 
 $editUserId = (int) ($_GET['user_id'] ?? $_POST['user_id'] ?? 0);
-$scopeType  = (string) ($_GET['scope_type'] ?? $_POST['scope_type'] ?? 'employer');
-if (!in_array($scopeType, ['employer', 'job'], true)) { $scopeType = 'employer'; }
 $action = (string) ($_POST['action'] ?? '');
-$submittedIds = (string) ($_POST['employer_ids'] ?? $_POST['job_ids'] ?? '');
 
-/* Preview + Save share the same parse step. */
+/* Two textboxes on the same form:
+ *   Employer IDs (mandatory) — which employers the user can see
+ *   Job IDs      (optional)  — restricts the Jobs list on those employers;
+ *                              empty means "all jobs of the assigned employers".
+ * Job IDs that don't belong to the resolved Employer set are treated as
+ * out-of-scope and reported to the operator. */
 $formUserId = $editUserId;
-$formIdsRaw = '';
+$formEmployerIdsRaw = '';
+$formJobIdsRaw = '';
 $previewLoaded = false;
-$previewFoundIds = [];
-$previewMissingIds = [];
-$previewEmployerCount = 0;
+$previewFoundEmployerIds = [];
+$previewMissingEmployerIds = [];
+$previewFoundJobIds = [];
+$previewMissingJobIds = [];
+$previewOutOfScopeJobIds = [];
 $previewJobCount = 0;
 $previewOpenPositions = 0;
 
 if (is_post() && ($action === 'preview' || $action === 'save')) {
-    $formUserId = (int) ($_POST['user_id'] ?? 0);
-    $formIdsRaw = $submittedIds;
-    $parsedIds = demand_parse_employer_id_list($formIdsRaw);
-    $idLabel = $scopeType === 'job' ? 'job_id' : 'employer_id';
+    $formUserId          = (int) ($_POST['user_id'] ?? 0);
+    $formEmployerIdsRaw  = (string) ($_POST['employer_ids'] ?? '');
+    $formJobIdsRaw       = (string) ($_POST['job_ids'] ?? '');
+    $parsedEmployerIds   = demand_parse_employer_id_list($formEmployerIdsRaw);
+    $parsedJobIds        = demand_parse_employer_id_list($formJobIdsRaw);
+
     if ($formUserId <= 0) {
         $flashMessage = 'Please select a user.';
         $flashType = 'danger';
-    } elseif ($parsedIds === []) {
-        $flashMessage = "Enter at least one numeric $idLabel.";
+    } elseif ($parsedEmployerIds === []) {
+        $flashMessage = 'Employer IDs is mandatory. Enter at least one numeric employer_id.';
         $flashType = 'danger';
     } else {
-        $placeholders = implode(',', array_fill(0, count($parsedIds), '?'));
-        if ($scopeType === 'job') {
-            // Match parsed IDs against demand_employer_jobs. Preview counts:
-            // Jobs matched, distinct Employers reached (via emp_id FK), and
-            // total open positions across those jobs.
-            $foundStmt = db()->prepare("SELECT job_id FROM demand_employer_jobs WHERE job_id IN ($placeholders)");
-            $foundStmt->execute($parsedIds);
-            $previewFoundIds = array_map(static fn(array $r): int => (int) $r['job_id'], $foundStmt->fetchAll());
-            $previewMissingIds = array_values(array_diff($parsedIds, $previewFoundIds));
-            $previewJobCount = count($previewFoundIds);
-            if ($previewFoundIds !== []) {
-                $ph2 = implode(',', array_fill(0, count($previewFoundIds), '?'));
-                $totalsStmt = db()->prepare("SELECT COUNT(DISTINCT emp_id) AS employers, COALESCE(SUM(open_positions), 0) AS positions
-                    FROM demand_employer_jobs WHERE job_id IN ($ph2)");
-                $totalsStmt->execute($previewFoundIds);
-                $tot = $totalsStmt->fetch();
-                $previewEmployerCount = (int) ($tot['employers'] ?? 0);
-                $previewOpenPositions = (int) ($tot['positions'] ?? 0);
+        // Resolve employers.
+        $ph = implode(',', array_fill(0, count($parsedEmployerIds), '?'));
+        $foundStmt = db()->prepare("SELECT employer_id FROM demand_employers WHERE employer_id IN ($ph)");
+        $foundStmt->execute($parsedEmployerIds);
+        $previewFoundEmployerIds = array_map(static fn(array $r): int => (int) $r['employer_id'], $foundStmt->fetchAll());
+        $previewMissingEmployerIds = array_values(array_diff($parsedEmployerIds, $previewFoundEmployerIds));
+
+        // Resolve jobs (if any) AND check they belong to the resolved employers.
+        if ($parsedJobIds !== [] && $previewFoundEmployerIds !== []) {
+            $ph2 = implode(',', array_fill(0, count($parsedJobIds), '?'));
+            $ph3 = implode(',', array_fill(0, count($previewFoundEmployerIds), '?'));
+            $jStmt = db()->prepare("SELECT job_id, emp_id FROM demand_employer_jobs WHERE job_id IN ($ph2)");
+            $jStmt->execute($parsedJobIds);
+            $inScope = []; $outScope = [];
+            $foundJobsAny = [];
+            foreach ($jStmt->fetchAll() as $jr) {
+                $jid = (int) $jr['job_id']; $eid = (int) $jr['emp_id'];
+                $foundJobsAny[] = $jid;
+                if (in_array($eid, $previewFoundEmployerIds, true)) { $inScope[] = $jid; }
+                else { $outScope[] = $jid; }
             }
-        } else {
-            // Employer-scope path (unchanged from before).
-            $foundStmt = db()->prepare("SELECT employer_id FROM demand_employers WHERE employer_id IN ($placeholders)");
-            $foundStmt->execute($parsedIds);
-            $previewFoundIds = array_map(static fn(array $r): int => (int) $r['employer_id'], $foundStmt->fetchAll());
-            $previewMissingIds = array_values(array_diff($parsedIds, $previewFoundIds));
-            $previewEmployerCount = count($previewFoundIds);
-            if ($previewFoundIds !== []) {
-                $ph2 = implode(',', array_fill(0, count($previewFoundIds), '?'));
-                $totalsStmt = db()->prepare("SELECT COUNT(*) AS jobs, COALESCE(SUM(open_positions), 0) AS positions
-                    FROM demand_employer_jobs WHERE emp_id IN ($ph2)");
-                $totalsStmt->execute($previewFoundIds);
-                $tot = $totalsStmt->fetch();
-                $previewJobCount = (int) ($tot['jobs'] ?? 0);
-                $previewOpenPositions = (int) ($tot['positions'] ?? 0);
-            }
+            $previewFoundJobIds       = $inScope;
+            $previewOutOfScopeJobIds  = $outScope;
+            $previewMissingJobIds     = array_values(array_diff($parsedJobIds, $foundJobsAny));
+        } elseif ($parsedJobIds !== []) {
+            $previewMissingJobIds = $parsedJobIds;
+        }
+
+        // Effective preview counts. Job scope narrows the visible jobs to
+        // in-scope job_ids; blank job textbox means "all jobs of assigned
+        // employers".
+        if ($previewFoundJobIds !== []) {
+            $ph2 = implode(',', array_fill(0, count($previewFoundJobIds), '?'));
+            $tStmt = db()->prepare("SELECT COUNT(*) AS c, COALESCE(SUM(open_positions), 0) AS p
+                FROM demand_employer_jobs WHERE job_id IN ($ph2)");
+            $tStmt->execute($previewFoundJobIds);
+            $t = $tStmt->fetch();
+            $previewJobCount = (int) ($t['c'] ?? 0);
+            $previewOpenPositions = (int) ($t['p'] ?? 0);
+        } elseif ($previewFoundEmployerIds !== []) {
+            $ph2 = implode(',', array_fill(0, count($previewFoundEmployerIds), '?'));
+            $tStmt = db()->prepare("SELECT COUNT(*) AS c, COALESCE(SUM(open_positions), 0) AS p
+                FROM demand_employer_jobs WHERE emp_id IN ($ph2)");
+            $tStmt->execute($previewFoundEmployerIds);
+            $t = $tStmt->fetch();
+            $previewJobCount = (int) ($t['c'] ?? 0);
+            $previewOpenPositions = (int) ($t['p'] ?? 0);
         }
         $previewLoaded = true;
 
-        if ($action === 'save') {
-            if ($scopeType === 'job') {
-                db()->prepare('DELETE FROM demand_user_job_assignments WHERE user_id = ?')->execute([$formUserId]);
-                if ($previewFoundIds !== []) {
-                    $ins = db()->prepare('INSERT INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
-                    foreach ($previewFoundIds as $jid) {
-                        try { $ins->execute([$formUserId, $jid, $userId]); } catch (Throwable $e) { /* dup ignore */ }
-                    }
-                }
-                $flashMessage = sprintf(
-                    'Saved: %d job(s) assigned to user %d (%d skipped as not found).',
-                    count($previewFoundIds), $formUserId, count($previewMissingIds)
-                );
-            } else {
-                db()->prepare('DELETE FROM demand_user_employer_assignments WHERE user_id = ?')->execute([$formUserId]);
-                if ($previewFoundIds !== []) {
-                    $ins = db()->prepare('INSERT INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
-                    foreach ($previewFoundIds as $eid) {
-                        try { $ins->execute([$formUserId, $eid, $userId]); } catch (Throwable $e) { /* dup ignore */ }
-                    }
-                }
-                $flashMessage = sprintf(
-                    'Saved: %d employer(s) assigned to user %d (%d skipped as not found).',
-                    count($previewFoundIds), $formUserId, count($previewMissingIds)
-                );
+        if ($action === 'save' && $previewFoundEmployerIds !== []) {
+            // Rewrite both tables for the user: idempotent full-replace.
+            db()->prepare('DELETE FROM demand_user_employer_assignments WHERE user_id = ?')->execute([$formUserId]);
+            db()->prepare('DELETE FROM demand_user_job_assignments WHERE user_id = ?')->execute([$formUserId]);
+            $insE = db()->prepare('INSERT INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
+            foreach ($previewFoundEmployerIds as $eid) {
+                try { $insE->execute([$formUserId, $eid, $userId]); } catch (Throwable $e) { /* dup ignore */ }
             }
-            $editUserId = 0; $formUserId = 0; $formIdsRaw = '';
-            $previewLoaded = false; $previewFoundIds = []; $previewMissingIds = [];
-            $previewEmployerCount = 0; $previewJobCount = 0; $previewOpenPositions = 0;
+            if ($previewFoundJobIds !== []) {
+                $insJ = db()->prepare('INSERT INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
+                foreach ($previewFoundJobIds as $jid) {
+                    try { $insJ->execute([$formUserId, $jid, $userId]); } catch (Throwable $e) { /* dup ignore */ }
+                }
+            }
+            $flashMessage = sprintf(
+                'Saved: %d employer(s) and %d job(s) assigned to user %d.%s%s',
+                count($previewFoundEmployerIds),
+                count($previewFoundJobIds),
+                $formUserId,
+                $previewMissingEmployerIds === [] ? '' : ' Missing employer_ids skipped: ' . implode(', ', $previewMissingEmployerIds) . '.',
+                $previewOutOfScopeJobIds  === [] ? '' : ' Job IDs not owned by the assigned employers skipped: ' . implode(', ', $previewOutOfScopeJobIds) . '.'
+            );
+            $editUserId = 0; $formUserId = 0; $formEmployerIdsRaw = ''; $formJobIdsRaw = '';
+            $previewLoaded = false;
+            $previewFoundEmployerIds = $previewMissingEmployerIds = [];
+            $previewFoundJobIds = $previewMissingJobIds = $previewOutOfScopeJobIds = [];
+            $previewJobCount = 0; $previewOpenPositions = 0;
         }
     }
 } elseif (is_post() && $action === 'delete') {
@@ -129,15 +146,10 @@ if (is_post() && ($action === 'preview' || $action === 'save')) {
     }
     $editUserId = 0;
 } elseif ($editUserId > 0 && !is_post()) {
-    // Prefill the form for an existing user's assignments — use whichever
-    // scope type is currently selected.
-    if ($scopeType === 'job') {
-        $existing = demand_get_assigned_job_ids($editUserId);
-    } else {
-        $existing = demand_get_assigned_employer_ids($editUserId);
-    }
-    $formIdsRaw = implode(', ', $existing);
-    $formUserId = $editUserId;
+    // Prefill BOTH textboxes for an existing user.
+    $formEmployerIdsRaw = implode(', ', demand_get_assigned_employer_ids($editUserId));
+    $formJobIdsRaw      = implode(', ', demand_get_assigned_job_ids($editUserId));
+    $formUserId         = $editUserId;
 }
 
 /* User list for the dropdown. Administrator users are included too — their
@@ -220,18 +232,6 @@ render_page_header('Demand Side · Assign Employers to Users', [
     <div class="card-body">
         <form method="post" class="row g-3" id="assignmentForm">
             <input type="hidden" name="action" value="preview">
-            <div class="col-12">
-                <label class="form-label small mb-1">Scope by</label>
-                <div class="btn-group" role="group" aria-label="Scope by">
-                    <input type="radio" class="btn-check" name="scope_type" id="scope_employer" value="employer" <?= $scopeType === 'employer' ? 'checked' : '' ?>>
-                    <label class="btn btn-sm btn-outline-primary" for="scope_employer"><i class="bi bi-building me-1"></i>Employer IDs</label>
-                    <input type="radio" class="btn-check" name="scope_type" id="scope_job" value="job" <?= $scopeType === 'job' ? 'checked' : '' ?>>
-                    <label class="btn btn-sm btn-outline-primary" for="scope_job"><i class="bi bi-briefcase me-1"></i>Job IDs</label>
-                </div>
-                <div class="small text-muted mt-1">
-                    Choose whether the IDs below are Employer IDs (whole employer + all its jobs go to the user) or Job IDs (individual jobs; their employers are made visible too, but the Jobs list on the Employer view is filtered to the assigned jobs).
-                </div>
-            </div>
             <div class="col-md-3">
                 <label class="form-label">User Type</label>
                 <select class="form-select" id="userRoleFilter" <?= $editUserId > 0 ? 'disabled' : '' ?>>
@@ -258,9 +258,21 @@ render_page_header('Demand Side · Assign Employers to Users', [
                 <?php endif; ?>
             </div>
             <div class="col-md-5">
-                <?php $idsLabel = $scopeType === 'job' ? 'Job IDs' : 'Employer IDs'; ?>
-                <label class="form-label"><?= esc($idsLabel) ?> <span class="small text-muted">(comma / space / newline separated)</span></label>
-                <textarea class="form-control" name="<?= $scopeType === 'job' ? 'job_ids' : 'employer_ids' ?>" rows="4" placeholder="e.g. 1012, 1234, 4567&#10;1890 1901 2001"><?= esc($formIdsRaw) ?></textarea>
+                <label class="form-label" for="employer_ids">
+                    <i class="bi bi-building me-1"></i>Employer IDs
+                    <span class="text-danger">*</span>
+                    <span class="small text-muted">(comma / space / newline)</span>
+                </label>
+                <textarea class="form-control" id="employer_ids" name="employer_ids" rows="4" placeholder="e.g. 1012, 1234, 4567" required><?= esc($formEmployerIdsRaw) ?></textarea>
+                <div class="small text-muted mt-1">Mandatory — these employers become visible to the user.</div>
+            </div>
+            <div class="col-md-12">
+                <label class="form-label" for="job_ids">
+                    <i class="bi bi-briefcase me-1"></i>Job IDs
+                    <span class="small text-muted">(optional — comma / space / newline)</span>
+                </label>
+                <textarea class="form-control" id="job_ids" name="job_ids" rows="3" placeholder="Leave blank to give the user ALL jobs of the employers above. Populate to restrict the Jobs list to only these specific job_ids."><?= esc($formJobIdsRaw) ?></textarea>
+                <div class="small text-muted mt-1">Any job_id here that doesn't belong to an assigned employer is rejected and reported in the preview.</div>
             </div>
             <div class="col-12 d-flex gap-2">
                 <button class="btn btn-primary"><i class="bi bi-search me-1"></i>Preview totals</button>
@@ -295,13 +307,13 @@ render_page_header('Demand Side · Assign Employers to Users', [
                 <div class="col-md-3">
                     <div class="border rounded p-2 text-center bg-light-subtle">
                         <div class="small text-muted">Employers matched</div>
-                        <div class="h4 mb-0 fw-bold text-primary"><?= number_format($previewEmployerCount) ?></div>
+                        <div class="h4 mb-0 fw-bold text-primary"><?= number_format(count($previewFoundEmployerIds)) ?></div>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="border rounded p-2 text-center bg-light-subtle">
-                        <div class="small text-muted">Jobs (via emp_id)</div>
-                        <div class="h4 mb-0 fw-bold text-primary"><?= number_format($previewJobCount) ?></div>
+                        <div class="small text-muted"><?= $previewFoundJobIds === [] && $previewMissingJobIds === [] && $previewOutOfScopeJobIds === [] ? 'Jobs (all of assigned employers)' : 'Jobs matched (in scope)' ?></div>
+                        <div class="h4 mb-0 fw-bold text-primary"><?= number_format($previewFoundJobIds !== [] ? count($previewFoundJobIds) : $previewJobCount) ?></div>
                     </div>
                 </div>
                 <div class="col-md-3">
@@ -312,24 +324,38 @@ render_page_header('Demand Side · Assign Employers to Users', [
                 </div>
                 <div class="col-md-3">
                     <div class="border rounded p-2 text-center bg-warning-subtle">
-                        <div class="small text-muted">IDs not found</div>
-                        <div class="h4 mb-0 fw-bold text-warning"><?= number_format(count($previewMissingIds)) ?></div>
+                        <div class="small text-muted">Rejected IDs</div>
+                        <div class="h4 mb-0 fw-bold text-warning"><?= number_format(count($previewMissingEmployerIds) + count($previewMissingJobIds) + count($previewOutOfScopeJobIds)) ?></div>
                     </div>
                 </div>
             </div>
-            <?php if ($previewMissingIds !== []): ?>
+            <?php if ($previewMissingEmployerIds !== []): ?>
                 <div class="alert alert-warning mt-3 mb-0 small">
-                    <strong>Skipped IDs (not in Employers):</strong>
-                    <?= esc(implode(', ', array_slice($previewMissingIds, 0, 100))) ?>
-                    <?= count($previewMissingIds) > 100 ? ' …' : '' ?>
+                    <strong>Employer IDs not in Employers table:</strong>
+                    <?= esc(implode(', ', array_slice($previewMissingEmployerIds, 0, 100))) ?>
+                    <?= count($previewMissingEmployerIds) > 100 ? ' …' : '' ?>
                 </div>
             <?php endif; ?>
-            <?php if ($previewFoundIds !== []): ?>
-                <form method="post" class="mt-3" onsubmit="return confirm('Save this assignment? Existing <?= $scopeType === 'job' ? 'job' : 'employer' ?> assignments for the selected user will be replaced.');">
+            <?php if ($previewMissingJobIds !== []): ?>
+                <div class="alert alert-warning mt-3 mb-0 small">
+                    <strong>Job IDs not in Employer Jobs table:</strong>
+                    <?= esc(implode(', ', array_slice($previewMissingJobIds, 0, 100))) ?>
+                    <?= count($previewMissingJobIds) > 100 ? ' …' : '' ?>
+                </div>
+            <?php endif; ?>
+            <?php if ($previewOutOfScopeJobIds !== []): ?>
+                <div class="alert alert-danger mt-3 mb-0 small">
+                    <strong>Job IDs not owned by the assigned employers (rejected):</strong>
+                    <?= esc(implode(', ', array_slice($previewOutOfScopeJobIds, 0, 100))) ?>
+                    <?= count($previewOutOfScopeJobIds) > 100 ? ' …' : '' ?>
+                </div>
+            <?php endif; ?>
+            <?php if ($previewFoundEmployerIds !== []): ?>
+                <form method="post" class="mt-3" onsubmit="return confirm('Save this assignment? Existing employer AND job assignments for the selected user will be replaced.');">
                     <input type="hidden" name="action" value="save">
-                    <input type="hidden" name="scope_type" value="<?= esc($scopeType) ?>">
                     <input type="hidden" name="user_id" value="<?= (int) $formUserId ?>">
-                    <input type="hidden" name="<?= $scopeType === 'job' ? 'job_ids' : 'employer_ids' ?>" value="<?= esc($formIdsRaw) ?>">
+                    <input type="hidden" name="employer_ids" value="<?= esc($formEmployerIdsRaw) ?>">
+                    <input type="hidden" name="job_ids" value="<?= esc($formJobIdsRaw) ?>">
                     <button class="btn btn-success"><i class="bi bi-check2-circle me-1"></i>Save assignment</button>
                 </form>
             <?php endif; ?>
@@ -379,9 +405,19 @@ render_page_header('Demand Side · Assign Employers to Users', [
                             <?php endif; ?>
                         </td>
                         <td class="text-end">
-                            <div class="d-inline-flex gap-1">
-                                <a class="btn btn-sm btn-outline-primary" href="/demand_side_assignments.php?user_id=<?= (int) $ar['user_id'] ?>&scope_type=employer"><i class="bi bi-building"></i></a>
-                                <a class="btn btn-sm btn-outline-primary" href="/demand_side_assignments.php?user_id=<?= (int) $ar['user_id'] ?>&scope_type=job"><i class="bi bi-briefcase"></i></a>
+                            <div class="d-inline-flex gap-1 align-items-center">
+                                <a class="btn btn-sm btn-outline-primary position-relative" href="/demand_side_assignments.php?user_id=<?= (int) $ar['user_id'] ?>#employer_ids" title="Edit — Employer scope"><i class="bi bi-building"></i>
+                                    <?php if ((int) $ar['employer_count'] > 0): ?>
+                                        <span class="badge bg-primary ms-1"><?= number_format((int) $ar['employer_count']) ?></span>
+                                    <?php endif; ?>
+                                </a>
+                                <a class="btn btn-sm btn-outline-primary" href="/demand_side_assignments.php?user_id=<?= (int) $ar['user_id'] ?>#job_ids" title="Edit — Job scope"><i class="bi bi-briefcase"></i>
+                                    <?php if ((int) $ar['job_count'] > 0): ?>
+                                        <span class="badge bg-primary ms-1"><?= number_format((int) $ar['job_count']) ?></span>
+                                    <?php else: ?>
+                                        <span class="badge bg-secondary ms-1">0</span>
+                                    <?php endif; ?>
+                                </a>
                                 <form method="post" class="d-inline" onsubmit="return confirm('Remove ALL assignments (both scopes) for <?= esc((string) $ar['user_name']) ?>?');">
                                     <input type="hidden" name="action" value="delete">
                                     <input type="hidden" name="user_id" value="<?= (int) $ar['user_id'] ?>">
