@@ -92,8 +92,19 @@ $entityFilter   = strtolower(trim((string) ($_GET['entity_filter'] ?? '')));
 if (!in_array($entityFilter, ['', 'employer', 'job'], true)) { $entityFilter = ''; }
 $newValueFilter = trim((string) ($_GET['new_value_filter'] ?? ''));
 
+// Pagination for the Edit-detail table. Per-page allowlist is multiples of
+// 25 (25/50/100/200); default 25. CSV download below always exports the
+// full filtered set, not just the current page.
+$editsPerPageAllowed = [25, 50, 100, 200];
+$editsPerPage = (int) ($_GET['edits_per_page'] ?? 25);
+if (!in_array($editsPerPage, $editsPerPageAllowed, true)) { $editsPerPage = 25; }
+$editsPage = max(1, (int) ($_GET['edits_page'] ?? 1));
+
 $userRows = [];
 $editDetailRows = [];
+$editDetailTotal = 0;
+$editDetailTotalPages = 1;
+$editDetailOffset = 0;
 if ($selectedDate !== '') {
     // Scope filters that flow into both the user-wise and edit-detail queries.
     $empLogScope = '';
@@ -184,18 +195,40 @@ if ($selectedDate !== '') {
         LEFT JOIN demand_remarks_groups rg ON rg.id = j.remarks_group_id
         WHERE DATE(jl.edited_at) = ? $jobExtra $jobLogScope)";
 
+    // Count query for pagination + CSV. Same filters as the detail fetch,
+    // just without the heavy join to remarks_group / employers.
+    $empCountSql = "SELECT COUNT(*) FROM demand_employer_edit_log el WHERE DATE(el.edited_at) = ? $empExtra $empLogScope";
+    $jobCountSql = "SELECT COUNT(*) FROM demand_employer_job_edit_log jl WHERE DATE(jl.edited_at) = ? $jobExtra $jobLogScope";
     if ($entityFilter === 'employer') {
-        $detailSql = $empBranch . ' ORDER BY edited_at DESC LIMIT 500';
-        $detailParams = $empBind;
+        $countStmt = db()->prepare($empCountSql);
+        $countStmt->execute($empBind);
+        $editDetailTotal = (int) $countStmt->fetchColumn();
     } elseif ($entityFilter === 'job') {
-        $detailSql = $jobBranch . ' ORDER BY edited_at DESC LIMIT 500';
-        $detailParams = $jobBind;
+        $countStmt = db()->prepare($jobCountSql);
+        $countStmt->execute($jobBind);
+        $editDetailTotal = (int) $countStmt->fetchColumn();
     } else {
-        $detailSql = $empBranch . ' UNION ALL ' . $jobBranch . ' ORDER BY edited_at DESC LIMIT 500';
-        $detailParams = array_merge($empBind, $jobBind);
+        $c1 = db()->prepare($empCountSql); $c1->execute($empBind);
+        $c2 = db()->prepare($jobCountSql); $c2->execute($jobBind);
+        $editDetailTotal = (int) $c1->fetchColumn() + (int) $c2->fetchColumn();
     }
+    $editDetailTotalPages = max(1, (int) ceil($editDetailTotal / $editsPerPage));
+    $editsPage = min($editsPage, $editDetailTotalPages);
+    $editDetailOffset = ($editsPage - 1) * $editsPerPage;
+
+    if ($entityFilter === 'employer') {
+        $detailBaseSql = $empBranch;
+        $detailParams  = $empBind;
+    } elseif ($entityFilter === 'job') {
+        $detailBaseSql = $jobBranch;
+        $detailParams  = $jobBind;
+    } else {
+        $detailBaseSql = $empBranch . ' UNION ALL ' . $jobBranch;
+        $detailParams  = array_merge($empBind, $jobBind);
+    }
+    $detailSql = $detailBaseSql . ' ORDER BY edited_at DESC LIMIT ? OFFSET ?';
     $detailStmt = db()->prepare($detailSql);
-    $detailStmt->execute($detailParams);
+    $detailStmt->execute([...$detailParams, $editsPerPage, $editDetailOffset]);
     $editDetailRows = $detailStmt->fetchAll();
 }
 
@@ -219,14 +252,19 @@ if ($download === 'users' && $userRows !== []) {
     }
     fclose($out); exit;
 }
-if ($download === 'edits' && $editDetailRows !== []) {
+if ($download === 'edits' && $editDetailTotal > 0 && isset($detailBaseSql, $detailParams)) {
+    // Run the SAME filtered query as the on-page table, but without the
+    // LIMIT so the export always returns every matching row.
+    $fullSql = $detailBaseSql . ' ORDER BY edited_at DESC';
+    $fullStmt = db()->prepare($fullSql);
+    $fullStmt->execute($detailParams);
     $filename = 'demand_stats_edits_' . $selectedDate . '_' . ($fieldFilter !== '' ? $fieldFilter : 'all') . '.csv';
     while (ob_get_level() > 0) { ob_end_clean(); }
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     $out = fopen('php://output', 'w'); fwrite($out, "\xEF\xBB\xBF");
     fputcsv($out, ['When', 'Entity', 'Employer ID', 'Employer Name', 'Job ID', 'Job Title', 'Field', 'Old', 'New', 'Edited By']);
-    foreach ($editDetailRows as $r) {
+    while ($r = $fullStmt->fetch()) {
         fputcsv($out, [
             (string) ($r['edited_at'] ?? ''),
             (string) ($r['entity'] ?? ''),
@@ -431,10 +469,36 @@ render_page_header('Demand Side · Data Modification Statistics', [
                     <?php if ($newValueFilter !== ''): ?><span class="status-chip status-primary"><?= esc($newValueFilter) ?></span><?php endif; ?>
                     <a class="btn btn-sm btn-outline-secondary" href="<?= esc($clearUrl) ?>"><i class="bi bi-x-lg me-1"></i>Clear user filters</a>
                 <?php endif; ?>
-                <?php if ($editDetailRows !== []): ?>
+                <?php if ($editDetailTotal > 0): ?>
                     <a class="btn btn-sm btn-light" href="<?= esc($editsCsvUrl) ?>"><i class="bi bi-download me-1"></i>Download CSV</a>
                 <?php endif; ?>
-                <span class="status-chip status-info"><?= number_format(count($editDetailRows)) ?> edits</span>
+                <?php if (count($editDetailRows) !== $editDetailTotal): ?>
+                    <span class="status-chip status-neutral" title="Rows on this page / total matched"><?= number_format(count($editDetailRows)) ?> on page &middot; <?= number_format($editDetailTotal) ?> matched</span>
+                <?php else: ?>
+                    <span class="status-chip status-info"><?= number_format($editDetailTotal) ?> edits</span>
+                <?php endif; ?>
+                <?php
+                    // Per-page selector (auto-submits on change). Carries every
+                    // active filter through hidden fields so the switch doesn't
+                    // reset user_id / entity_filter / field / etc.
+                    $editsPerPageBase = array_filter([
+                        'date' => $selectedDate, 'from' => $fromFilter, 'to' => $toFilter,
+                        'category' => $categoryFilter, 'field' => $fieldFilter,
+                        'editor_id' => $editorIdFilter > 0 ? $editorIdFilter : '',
+                        'entity_filter' => $entityFilter, 'new_value_filter' => $newValueFilter,
+                    ], static fn($v): bool => $v !== '' && $v !== 0);
+                ?>
+                <form method="get" class="d-inline">
+                    <?php foreach ($editsPerPageBase as $k => $v): ?>
+                        <input type="hidden" name="<?= esc((string) $k) ?>" value="<?= esc((string) $v) ?>">
+                    <?php endforeach; ?>
+                    <input type="hidden" name="edits_page" value="1">
+                    <select class="form-select form-select-sm" name="edits_per_page" onchange="this.form.submit()" style="width:auto;">
+                        <?php foreach ($editsPerPageAllowed as $pp): ?>
+                            <option value="<?= (int) $pp ?>" <?= $editsPerPage === $pp ? 'selected' : '' ?>><?= (int) $pp ?>/pg</option>
+                        <?php endforeach; ?>
+                    </select>
+                </form>
             </div>
         </div>
         <div class="card-body pb-2">
@@ -536,6 +600,40 @@ render_page_header('Demand Side · Data Modification Statistics', [
                 </tbody>
             </table>
         </div>
+        <?php if ($editDetailTotalPages > 1): ?>
+            <?php
+                $editsPageLink = static function (int $p) use ($editsPerPageBase, $editsPerPage): string {
+                    $params = $editsPerPageBase;
+                    $params['edits_per_page'] = $editsPerPage;
+                    $params['edits_page']     = $p;
+                    return '/demand_side_stats.php?' . http_build_query($params) . '#editDetailCard';
+                };
+                $winStart = max(1, $editsPage - 2);
+                $winEnd   = min($editDetailTotalPages, $editsPage + 2);
+            ?>
+            <div class="card-footer d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="small text-muted">
+                    Showing <?= number_format(($editsPage - 1) * $editsPerPage + 1) ?>&ndash;<?= number_format(min($editsPage * $editsPerPage, $editDetailTotal)) ?> of <?= number_format($editDetailTotal) ?>
+                </div>
+                <nav aria-label="Edit detail pagination">
+                    <ul class="pagination pagination-sm mb-0">
+                        <li class="page-item <?= $editsPage <= 1 ? 'disabled' : '' ?>"><a class="page-link" href="<?= $editsPage <= 1 ? '#' : esc($editsPageLink($editsPage - 1)) ?>">Prev</a></li>
+                        <?php if ($winStart > 1): ?>
+                            <li class="page-item"><a class="page-link" href="<?= esc($editsPageLink(1)) ?>">1</a></li>
+                            <?php if ($winStart > 2): ?><li class="page-item disabled"><span class="page-link">&hellip;</span></li><?php endif; ?>
+                        <?php endif; ?>
+                        <?php for ($p = $winStart; $p <= $winEnd; $p++): ?>
+                            <li class="page-item <?= $p === $editsPage ? 'active' : '' ?>"><a class="page-link" href="<?= esc($editsPageLink($p)) ?>"><?= $p ?></a></li>
+                        <?php endfor; ?>
+                        <?php if ($winEnd < $editDetailTotalPages): ?>
+                            <?php if ($winEnd < $editDetailTotalPages - 1): ?><li class="page-item disabled"><span class="page-link">&hellip;</span></li><?php endif; ?>
+                            <li class="page-item"><a class="page-link" href="<?= esc($editsPageLink((int) $editDetailTotalPages)) ?>"><?= (int) $editDetailTotalPages ?></a></li>
+                        <?php endif; ?>
+                        <li class="page-item <?= $editsPage >= $editDetailTotalPages ? 'disabled' : '' ?>"><a class="page-link" href="<?= $editsPage >= $editDetailTotalPages ? '#' : esc($editsPageLink($editsPage + 1)) ?>">Next</a></li>
+                    </ul>
+                </nav>
+            </div>
+        <?php endif; ?>
     </div>
 <?php endif; ?>
 
