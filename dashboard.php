@@ -19,6 +19,7 @@ $demandStatusNotStarted = 0;
 $demandStatusValidPositions = 0;
 $demandStatusInvalidPositions = 0;
 $demandStatusCorrectedPositions = 0;
+$demandStatusNotStartedPositions = 0;
 if ($isAdmin) {
     $totalUsers = (int) db()->query('SELECT COUNT(*) FROM users WHERE active_status = 1')->fetchColumn();
     // Demand-side snapshot for the admin / state_dsm dashboard. Wrapped in a
@@ -38,6 +39,7 @@ if ($isAdmin) {
         $demandStatusValidPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status = 'Valid'")->fetchColumn();
         $demandStatusInvalidPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status = 'Invalid'")->fetchColumn();
         $demandStatusCorrectedPositions = (int) db()->query("SELECT COALESCE(SUM(COALESCE(corrected_open_position, open_positions)), 0) FROM demand_employer_jobs WHERE status = 'Corrected'")->fetchColumn();
+        $demandStatusNotStartedPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status IS NULL OR TRIM(status) = ''")->fetchColumn();
     } catch (Throwable $e) { /* demand-side tables not yet available */ }
 }
 
@@ -241,31 +243,9 @@ render_header('Dashboard');
     </div>
 </div>
 
-<div class="row g-3 mb-1">
-    <?php foreach ($kpiKeys as $kpiKey): ?>
-        <?php $kpi = $allKpis[$kpiKey]; ?>
-        <div class="col-6 col-md-4 col-lg-3">
-            <div class="card card-stat accent-<?= esc($kpi['tone']) ?> h-100">
-                <div class="card-body d-flex align-items-start justify-content-between gap-2">
-                    <div>
-                        <p class="stat-label"><?= esc($kpi['label']) ?></p>
-                        <p class="stat-value"><?= number_format((int) $kpi['value']) ?></p>
-                        <?php if ($kpi['link']): ?>
-                            <a class="stat-link" href="<?= esc($kpi['link']) ?>"><?= esc($kpi['link_text']) ?> <i class="bi bi-arrow-right-short"></i></a>
-                        <?php elseif ($kpi['link_text']): ?>
-                            <span class="data-meta"><?= esc($kpi['link_text']) ?></span>
-                        <?php endif; ?>
-                    </div>
-                    <span class="stat-icon-box tone-<?= esc($kpi['tone']) ?>"><i class="bi <?= esc($kpi['icon']) ?>"></i></span>
-                </div>
-            </div>
-        </div>
-    <?php endforeach; ?>
-</div>
-
 <?php if ($isAdmin): ?>
-<div class="mt-4">
-    <h2 class="h6 text-muted text-uppercase mb-2"><i class="bi bi-building me-1"></i>Demand Side snapshot</h2>
+<div class="mb-1">
+    <h2 class="h6 text-muted text-uppercase mb-2"><i class="bi bi-building me-1"></i>Demand Side Snapshot <span class="text-muted small">(based on DWMS database)</span></h2>
     <div class="row g-3">
         <div class="col-6 col-md-4">
             <div class="card card-stat accent-info h-100">
@@ -305,14 +285,16 @@ render_header('Dashboard');
         </div>
     </div>
 
-    <h2 class="h6 text-muted text-uppercase mb-2 mt-4"><i class="bi bi-clipboard-check me-1"></i>Demand Side · Edit Statistics</h2>
+    <h2 class="h6 text-muted text-uppercase mb-2 mt-4"><i class="bi bi-clipboard-check me-1"></i>Demand Side &middot; Verification Status</h2>
     <div class="row g-3">
         <?php
+            // Only the Valid card's positions read as "verified"; Invalid and
+            // Corrected keep "affected" since those aren't verified yet.
             $editStatCards = [
-                ['label' => 'Valid',           'value' => $demandStatusValid,       'positions' => $demandStatusValidPositions,     'tone' => 'success', 'icon' => 'bi-check-circle-fill'],
-                ['label' => 'Invalid',         'value' => $demandStatusInvalid,     'positions' => $demandStatusInvalidPositions,   'tone' => 'danger',  'icon' => 'bi-x-circle-fill'],
-                ['label' => 'Corrected',       'value' => $demandStatusCorrected,   'positions' => $demandStatusCorrectedPositions, 'tone' => 'warning', 'icon' => 'bi-pencil-square'],
-                ['label' => 'Not Yet Started', 'value' => $demandStatusNotStarted,  'positions' => null,                            'tone' => 'neutral', 'icon' => 'bi-hourglass-split'],
+                ['label' => 'Valid',           'value' => $demandStatusValid,       'positions' => $demandStatusValidPositions,     'positions_label' => 'verified open positions', 'tone' => 'success', 'icon' => 'bi-check-circle-fill'],
+                ['label' => 'Invalid',         'value' => $demandStatusInvalid,     'positions' => $demandStatusInvalidPositions,   'positions_label' => 'affected open positions', 'tone' => 'danger',  'icon' => 'bi-x-circle-fill'],
+                ['label' => 'Corrected',       'value' => $demandStatusCorrected,   'positions' => $demandStatusCorrectedPositions, 'positions_label' => 'affected open positions', 'tone' => 'warning', 'icon' => 'bi-pencil-square'],
+                ['label' => 'Not Yet Started', 'value' => $demandStatusNotStarted,  'positions' => $demandStatusNotStartedPositions, 'positions_label' => 'affected open positions', 'tone' => 'neutral', 'icon' => 'bi-hourglass-split'],
             ];
         ?>
         <?php foreach ($editStatCards as $card): ?>
@@ -323,7 +305,7 @@ render_header('Dashboard');
                             <p class="stat-label"><?= esc($card['label']) ?></p>
                             <p class="stat-value"><?= number_format((int) $card['value']) ?></p>
                             <?php if ($card['positions'] !== null): ?>
-                                <div class="small text-muted mb-1"><i class="bi bi-person-plus me-1"></i><strong><?= number_format((int) $card['positions']) ?></strong> affected open positions</div>
+                                <div class="small text-muted mb-1"><i class="bi bi-person-plus me-1"></i><strong><?= number_format((int) $card['positions']) ?></strong> <?= esc((string) $card['positions_label']) ?></div>
                             <?php endif; ?>
                             <a class="stat-link" href="/demand_side_stats.php">View statistics <i class="bi bi-arrow-right-short"></i></a>
                         </div>
@@ -335,6 +317,29 @@ render_header('Dashboard');
     </div>
 </div>
 <?php endif; ?>
+
+<h2 class="h6 text-muted text-uppercase mb-2 <?= $isAdmin ? 'mt-4' : '' ?>"><i class="bi bi-clipboard2-data me-1"></i>Post Job Fair Status</h2>
+<div class="row g-3 mb-1">
+    <?php foreach ($kpiKeys as $kpiKey): ?>
+        <?php $kpi = $allKpis[$kpiKey]; ?>
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card card-stat accent-<?= esc($kpi['tone']) ?> h-100">
+                <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                    <div>
+                        <p class="stat-label"><?= esc($kpi['label']) ?></p>
+                        <p class="stat-value"><?= number_format((int) $kpi['value']) ?></p>
+                        <?php if ($kpi['link']): ?>
+                            <a class="stat-link" href="<?= esc($kpi['link']) ?>"><?= esc($kpi['link_text']) ?> <i class="bi bi-arrow-right-short"></i></a>
+                        <?php elseif ($kpi['link_text']): ?>
+                            <span class="data-meta"><?= esc($kpi['link_text']) ?></span>
+                        <?php endif; ?>
+                    </div>
+                    <span class="stat-icon-box tone-<?= esc($kpi['tone']) ?>"><i class="bi <?= esc($kpi['icon']) ?>"></i></span>
+                </div>
+            </div>
+        </div>
+    <?php endforeach; ?>
+</div>
 
 <div class="card mt-3">
     <div class="card-body">
