@@ -329,6 +329,30 @@ $jobsStmt = db()->prepare("SELECT j.*, u.name AS task_owner_name, rg.name AS rem
 $jobsStmt->execute($jobParams);
 $jobs = $jobsStmt->fetchAll();
 
+// CSV download of the visible job_id list (respects the search filters +
+// column sort + per-user job scope). Streamed before any HTML is emitted.
+if (($_GET['jobs_download'] ?? '') === 'csv') {
+    $filename = 'employer_' . (int) $employer['employer_id'] . '_jobs_' . date('Ymd_His') . '.csv';
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF"); // Excel-friendly BOM
+    fputcsv($out, ['job_id', 'jobtitle', 'open_positions', 'status', 'posted_on', 'expired_date']);
+    foreach ($jobs as $jr) {
+        fputcsv($out, [
+            (int) ($jr['job_id'] ?? 0),
+            (string) ($jr['jobtitle'] ?? ''),
+            (string) ($jr['open_positions'] ?? ''),
+            (string) ($jr['status'] ?? ''),
+            substr((string) ($jr['posted_on'] ?? ''), 0, 10),
+            substr((string) ($jr['expired_date'] ?? ''), 0, 10),
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
 // Vacancies total across ALL jobs for this employer (independent of the
 // current search) so the header chip always shows the true figure.
 $vacStmt = db()->prepare('SELECT COUNT(*) AS jobs_count, COALESCE(SUM(open_positions), 0) AS positions
@@ -546,9 +570,21 @@ $nicJoin = static function (?string $code, ?string $name): string {
                 <label class="form-label small mb-1">Job Title contains</label>
                 <input type="text" class="form-control form-control-sm" name="job_title_search" value="<?= esc($jobTitleSearch) ?>" placeholder="Search title">
             </div>
-            <div class="col-md-4 d-flex gap-2">
+            <div class="col-md-4 d-flex gap-2 flex-wrap">
                 <button class="btn btn-sm btn-primary"><i class="bi bi-search me-1"></i>Search</button>
                 <a class="btn btn-sm btn-light" href="/demand_side_employer_edit.php?id=<?= $employerRowId ?>&mode=<?= esc($mode) ?>#jobs">Reset</a>
+                <?php
+                    $jobsCsvUrl = '/demand_side_employer_edit.php?' . http_build_query(array_filter([
+                        'id' => $employerRowId,
+                        'mode' => $mode,
+                        'job_ids_search' => $jobIdSearch,
+                        'job_title_search' => $jobTitleSearch,
+                        'job_sort' => $jobSort,
+                        'job_dir' => $jobDir,
+                        'jobs_download' => 'csv',
+                    ], static fn($v): bool => $v !== '' && $v !== null));
+                ?>
+                <a class="btn btn-sm btn-light" href="<?= esc($jobsCsvUrl) ?>" title="Download visible job_ids as CSV"><i class="bi bi-download me-1"></i>Download CSV</a>
                 <?php if ($isEdit): ?>
                     <button type="button" class="btn btn-sm btn-warning ms-auto" id="bulkUpdateBtn" data-bs-toggle="modal" data-bs-target="#bulkUpdateModal" disabled>
                         <i class="bi bi-list-check me-1"></i>Bulk Update <span class="badge bg-dark ms-1" id="bulkUpdateCount">0</span>
