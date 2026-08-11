@@ -152,7 +152,7 @@ function render_header(string $title, array $options = []): void
                             <?php endif; /* !$isDemandOnly — end of Job Fair/Masters/Reports block */ ?>
                             <?php if (is_admin($user)): ?>
                                 <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['demand_side_employers.php', 'demand_side_employer_edit.php', 'demand_side_upload.php', 'demand_side_stats.php', 'demand_side_assignments.php', 'demand_side_assignment_distribution.php', 'demand_side_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-building me-1"></i>Demand Side</a>
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['demand_side_employers.php', 'demand_side_employer_edit.php', 'demand_side_upload.php', 'demand_side_stats.php', 'demand_side_assignments.php', 'demand_side_assignment_distribution.php', 'demand_side_assignment_report.php', 'demand_side_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-building me-1"></i>Demand Side</a>
                                     <ul class="dropdown-menu">
                                         <li><a class="dropdown-item" href="/demand_side_employers.php"><i class="bi bi-building me-2"></i>Employer</a></li>
                                         <?php if (is_manage_admin($user)): ?>

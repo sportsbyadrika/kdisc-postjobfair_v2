@@ -32,6 +32,11 @@ foreach ($categories as $c) { $categoryByName[(string) $c['name']] = $c; }
 $splitBy = (string) ($_GET['split_by'] ?? $_POST['split_by'] ?? 'employer');
 if (!in_array($splitBy, ['employer', 'job'], true)) { $splitBy = 'employer'; }
 
+// Optional filter: restrict the participating users to those who have NO
+// rows in either assignment table yet. Useful for a first-pass split that
+// only touches operators who haven't been given any work yet.
+$onlyUnassigned = (($_GET['only_unassigned'] ?? $_POST['only_unassigned'] ?? '') === '1');
+
 // Explicit picked user IDs. Empty = "use all matched users" (first pass).
 $pickedUserIds = $_GET['user_id'] ?? $_POST['user_id'] ?? [];
 if (!is_array($pickedUserIds)) { $pickedUserIds = [$pickedUserIds]; }
@@ -53,6 +58,26 @@ if ($selectedRoles !== []) {
     $stmt = db()->prepare("SELECT id, name, role FROM users WHERE active_status = 1 AND role IN ($ph) ORDER BY name ASC");
     $stmt->execute($selectedRoles);
     $matchingUsers = $stmt->fetchAll();
+}
+
+// Optional pre-picker narrowing: keep only users who have zero rows in
+// either assignment table. This runs BEFORE the picker so the "Users to
+// include" checkbox list only shows the eligible operators.
+$excludedForHavingAssignments = 0;
+if ($onlyUnassigned && $matchingUsers !== []) {
+    $assignedUserIds = [];
+    foreach (db()->query('SELECT DISTINCT user_id FROM demand_user_employer_assignments')->fetchAll() as $r) {
+        $assignedUserIds[(int) $r['user_id']] = true;
+    }
+    foreach (db()->query('SELECT DISTINCT user_id FROM demand_user_job_assignments')->fetchAll() as $r) {
+        $assignedUserIds[(int) $r['user_id']] = true;
+    }
+    $before = count($matchingUsers);
+    $matchingUsers = array_values(array_filter(
+        $matchingUsers,
+        static fn(array $u): bool => !isset($assignedUserIds[(int) $u['id']])
+    ));
+    $excludedForHavingAssignments = $before - count($matchingUsers);
 }
 
 // Restrict participating users to the explicit pick if the admin has
@@ -166,29 +191,33 @@ $distributionRows = array_values($distribution);
 $flashMessage = null;
 $flashType = 'success';
 if (is_post() && ($_POST['action'] ?? '') === 'apply' && $distributionRows !== []) {
-    $inserted = 0; $replaced = 0;
+    // Append-only apply. Existing assignments (manual OR automated) are
+    // never touched — only the newly split rows are inserted. Duplicates
+    // are silently ignored via INSERT IGNORE on the UNIQUE (user_id, *_id)
+    // key so nothing collides with prior state.
+    $inserted = 0; $skippedExisting = 0;
     if ($splitBy === 'job') {
-        $del = db()->prepare('DELETE FROM demand_user_job_assignments WHERE user_id = ?');
-        $ins = db()->prepare('INSERT INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
+        $ins = db()->prepare('INSERT IGNORE INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
         foreach ($distributionRows as $slot) {
-            $del->execute([$slot['user_id']]);
-            $replaced += $del->affectedRows();
             foreach ($slot['job_ids'] as $jid) {
-                try { $ins->execute([$slot['user_id'], $jid, $userId]); $inserted++; } catch (Throwable $e) { /* dup ignore */ }
+                try {
+                    $ins->execute([$slot['user_id'], $jid, $userId]);
+                    if ($ins->affectedRows() > 0) { $inserted++; } else { $skippedExisting++; }
+                } catch (Throwable $e) { /* FK issue — skip */ }
             }
         }
-        $flashMessage = "Distribution applied: $inserted job assignment(s) written across " . count($distributionRows) . ' user(s). (' . $replaced . ' prior job assignment row(s) were replaced.)';
+        $flashMessage = "Distribution applied (append only): $inserted new job assignment(s) written across " . count($distributionRows) . ' user(s). Prior assignments were untouched' . ($skippedExisting > 0 ? "; $skippedExisting duplicate row(s) skipped." : '.');
     } else {
-        $del = db()->prepare('DELETE FROM demand_user_employer_assignments WHERE user_id = ?');
-        $ins = db()->prepare('INSERT INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
+        $ins = db()->prepare('INSERT IGNORE INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
         foreach ($distributionRows as $slot) {
-            $del->execute([$slot['user_id']]);
-            $replaced += $del->affectedRows();
             foreach ($slot['employer_ids'] as $eid) {
-                try { $ins->execute([$slot['user_id'], $eid, $userId]); $inserted++; } catch (Throwable $e) { /* dup/FK ignore */ }
+                try {
+                    $ins->execute([$slot['user_id'], $eid, $userId]);
+                    if ($ins->affectedRows() > 0) { $inserted++; } else { $skippedExisting++; }
+                } catch (Throwable $e) { /* FK issue — skip */ }
             }
         }
-        $flashMessage = "Distribution applied: $inserted employer assignment(s) written across " . count($distributionRows) . ' user(s). (' . $replaced . ' prior employer assignment row(s) were replaced.)';
+        $flashMessage = "Distribution applied (append only): $inserted new employer assignment(s) written across " . count($distributionRows) . ' user(s). Prior assignments were untouched' . ($skippedExisting > 0 ? "; $skippedExisting duplicate row(s) skipped." : '.');
     }
 }
 
@@ -245,7 +274,21 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                 </div>
                 <div class="small text-muted mt-1">Employer split keeps whole employers with one user; Job split divides at the job level. <strong>Only unassigned units are distributed</strong> — anything already sitting in an existing assignment is skipped.</div>
             </div>
+            <div class="col-md-4">
+                <label class="form-label small mb-1">Users filter</label>
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" name="only_unassigned" id="only_unassigned" value="1" <?= $onlyUnassigned ? 'checked' : '' ?>>
+                    <label class="form-check-label" for="only_unassigned">Only users with <strong>no existing</strong> employer / job assignments</label>
+                </div>
+                <div class="small text-muted mt-1">When ticked, users who already have any assignment row are removed from the picker below and from the split. Useful for a first-pass distribution to new operators only.</div>
+            </div>
         </div>
+        <?php if ($onlyUnassigned && $excludedForHavingAssignments > 0): ?>
+            <div class="alert alert-info py-2 px-3 mt-3 mb-0 small">
+                <i class="bi bi-info-circle-fill me-1"></i>
+                Filter <strong>Only users with no existing assignments</strong> removed <strong><?= number_format($excludedForHavingAssignments) ?></strong> already-assigned user(s) from the picker.
+            </div>
+        <?php endif; ?>
         <?php if ($matchingUsers !== []): ?>
             <div class="row g-3 mt-1">
                 <div class="col-12">
@@ -380,7 +423,7 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
         </div>
         <?php if ($distributionRows !== [] && $totalEmployersInPool > 0): ?>
             <div class="card-body border-top">
-                <form method="post" onsubmit="return confirm('Apply this distribution? Existing employer assignments for the <?= count($distributionRows) ?> matched user(s) will be REPLACED with the new split.');">
+                <form method="post" onsubmit="return confirm('Apply this distribution to <?= count($distributionRows) ?> user(s)? Existing assignments (manual or automated) will be KEPT — only the newly split rows are added.');">
                     <?php foreach ($selectedRoles as $sr): ?>
                         <input type="hidden" name="role[]" value="<?= esc($sr) ?>">
                     <?php endforeach; ?>
@@ -388,6 +431,9 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                         <input type="hidden" name="category" value="<?= esc($categoryFilter) ?>">
                     <?php endif; ?>
                     <input type="hidden" name="split_by" value="<?= esc($splitBy) ?>">
+                    <?php if ($onlyUnassigned): ?>
+                        <input type="hidden" name="only_unassigned" value="1">
+                    <?php endif; ?>
                     <input type="hidden" name="picked" value="1">
                     <?php foreach ($participatingUsers as $u): ?>
                         <input type="hidden" name="user_id[]" value="<?= (int) $u['id'] ?>">
@@ -399,6 +445,7 @@ render_page_header('Demand Side · Assignment Distribution Planner', [
                 <p class="small text-muted mt-2 mb-0">
                     Whole employers are kept together (each employer_id sits with exactly one user), so the emp_id → employer_id foreign key still scopes the Employer listing cleanly.
                     The greedy algorithm sorts employers by job count DESC and assigns each to the user with the fewest running jobs, which tends to keep every user within ±1 employer of the ideal split.
+                    <br><strong>Append only</strong> — Apply never deletes existing assignments (manual or automated); it just inserts the newly split rows. Duplicates (already-assigned user + id pairs) are silently skipped.
                 </p>
             </div>
         <?php endif; ?>

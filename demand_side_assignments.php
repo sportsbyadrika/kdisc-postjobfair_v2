@@ -107,24 +107,36 @@ if (is_post() && ($action === 'preview' || $action === 'save')) {
         $previewLoaded = true;
 
         if ($action === 'save' && $previewFoundEmployerIds !== []) {
-            // Rewrite both tables for the user: idempotent full-replace.
-            db()->prepare('DELETE FROM demand_user_employer_assignments WHERE user_id = ?')->execute([$formUserId]);
-            db()->prepare('DELETE FROM demand_user_job_assignments WHERE user_id = ?')->execute([$formUserId]);
-            $insE = db()->prepare('INSERT INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
+            // Append-only save. Existing employer AND job assignments (manual
+            // or automated) are never touched — only the newly entered IDs
+            // are inserted. Duplicates (already-assigned user + id pairs)
+            // are silently skipped via INSERT IGNORE on the UNIQUE key.
+            $newEmployerRows = 0; $dupEmployerRows = 0;
+            $newJobRows      = 0; $dupJobRows      = 0;
+            $insE = db()->prepare('INSERT IGNORE INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
             foreach ($previewFoundEmployerIds as $eid) {
-                try { $insE->execute([$formUserId, $eid, $userId]); } catch (Throwable $e) { /* dup ignore */ }
+                try {
+                    $insE->execute([$formUserId, $eid, $userId]);
+                    if ($insE->affectedRows() > 0) { $newEmployerRows++; } else { $dupEmployerRows++; }
+                } catch (Throwable $e) { /* FK issue — skip */ }
             }
             if ($previewFoundJobIds !== []) {
-                $insJ = db()->prepare('INSERT INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
+                $insJ = db()->prepare('INSERT IGNORE INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
                 foreach ($previewFoundJobIds as $jid) {
-                    try { $insJ->execute([$formUserId, $jid, $userId]); } catch (Throwable $e) { /* dup ignore */ }
+                    try {
+                        $insJ->execute([$formUserId, $jid, $userId]);
+                        if ($insJ->affectedRows() > 0) { $newJobRows++; } else { $dupJobRows++; }
+                    } catch (Throwable $e) { /* FK issue — skip */ }
                 }
             }
             $flashMessage = sprintf(
-                'Saved: %d employer(s) and %d job(s) assigned to user %d.%s%s',
-                count($previewFoundEmployerIds),
-                count($previewFoundJobIds),
+                'Saved (append only): %d new employer + %d new job assignment(s) added for user %d. Prior assignments were kept%s.%s%s',
+                $newEmployerRows,
+                $newJobRows,
                 $formUserId,
+                ($dupEmployerRows + $dupJobRows) > 0
+                    ? " (skipped $dupEmployerRows duplicate employer row(s) and $dupJobRows duplicate job row(s) already assigned)"
+                    : '',
                 $previewMissingEmployerIds === [] ? '' : ' Missing employer_ids skipped: ' . implode(', ', $previewMissingEmployerIds) . '.',
                 $previewOutOfScopeJobIds  === [] ? '' : ' Job IDs not owned by the assigned employers skipped: ' . implode(', ', $previewOutOfScopeJobIds) . '.'
             );
@@ -215,7 +227,8 @@ render_header('Assign Employers to Users', ['main_container_class' => 'container
 render_page_header('Demand Side · Assign Employers to Users', [
     'icon' => 'bi-people-arrows',
     'subtitle' => 'Restrict what the Employer listing shows for a given user. Administrators can also be scoped through this page.',
-    'actions' => '<a class="btn btn-light me-1" href="/demand_side_assignment_distribution.php"><i class="bi bi-diagram-3 me-1"></i>Distribution Planner</a>'
+    'actions' => '<a class="btn btn-light me-1" href="/demand_side_assignment_report.php"><i class="bi bi-file-earmark-bar-graph me-1"></i>Assignment Report</a>'
+        . '<a class="btn btn-light me-1" href="/demand_side_assignment_distribution.php"><i class="bi bi-diagram-3 me-1"></i>Distribution Planner</a>'
         . '<a class="btn btn-light" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>',
 ]);
 ?>
@@ -273,6 +286,7 @@ render_page_header('Demand Side · Assign Employers to Users', [
                 </label>
                 <textarea class="form-control" id="job_ids" name="job_ids" rows="3" placeholder="Leave blank to give the user ALL jobs of the employers above. Populate to restrict the Jobs list to only these specific job_ids."><?= esc($formJobIdsRaw) ?></textarea>
                 <div class="small text-muted mt-1">Any job_id here that doesn't belong to an assigned employer is rejected and reported in the preview.</div>
+                <div class="small text-info mt-2"><i class="bi bi-info-circle-fill me-1"></i><strong>Append only:</strong> Save adds the entered IDs to the user's existing scope; nothing is ever deleted here. Use the trash icon in the Assignments list below to remove all scope for a user.</div>
             </div>
             <div class="col-12 d-flex gap-2">
                 <button class="btn btn-primary"><i class="bi bi-search me-1"></i>Preview totals</button>
@@ -351,7 +365,7 @@ render_page_header('Demand Side · Assign Employers to Users', [
                 </div>
             <?php endif; ?>
             <?php if ($previewFoundEmployerIds !== []): ?>
-                <form method="post" class="mt-3" onsubmit="return confirm('Save this assignment? Existing employer AND job assignments for the selected user will be replaced.');">
+                <form method="post" class="mt-3" onsubmit="return confirm('Save this assignment? Any prior assignments for this user will be KEPT — only the new IDs entered above are added. Duplicates are silently skipped.');">
                     <input type="hidden" name="action" value="save">
                     <input type="hidden" name="user_id" value="<?= (int) $formUserId ?>">
                     <input type="hidden" name="employer_ids" value="<?= esc($formEmployerIdsRaw) ?>">
