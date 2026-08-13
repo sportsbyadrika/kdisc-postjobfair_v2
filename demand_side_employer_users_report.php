@@ -25,11 +25,34 @@ $perPageAllowed  = [25, 50, 100, 200];
 $perPage         = (int) ($_GET['per_page'] ?? 25);
 if (!in_array($perPage, $perPageAllowed, true)) { $perPage = 25; }
 
+// Users multi-select filter — accepts users[]=1&users[]=2 style params.
+// Only numeric ids are kept; unknown ids fall through to an empty match.
+$rawUsers = $_GET['users'] ?? [];
+if (!is_array($rawUsers)) { $rawUsers = [$rawUsers]; }
+$userFilter = [];
+foreach ($rawUsers as $rv) {
+    $rv = trim((string) $rv);
+    if ($rv !== '' && ctype_digit($rv)) { $userFilter[] = (int) $rv; }
+}
+$userFilter = array_values(array_unique($userFilter));
+
 // Distinct agencies for the dropdown.
 $agencyOptions = array_map(
     static fn(array $r): string => (string) $r['value'],
     db()->query("SELECT DISTINCT jobagency AS value FROM demand_employers WHERE jobagency IS NOT NULL AND TRIM(jobagency) <> '' ORDER BY value ASC")->fetchAll()
 );
+
+// User list for the multi-select — only users who have at least one
+// assignment (any type) show up, so the filter can't produce empty results
+// by accident. Sorted by role then name for scannability.
+$userOptions = db()->query("SELECT u.id, u.name, u.role
+    FROM users u
+    WHERE u.id IN (
+        SELECT DISTINCT user_id FROM demand_user_employer_assignments
+        UNION
+        SELECT DISTINCT user_id FROM demand_user_job_assignments
+    )
+    ORDER BY u.role ASC, u.name ASC")->fetchAll();
 
 // Common WHERE for the employer set we're reporting on.
 $conds = ['1=1'];
@@ -42,9 +65,25 @@ if ($employerFilter !== '' && ctype_digit($employerFilter)) {
     $conds[] = 'e.employer_id = ?';
     $params[] = (int) $employerFilter;
 }
-if (!$showAll) {
-    // Restrict to employers that have at least one user assignment (direct
-    // employer scope OR job-scope on any of the employer's jobs).
+if ($userFilter !== []) {
+    // Restrict to employers assigned to ANY of the selected users, either
+    // via direct employer-scope or via job-scope on any job of the
+    // employer.
+    $ph = implode(',', array_fill(0, count($userFilter), '?'));
+    $conds[] = "(e.employer_id IN (
+                    SELECT DISTINCT employer_id FROM demand_user_employer_assignments
+                    WHERE user_id IN ($ph))
+                 OR e.employer_id IN (
+                    SELECT DISTINCT j.emp_id
+                    FROM demand_user_job_assignments ja
+                    INNER JOIN demand_employer_jobs j ON j.job_id = ja.job_id
+                    WHERE ja.user_id IN ($ph)))";
+    foreach ($userFilter as $uid) { $params[] = $uid; }
+    foreach ($userFilter as $uid) { $params[] = $uid; }
+} elseif (!$showAll) {
+    // No user filter and "show all" is off — restrict to employers that
+    // have at least one user assignment (direct employer scope OR job-scope
+    // on any of the employer's jobs).
     $conds[] = "(e.employer_id IN (SELECT DISTINCT employer_id FROM demand_user_employer_assignments)
                  OR e.employer_id IN (SELECT DISTINCT j.emp_id
                      FROM demand_user_job_assignments ja
@@ -173,7 +212,27 @@ render_page_header('Demand Side · Employer-wise Assigned Users', [
                 <label class="form-label">Employer ID</label>
                 <input type="text" class="form-control" name="employer_id" value="<?= esc($employerFilter) ?>" placeholder="numeric id">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4">
+                <label class="form-label d-flex justify-content-between align-items-center">
+                    <span>Users <span class="small text-muted">(hold Ctrl / Cmd to pick multiple)</span></span>
+                    <?php if ($userFilter !== []): ?>
+                        <span class="badge text-bg-primary"><?= count($userFilter) ?> selected</span>
+                    <?php endif; ?>
+                </label>
+                <input type="text" class="form-control form-control-sm mb-1" id="userFilterSearch" placeholder="Type to filter the list below…">
+                <select class="form-select" name="users[]" id="userFilterSelect" multiple size="6">
+                    <?php foreach ($userOptions as $u): ?>
+                        <?php $selected = in_array((int) $u['id'], $userFilter, true); ?>
+                        <option value="<?= (int) $u['id'] ?>"
+                                data-role="<?= esc((string) ($u['role'] ?? '')) ?>"
+                                <?= $selected ? 'selected' : '' ?>>
+                            <?= esc((string) $u['name']) ?> · <?= esc(role_label((string) ($u['role'] ?? ''))) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <div class="small text-muted mt-1">Employers assigned to any selected user (via employer- or job-scope) will be listed.</div>
+            </div>
+            <div class="col-md-2">
                 <label class="form-label">Rows / page</label>
                 <select class="form-select" name="per_page">
                     <?php foreach ($perPageAllowed as $pp): ?>
@@ -183,20 +242,34 @@ render_page_header('Demand Side · Employer-wise Assigned Users', [
             </div>
             <div class="col-md-3">
                 <div class="form-check mt-4">
-                    <input class="form-check-input" type="checkbox" id="show_all" name="show_all" value="1" <?= $showAll ? 'checked' : '' ?>>
+                    <input class="form-check-input" type="checkbox" id="show_all" name="show_all" value="1" <?= $showAll ? 'checked' : '' ?> <?= $userFilter !== [] ? 'disabled' : '' ?>>
                     <label class="form-check-label" for="show_all">
                         Show all employers (include those with no assignment)
                     </label>
+                    <?php if ($userFilter !== []): ?>
+                        <div class="small text-muted">Ignored while a Users filter is active.</div>
+                    <?php endif; ?>
                 </div>
             </div>
-            <div class="col-md-1 d-flex gap-2">
+            <div class="col-md-2 d-flex gap-2">
                 <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply</button>
-            </div>
-            <div class="col-12">
-                <a class="btn btn-light btn-sm" href="/demand_side_employer_users_report.php">Reset filters</a>
+                <a class="btn btn-light" href="/demand_side_employer_users_report.php">Reset</a>
             </div>
         </div>
     </div>
+    <script>
+    (function () {
+        const search = document.getElementById('userFilterSearch');
+        const sel    = document.getElementById('userFilterSelect');
+        if (!search || !sel) return;
+        search.addEventListener('input', () => {
+            const q = search.value.trim().toLowerCase();
+            Array.from(sel.options).forEach((opt) => {
+                opt.hidden = q !== '' && !opt.text.toLowerCase().includes(q);
+            });
+        });
+    })();
+    </script>
 </form>
 
 <?php render_pagination($page, $totalPages, $totalRecords, $perPage, '/demand_side_employer_users_report.php', $baseParams, 'Employer report pagination'); ?>
@@ -204,10 +277,23 @@ render_page_header('Demand Side · Employer-wise Assigned Users', [
 <div class="card table-card">
     <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-building text-primary me-1"></i>Employer-wise Assigned Users</span>
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 flex-wrap">
             <span class="status-chip status-info"><?= number_format($totalRecords) ?> employers</span>
             <?php if ($agencyFilter !== ''): ?>
                 <span class="status-chip status-neutral">Agency: <?= esc($agencyFilter) ?></span>
+            <?php endif; ?>
+            <?php if ($userFilter !== []): ?>
+                <?php
+                    $userNameById = [];
+                    foreach ($userOptions as $uo) { $userNameById[(int) $uo['id']] = (string) $uo['name']; }
+                    $userChips = [];
+                    foreach ($userFilter as $uid) {
+                        $userChips[] = $userNameById[$uid] ?? ('#' . $uid);
+                    }
+                ?>
+                <span class="status-chip status-warning" title="<?= esc(implode(', ', $userChips)) ?>">
+                    Users: <?= esc(implode(', ', array_slice($userChips, 0, 3))) ?><?= count($userChips) > 3 ? ' +' . (count($userChips) - 3) . ' more' : '' ?>
+                </span>
             <?php endif; ?>
         </div>
     </div>
@@ -261,11 +347,14 @@ render_page_header('Demand Side · Employer-wise Assigned Users', [
                                             $tip = $u['scope'] === 'employer'
                                                 ? 'Sees every job of this employer'
                                                 : 'Sees only the specific job_ids assigned';
+                                            $isSelected = ($userFilter !== [] && in_array((int) $u['user_id'], $userFilter, true));
+                                            $chipCls    = 'assignee-chip text-decoration-none border rounded px-2 py-1 small d-inline-flex align-items-center gap-1';
+                                            $chipCls   .= $isSelected ? ' bg-warning-subtle border-warning' : ' bg-body-tertiary';
                                         ?>
-                                        <a class="assignee-chip text-decoration-none border rounded px-2 py-1 small d-inline-flex align-items-center gap-1 bg-body-tertiary"
+                                        <a class="<?= esc($chipCls) ?>"
                                            href="/demand_side_assignments.php?user_id=<?= (int) $u['user_id'] ?>"
                                            title="<?= esc($tip) ?>">
-                                            <i class="bi bi-person-circle"></i>
+                                            <i class="bi <?= $isSelected ? 'bi-check-circle-fill text-warning' : 'bi-person-circle' ?>"></i>
                                             <span class="fw-semibold"><?= esc((string) $u['user_name']) ?></span>
                                             <span class="text-muted">·</span>
                                             <span class="small text-muted"><?= esc(role_label((string) $u['user_role'])) ?></span>
