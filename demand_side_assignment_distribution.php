@@ -195,29 +195,55 @@ if (is_post() && ($_POST['action'] ?? '') === 'apply' && $distributionRows !== [
     // never touched — only the newly split rows are inserted. Duplicates
     // are silently ignored via INSERT IGNORE on the UNIQUE (user_id, *_id)
     // key so nothing collides with prior state.
-    $inserted = 0; $skippedExisting = 0;
-    if ($splitBy === 'job') {
-        $ins = db()->prepare('INSERT IGNORE INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
-        foreach ($distributionRows as $slot) {
-            foreach ($slot['job_ids'] as $jid) {
-                try {
-                    $ins->execute([$slot['user_id'], $jid, $userId]);
-                    if ($ins->affectedRows() > 0) { $inserted++; } else { $skippedExisting++; }
-                } catch (Throwable $e) { /* FK issue — skip */ }
+    //
+    // Perf: batched multi-VALUE INSERT IGNORE inside a single transaction,
+    // 500 rows per batch. A per-row loop was hitting the web server's
+    // connection timeout at scale.
+    @set_time_limit(0);
+    ignore_user_abort(true);
+
+    $table = $splitBy === 'job' ? 'demand_user_job_assignments' : 'demand_user_employer_assignments';
+    $col   = $splitBy === 'job' ? 'job_id' : 'employer_id';
+    $key   = $splitBy === 'job' ? 'job_ids' : 'employer_ids';
+
+    // Flatten the distribution into a single (user_id, target_id) pair list.
+    $pairs = [];
+    foreach ($distributionRows as $slot) {
+        foreach ($slot[$key] as $tid) { $pairs[] = [(int) $slot['user_id'], (int) $tid]; }
+    }
+    $inserted = 0; $skippedExisting = 0; $batchSize = 500; $totalPairs = count($pairs);
+
+    if ($totalPairs > 0) {
+        db()->query('START TRANSACTION');
+        try {
+            foreach (array_chunk($pairs, $batchSize) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '(?, ?, ?, NOW())'));
+                $params = [];
+                foreach ($chunk as $pair) {
+                    $params[] = $pair[0];
+                    $params[] = $pair[1];
+                    $params[] = $userId;
+                }
+                $sql = "INSERT IGNORE INTO $table (user_id, $col, assigned_by, assigned_at) VALUES $placeholders";
+                $stmt = db()->prepare($sql);
+                $stmt->execute($params);
+                $newRows = (int) $stmt->affectedRows();
+                $inserted        += $newRows;
+                $skippedExisting += (count($chunk) - $newRows);
             }
+            db()->query('COMMIT');
+            $noun = $splitBy === 'job' ? 'job' : 'employer';
+            $flashMessage = "Distribution applied (append only): $inserted new $noun assignment(s) written across "
+                . count($distributionRows) . ' user(s). Prior assignments were untouched'
+                . ($skippedExisting > 0 ? "; $skippedExisting duplicate row(s) skipped." : '.');
+        } catch (Throwable $e) {
+            db()->query('ROLLBACK');
+            $flashMessage = 'Distribution failed while writing rows: ' . $e->getMessage();
+            $flashType = 'danger';
         }
-        $flashMessage = "Distribution applied (append only): $inserted new job assignment(s) written across " . count($distributionRows) . ' user(s). Prior assignments were untouched' . ($skippedExisting > 0 ? "; $skippedExisting duplicate row(s) skipped." : '.');
     } else {
-        $ins = db()->prepare('INSERT IGNORE INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
-        foreach ($distributionRows as $slot) {
-            foreach ($slot['employer_ids'] as $eid) {
-                try {
-                    $ins->execute([$slot['user_id'], $eid, $userId]);
-                    if ($ins->affectedRows() > 0) { $inserted++; } else { $skippedExisting++; }
-                } catch (Throwable $e) { /* FK issue — skip */ }
-            }
-        }
-        $flashMessage = "Distribution applied (append only): $inserted new employer assignment(s) written across " . count($distributionRows) . ' user(s). Prior assignments were untouched' . ($skippedExisting > 0 ? "; $skippedExisting duplicate row(s) skipped." : '.');
+        $flashMessage = 'Nothing to apply — the pool was empty.';
+        $flashType = 'warning';
     }
 }
 
