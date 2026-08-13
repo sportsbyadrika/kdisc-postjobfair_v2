@@ -242,7 +242,8 @@ render_header('Assign Employers to Users', ['main_container_class' => 'container
 render_page_header('Demand Side · Assign Employers to Users', [
     'icon' => 'bi-people-arrows',
     'subtitle' => 'Restrict what the Employer listing shows for a given user. Administrators can also be scoped through this page.',
-    'actions' => '<a class="btn btn-light me-1" href="/demand_side_assignment_report.php"><i class="bi bi-file-earmark-bar-graph me-1"></i>Assignment Report</a>'
+    'actions' => '<a class="btn btn-light me-1" href="/demand_side_assignment_report.php"><i class="bi bi-file-earmark-bar-graph me-1"></i>User Report</a>'
+        . '<a class="btn btn-light me-1" href="/demand_side_employer_users_report.php"><i class="bi bi-building-check me-1"></i>Employer-wise Users</a>'
         . '<a class="btn btn-light me-1" href="/demand_side_assignment_distribution.php"><i class="bi bi-diagram-3 me-1"></i>Distribution Planner</a>'
         . '<a class="btn btn-light" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>',
 ]);
