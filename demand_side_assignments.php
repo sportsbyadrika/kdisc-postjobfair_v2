@@ -199,22 +199,23 @@ if ($editUserId > 0) {
 }
 
 /* Assignments summary: one row per user, joining BOTH employer-scope and
-   job-scope assignments so admins see the full picture at a glance. */
+   job-scope assignments so admins see the full picture at a glance.
+   Note: no GROUP_CONCAT of employer_ids / job_ids here — that column
+   used to serialize thousands of IDs per user and blew the page's HTTP
+   timeout after a bulk assignment. Counts only; the Edit action opens
+   the assignment form with the full list prefilled. */
 $summarySql = "SELECT
         u.id AS user_id,
         u.name AS user_name,
         u.role AS user_role,
         COALESCE(ea.employer_count, 0) AS employer_count,
-        ea.employer_ids AS employer_ids,
         COALESCE(ja.job_count, 0) AS job_count,
-        ja.job_ids AS job_ids,
         COALESCE(ea.jobs_from_employers, 0) + COALESCE(ja.job_count, 0) AS jobs_total_effective,
         COALESCE(ea.positions_from_employers, 0) + COALESCE(ja.positions_from_jobs, 0) AS positions_total
     FROM users u
     LEFT JOIN (
         SELECT a.user_id,
-            COUNT(DISTINCT a.employer_id) AS employer_count,
-            GROUP_CONCAT(DISTINCT a.employer_id ORDER BY a.employer_id) AS employer_ids,
+            COUNT(*) AS employer_count,
             COALESCE(SUM(j.jobs_count), 0) AS jobs_from_employers,
             COALESCE(SUM(j.positions_count), 0) AS positions_from_employers
         FROM demand_user_employer_assignments a
@@ -227,7 +228,6 @@ $summarySql = "SELECT
     LEFT JOIN (
         SELECT a.user_id,
             COUNT(*) AS job_count,
-            GROUP_CONCAT(DISTINCT a.job_id ORDER BY a.job_id) AS job_ids,
             COALESCE(SUM(j.open_positions), 0) AS positions_from_jobs
         FROM demand_user_job_assignments a
         LEFT JOIN demand_employer_jobs j ON j.job_id = a.job_id
@@ -408,13 +408,12 @@ render_page_header('Demand Side · Assign Employers to Users', [
                     <th class="text-end">Job scope</th>
                     <th class="text-end">Effective jobs</th>
                     <th class="text-end">Open Positions</th>
-                    <th>Assigned IDs</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($assignmentRows === []): ?>
-                    <tr><td colspan="9"><div class="empty-state"><i class="bi bi-inbox"></i>No assignments yet. Assigning employers or jobs to a user filters their Employer listing to that set.</div></td></tr>
+                    <tr><td colspan="8"><div class="empty-state"><i class="bi bi-inbox"></i>No assignments yet. Assigning employers or jobs to a user filters their Employer listing to that set.</div></td></tr>
                 <?php endif; ?>
                 <?php $idx = 1; foreach ($assignmentRows as $ar): ?>
                     <tr>
@@ -425,14 +424,6 @@ render_page_header('Demand Side · Assign Employers to Users', [
                         <td class="text-end fw-bold"><?= number_format((int) $ar['job_count']) ?></td>
                         <td class="text-end fw-bold"><?= number_format((int) $ar['jobs_total_effective']) ?></td>
                         <td class="text-end fw-bold"><?= number_format((int) $ar['positions_total']) ?></td>
-                        <td class="small text-muted" style="max-width:380px;">
-                            <?php if (!empty($ar['employer_ids'])): ?>
-                                <div class="text-truncate" title="Employers: <?= esc((string) $ar['employer_ids']) ?>"><i class="bi bi-building me-1"></i><?= esc((string) $ar['employer_ids']) ?></div>
-                            <?php endif; ?>
-                            <?php if (!empty($ar['job_ids'])): ?>
-                                <div class="text-truncate" title="Jobs: <?= esc((string) $ar['job_ids']) ?>"><i class="bi bi-briefcase me-1"></i><?= esc((string) $ar['job_ids']) ?></div>
-                            <?php endif; ?>
-                        </td>
                         <td class="text-end">
                             <div class="d-inline-flex gap-1 align-items-center">
                                 <a class="btn btn-sm btn-outline-primary position-relative" href="/demand_side_assignments.php?user_id=<?= (int) $ar['user_id'] ?>#employer_ids" title="Edit — Employer scope"><i class="bi bi-building"></i>
