@@ -324,24 +324,37 @@ if ($jobTitleSearch !== '') {
     $jobParams[] = '%' . $jobTitleSearch . '%';
 }
 // Per-user job scope. Rule per requirement:
-//   - Assigning an employer means "you own every job of that employer".
-//   - Assigning a job means "you own only that specific job".
-//   - Both types are additive per employer. If this employer is in the
-//     user's employer scope, all its jobs are visible. Only when the
-//     employer was reached solely via job-scope (an assigned job whose
-//     emp_id points at this employer) do we narrow to the user's job
-//     scope for this employer.
+//   - Assigning an employer means "you own every job of that employer",
+//     BUT
+//   - Assigning specific job_ids of that same employer narrows the view
+//     to exactly those job_ids on that employer (specific-job assignment
+//     is treated as an explicit narrowing intent even when the employer
+//     is also in the user's employer scope).
+//   - For an employer reached only via job-scope, we naturally narrow to
+//     the assigned job_ids that belong to this employer.
+//   - A pure employer-scope user (no job assignments at all) sees every
+//     job of the employer.
 // Administrator is unscoped anywhere else so we still let them through.
 if (($currentUser['role'] ?? '') !== 'administrator') {
-    $eidCurrent = (int) $employer['employer_id'];
-    $employerInEmployerScope = in_array($eidCurrent, demand_get_assigned_employer_ids($userId), true);
-    if (!$employerInEmployerScope) {
-        $viewerAssignedJobs = demand_get_assigned_job_ids($userId);
-        if ($viewerAssignedJobs !== []) {
-            $ph = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
-            $jobConds[] = "j.job_id IN ($ph)";
-            foreach ($viewerAssignedJobs as $jid) { $jobParams[] = $jid; }
+    $viewerAssignedJobs = demand_get_assigned_job_ids($userId);
+    if ($viewerAssignedJobs !== []) {
+        $eidCurrent = (int) $employer['employer_id'];
+        $ph = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
+        // Intersection = viewer's assigned jobs that live on THIS employer.
+        $interStmt = db()->prepare("SELECT job_id FROM demand_employer_jobs WHERE emp_id = ? AND job_id IN ($ph)");
+        $interStmt->execute([$eidCurrent, ...$viewerAssignedJobs]);
+        $viewerAssignedJobsOnThisEmployer = array_map(
+            static fn(array $r): int => (int) $r['job_id'],
+            $interStmt->fetchAll()
+        );
+        if ($viewerAssignedJobsOnThisEmployer !== []) {
+            $ph2 = implode(',', array_fill(0, count($viewerAssignedJobsOnThisEmployer), '?'));
+            $jobConds[] = "j.job_id IN ($ph2)";
+            foreach ($viewerAssignedJobsOnThisEmployer as $jid) { $jobParams[] = $jid; }
         }
+        // Empty intersection → this employer is reached only via employer
+        // scope, so no additional restriction — every job is visible.
+        // (Access guard above already denied users who have neither.)
     }
 }
 $jobWhereSql = 'WHERE ' . implode(' AND ', $jobConds);

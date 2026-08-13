@@ -98,30 +98,39 @@ $whereSql = 'WHERE ' . implode(' AND ', $conds);
 // work uniformly. When the viewer is a non-admin with a scope, the jobs
 // aggregate is narrowed so the Jobs count / Open Positions per row match
 // what the drill-down will actually show:
-//   - employer in employer-scope       → all jobs of that employer count
-//   - employer reached only via jobs   → only the assigned jobs of that
-//                                         employer count
+//   - employer where the user has ANY specific assigned jobs → only those
+//     specific jobs count (specific-job assignment always narrows, even
+//     when the employer is also in the user's employer scope);
+//   - employer in employer-scope with NO overlapping job assignments
+//     → all jobs of that employer count;
+//   - employer reached only via job-scope → only the assigned jobs of
+//     that employer count (this is the same rule as the first bullet).
 $jobsAggInner = "SELECT emp_id, COUNT(*) AS jobs_count, SUM(open_positions) AS total_open_positions
         FROM demand_employer_jobs
         GROUP BY emp_id";
 $jobsAggParams = [];
 if ($scopeActive && $scopedEmployerIds !== []) {
-    $scopedFromJobsList = $scopedFromJobs; // employers reached via job scope
     $viewerAssignedJobs = demand_get_assigned_job_ids($viewerId);
     // If the viewer has zero job assignments the natural aggregate is fine —
-    // every scoped employer is in employer-scope by definition.
+    // every scoped employer is in employer-scope by definition and every
+    // job of the assigned employers is visible.
     if ($viewerAssignedJobs !== []) {
-        // Build the per-user visible job set: all jobs of the employer-scope
-        // employers, plus explicitly assigned job_ids.
-        $whereParts = [];
-        if ($scopedFromEmployers !== []) {
-            $ph = implode(',', array_fill(0, count($scopedFromEmployers), '?'));
-            $whereParts[] = "emp_id IN ($ph)";
-            foreach ($scopedFromEmployers as $sid) { $jobsAggParams[] = $sid; }
-        }
         $phj = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
-        $whereParts[] = "job_id IN ($phj)";
+        $whereParts = ["job_id IN ($phj)"];
         foreach ($viewerAssignedJobs as $jid) { $jobsAggParams[] = $jid; }
+
+        if ($scopedFromEmployers !== []) {
+            // Employer-scope branch: only count ALL jobs of employer_scope
+            // employers that DO NOT have any specific job assigned. If an
+            // employer has any specific jobs assigned, the first branch
+            // above (`job_id IN (...)`) covers it and the "all jobs" path
+            // is intentionally skipped so the specific-job narrowing wins.
+            $phe = implode(',', array_fill(0, count($scopedFromEmployers), '?'));
+            $whereParts[] = "(emp_id IN ($phe) AND emp_id NOT IN (
+                SELECT DISTINCT emp_id FROM demand_employer_jobs WHERE job_id IN ($phj)))";
+            foreach ($scopedFromEmployers as $sid) { $jobsAggParams[] = $sid; }
+            foreach ($viewerAssignedJobs as $jid) { $jobsAggParams[] = $jid; }
+        }
         $jobsAggInner = "SELECT emp_id, COUNT(*) AS jobs_count, SUM(open_positions) AS total_open_positions
             FROM demand_employer_jobs
             WHERE " . implode(' OR ', $whereParts) . "
