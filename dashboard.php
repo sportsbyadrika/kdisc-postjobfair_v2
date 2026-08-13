@@ -265,6 +265,14 @@ render_header('Dashboard');
                     <div>
                         <p class="stat-label">Jobs</p>
                         <p class="stat-value"><?= number_format($demandJobCount) ?></p>
+                        <?php
+                            $netJobs = max(0, $demandJobCount - $demandStatusInvalid);
+                            $netTone = ($demandStatusInvalid > 0) ? 'danger' : 'success';
+                        ?>
+                        <div class="small mb-1">
+                            <span class="badge text-bg-<?= esc($netTone) ?>"><i class="bi bi-dash-circle me-1"></i>Net <?= number_format($netJobs) ?></span>
+                            <span class="text-muted ms-1">(jobs &minus; invalid)</span>
+                        </div>
                         <span class="data-meta">Across all employers</span>
                     </div>
                     <span class="stat-icon-box tone-primary"><i class="bi bi-briefcase"></i></span>
@@ -277,6 +285,14 @@ render_header('Dashboard');
                     <div>
                         <p class="stat-label">Open Positions</p>
                         <p class="stat-value"><?= number_format($demandOpenPositions) ?></p>
+                        <?php
+                            $netPositions = max(0, $demandOpenPositions - $demandStatusInvalidPositions);
+                            $netPosTone   = ($demandStatusInvalidPositions > 0) ? 'danger' : 'success';
+                        ?>
+                        <div class="small mb-1">
+                            <span class="badge text-bg-<?= esc($netPosTone) ?>"><i class="bi bi-dash-circle me-1"></i>Net <?= number_format($netPositions) ?></span>
+                            <span class="text-muted ms-1">(positions &minus; invalid)</span>
+                        </div>
                         <span class="data-meta">Sum of open_positions</span>
                     </div>
                     <span class="stat-icon-box tone-success"><i class="bi bi-person-plus"></i></span>

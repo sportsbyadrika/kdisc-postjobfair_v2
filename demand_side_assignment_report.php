@@ -17,6 +17,125 @@ if (!is_manage_admin($currentUser)) {
 
 demand_side_bootstrap();
 
+/* Refined effective-jobs rule (matches the drill-down and Employer
+   listing): specific-job assignments always narrow, even when the
+   employer is also in the user's employer scope. The effective set is:
+     - every specifically assigned job_id, PLUS
+     - every job of an employer-scope employer where the user has NO
+       overlapping specific-job assignment.
+   This closure is reused by the summary loop below AND by the CSV
+   export handler further up. */
+$effectiveJobIdsFor = static function (array $empIds, array $jobIds): array {
+    $result = $jobIds;
+    if ($empIds === []) return array_values(array_unique($result));
+
+    $empsWithOverlap = [];
+    if ($jobIds !== []) {
+        $ph = implode(',', array_fill(0, count($jobIds), '?'));
+        $stmt = db()->prepare("SELECT DISTINCT emp_id FROM demand_employer_jobs WHERE job_id IN ($ph)");
+        $stmt->execute($jobIds);
+        $empsWithOverlap = array_map(static fn(array $r): int => (int) $r['emp_id'], $stmt->fetchAll());
+    }
+    $empsFullScope = array_values(array_diff($empIds, $empsWithOverlap));
+    if ($empsFullScope !== []) {
+        $ph = implode(',', array_fill(0, count($empsFullScope), '?'));
+        $stmt = db()->prepare("SELECT job_id FROM demand_employer_jobs WHERE emp_id IN ($ph)");
+        $stmt->execute($empsFullScope);
+        foreach ($stmt->fetchAll() as $r) { $result[] = (int) $r['job_id']; }
+    }
+    return array_values(array_unique($result));
+};
+
+/* ------------------------------------------------------------------------- *
+ * CSV export — user-wise assigned jobs with edit status, remarks and the
+ * most recent editor. Streams the full set (no pagination). Called via
+ * ?download=user_jobs on this page.
+ * ------------------------------------------------------------------------- */
+if (($_GET['download'] ?? '') === 'user_jobs') {
+    @set_time_limit(0);
+    ignore_user_abort(true);
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="user_assigned_jobs_' . date('Ymd_His') . '.csv"');
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['Sl No', 'User', 'Role', 'Employer ID', 'Employer Name', 'Job ID', 'Job Title', 'Edited Status', 'Remarks', 'Last Edited User']);
+
+    $usersForCsv = db()->query("SELECT u.id, u.name, u.role
+        FROM users u
+        WHERE u.id IN (
+            SELECT DISTINCT user_id FROM demand_user_employer_assignments
+            UNION SELECT DISTINCT user_id FROM demand_user_job_assignments
+        )
+        ORDER BY u.name ASC")->fetchAll();
+
+    $slno = 1;
+    foreach ($usersForCsv as $u) {
+        $uid = (int) $u['id'];
+        $empIds = demand_get_assigned_employer_ids($uid);
+        $jobIds = demand_get_assigned_job_ids($uid);
+        $effective = $effectiveJobIdsFor($empIds, $jobIds);
+        if ($effective === []) continue;
+
+        // Fetch job + employer info in one shot.
+        $ph = implode(',', array_fill(0, count($effective), '?'));
+        $sql = "SELECT e.employer_id, e.employer_name,
+                    j.id AS job_row_id, j.job_id, j.jobtitle,
+                    j.status, j.remarks
+                FROM demand_employer_jobs j
+                INNER JOIN demand_employers e ON e.employer_id = j.emp_id
+                WHERE j.job_id IN ($ph)
+                ORDER BY e.employer_id ASC, j.job_id ASC";
+        $stmt = db()->prepare($sql);
+        $stmt->execute($effective);
+        $jobs = $stmt->fetchAll();
+        if ($jobs === []) continue;
+
+        // Last-edited user per job_row_id — one grouped query per batch.
+        $jobRowIds = array_map(static fn(array $r): int => (int) $r['job_row_id'], $jobs);
+        $lastByRow = [];
+        if ($jobRowIds !== []) {
+            $ph2 = implode(',', array_fill(0, count($jobRowIds), '?'));
+            $leSql = "SELECT l.job_row_id, lu.name AS user_name
+                FROM demand_employer_job_edit_log l
+                INNER JOIN (
+                    SELECT job_row_id, MAX(edited_at) AS max_at
+                    FROM demand_employer_job_edit_log
+                    WHERE job_row_id IN ($ph2)
+                    GROUP BY job_row_id
+                ) latest ON latest.job_row_id = l.job_row_id AND latest.max_at = l.edited_at
+                LEFT JOIN users lu ON lu.id = l.edited_by";
+            $leStmt = db()->prepare($leSql);
+            $leStmt->execute($jobRowIds);
+            foreach ($leStmt->fetchAll() as $le) {
+                // If several fields were edited at the exact same second
+                // the join can return more than one row — first name wins.
+                $rid = (int) $le['job_row_id'];
+                if (!isset($lastByRow[$rid])) {
+                    $lastByRow[$rid] = (string) ($le['user_name'] ?? '');
+                }
+            }
+        }
+
+        foreach ($jobs as $j) {
+            fputcsv($out, [
+                $slno++,
+                (string) $u['name'],
+                role_label((string) $u['role']),
+                (string) $j['employer_id'],
+                (string) $j['employer_name'],
+                (string) $j['job_id'],
+                (string) ($j['jobtitle'] ?? ''),
+                (string) ($j['status'] ?? ''),
+                (string) ($j['remarks'] ?? ''),
+                $lastByRow[(int) $j['job_row_id']] ?? '',
+            ]);
+        }
+    }
+    fclose($out);
+    exit;
+}
+
 /* ------------------------------------------------------------------------- *
  * Table 1 — Per-user summary.
  * "Effective jobs" follows the visible-scope rule enforced on the Employer
@@ -43,15 +162,7 @@ foreach ($userRows as $u) {
     $jobIds = demand_get_assigned_job_ids($uid);
     $effectiveJobCount = 0;
     $effectiveOpenings = 0;
-    $effectiveJobIds = [];
-    if ($jobIds !== []) {
-        $effectiveJobIds = $jobIds;
-    } elseif ($empIds !== []) {
-        $ph = implode(',', array_fill(0, count($empIds), '?'));
-        $stmt = db()->prepare("SELECT job_id FROM demand_employer_jobs WHERE emp_id IN ($ph)");
-        $stmt->execute($empIds);
-        $effectiveJobIds = array_map(static fn(array $r): int => (int) $r['job_id'], $stmt->fetchAll());
-    }
+    $effectiveJobIds = $effectiveJobIdsFor($empIds, $jobIds);
     if ($effectiveJobIds !== []) {
         $ph = implode(',', array_fill(0, count($effectiveJobIds), '?'));
         $stmt = db()->prepare("SELECT COUNT(*) AS c, COALESCE(SUM(open_positions), 0) AS s FROM demand_employer_jobs WHERE job_id IN ($ph)");
@@ -170,9 +281,15 @@ render_page_header('Demand Side · Assignment Report', [
 ?>
 
 <div class="card mb-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-people text-primary me-1"></i>Per-user Assignment Summary</span>
-        <span class="status-chip status-info"><?= number_format(count($userSummary)) ?> users with an assignment</span>
+        <div class="d-flex align-items-center gap-2">
+            <a class="btn btn-sm btn-outline-primary" href="/demand_side_assignment_report.php?download=user_jobs"
+               title="Download all users' effective assigned jobs with edit status, remarks and last editor">
+                <i class="bi bi-download me-1"></i>Download user-wise jobs CSV
+            </a>
+            <span class="status-chip status-info"><?= number_format(count($userSummary)) ?> users with an assignment</span>
+        </div>
     </div>
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
