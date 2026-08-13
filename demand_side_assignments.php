@@ -107,39 +107,54 @@ if (is_post() && ($action === 'preview' || $action === 'save')) {
         $previewLoaded = true;
 
         if ($action === 'save' && $previewFoundEmployerIds !== []) {
-            // Append-only save. Existing employer AND job assignments (manual
-            // or automated) are never touched — only the newly entered IDs
-            // are inserted. Duplicates (already-assigned user + id pairs)
-            // are silently skipped via INSERT IGNORE on the UNIQUE key.
+            // Append-only save with batched INSERT IGNORE inside one txn
+            // so a large ID list doesn't hit the connection timeout.
+            @set_time_limit(0);
+            ignore_user_abort(true);
+
+            $bulkInsert = static function (string $table, string $col, int $uid, array $ids, int $assignedBy, int &$new, int &$dup): void {
+                if ($ids === []) return;
+                foreach (array_chunk($ids, 500) as $chunk) {
+                    $placeholders = implode(',', array_fill(0, count($chunk), '(?, ?, ?, NOW())'));
+                    $params = [];
+                    foreach ($chunk as $id) {
+                        $params[] = $uid; $params[] = (int) $id; $params[] = $assignedBy;
+                    }
+                    $stmt = db()->prepare("INSERT IGNORE INTO $table (user_id, $col, assigned_by, assigned_at) VALUES $placeholders");
+                    $stmt->execute($params);
+                    $newRows = (int) $stmt->affectedRows();
+                    $new += $newRows;
+                    $dup += (count($chunk) - $newRows);
+                }
+            };
+
             $newEmployerRows = 0; $dupEmployerRows = 0;
             $newJobRows      = 0; $dupJobRows      = 0;
-            $insE = db()->prepare('INSERT IGNORE INTO demand_user_employer_assignments (user_id, employer_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
-            foreach ($previewFoundEmployerIds as $eid) {
-                try {
-                    $insE->execute([$formUserId, $eid, $userId]);
-                    if ($insE->affectedRows() > 0) { $newEmployerRows++; } else { $dupEmployerRows++; }
-                } catch (Throwable $e) { /* FK issue — skip */ }
+            $saveOk = true;
+            db()->query('START TRANSACTION');
+            try {
+                $bulkInsert('demand_user_employer_assignments', 'employer_id', $formUserId, $previewFoundEmployerIds, $userId, $newEmployerRows, $dupEmployerRows);
+                $bulkInsert('demand_user_job_assignments',      'job_id',      $formUserId, $previewFoundJobIds,      $userId, $newJobRows,      $dupJobRows);
+                db()->query('COMMIT');
+            } catch (Throwable $e) {
+                db()->query('ROLLBACK');
+                $flashMessage = 'Save failed while writing rows: ' . $e->getMessage();
+                $flashType = 'danger';
+                $saveOk = false;
             }
-            if ($previewFoundJobIds !== []) {
-                $insJ = db()->prepare('INSERT IGNORE INTO demand_user_job_assignments (user_id, job_id, assigned_by, assigned_at) VALUES (?, ?, ?, NOW())');
-                foreach ($previewFoundJobIds as $jid) {
-                    try {
-                        $insJ->execute([$formUserId, $jid, $userId]);
-                        if ($insJ->affectedRows() > 0) { $newJobRows++; } else { $dupJobRows++; }
-                    } catch (Throwable $e) { /* FK issue — skip */ }
-                }
+            if ($saveOk) {
+                $flashMessage = sprintf(
+                    'Saved (append only): %d new employer + %d new job assignment(s) added for user %d. Prior assignments were kept%s.%s%s',
+                    $newEmployerRows,
+                    $newJobRows,
+                    $formUserId,
+                    ($dupEmployerRows + $dupJobRows) > 0
+                        ? " (skipped $dupEmployerRows duplicate employer row(s) and $dupJobRows duplicate job row(s) already assigned)"
+                        : '',
+                    $previewMissingEmployerIds === [] ? '' : ' Missing employer_ids skipped: ' . implode(', ', $previewMissingEmployerIds) . '.',
+                    $previewOutOfScopeJobIds  === [] ? '' : ' Job IDs not owned by the assigned employers skipped: ' . implode(', ', $previewOutOfScopeJobIds) . '.'
+                );
             }
-            $flashMessage = sprintf(
-                'Saved (append only): %d new employer + %d new job assignment(s) added for user %d. Prior assignments were kept%s.%s%s',
-                $newEmployerRows,
-                $newJobRows,
-                $formUserId,
-                ($dupEmployerRows + $dupJobRows) > 0
-                    ? " (skipped $dupEmployerRows duplicate employer row(s) and $dupJobRows duplicate job row(s) already assigned)"
-                    : '',
-                $previewMissingEmployerIds === [] ? '' : ' Missing employer_ids skipped: ' . implode(', ', $previewMissingEmployerIds) . '.',
-                $previewOutOfScopeJobIds  === [] ? '' : ' Job IDs not owned by the assigned employers skipped: ' . implode(', ', $previewOutOfScopeJobIds) . '.'
-            );
             $editUserId = 0; $formUserId = 0; $formEmployerIdsRaw = ''; $formJobIdsRaw = '';
             $previewLoaded = false;
             $previewFoundEmployerIds = $previewMissingEmployerIds = [];
