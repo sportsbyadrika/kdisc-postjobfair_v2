@@ -324,18 +324,24 @@ if ($jobTitleSearch !== '') {
     $jobParams[] = '%' . $jobTitleSearch . '%';
 }
 // Per-user job scope. Rule per requirement:
-//   - if the viewer has ANY job_ids assigned, the Jobs list is narrowed to
-//     exactly those job_ids (even when the employer itself is also in
-//     their employer scope);
-//   - if the viewer has NO job_ids assigned, they see every job of the
-//     assigned employer.
+//   - Assigning an employer means "you own every job of that employer".
+//   - Assigning a job means "you own only that specific job".
+//   - Both types are additive per employer. If this employer is in the
+//     user's employer scope, all its jobs are visible. Only when the
+//     employer was reached solely via job-scope (an assigned job whose
+//     emp_id points at this employer) do we narrow to the user's job
+//     scope for this employer.
 // Administrator is unscoped anywhere else so we still let them through.
 if (($currentUser['role'] ?? '') !== 'administrator') {
-    $viewerAssignedJobs = demand_get_assigned_job_ids($userId);
-    if ($viewerAssignedJobs !== []) {
-        $ph = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
-        $jobConds[] = "j.job_id IN ($ph)";
-        foreach ($viewerAssignedJobs as $jid) { $jobParams[] = $jid; }
+    $eidCurrent = (int) $employer['employer_id'];
+    $employerInEmployerScope = in_array($eidCurrent, demand_get_assigned_employer_ids($userId), true);
+    if (!$employerInEmployerScope) {
+        $viewerAssignedJobs = demand_get_assigned_job_ids($userId);
+        if ($viewerAssignedJobs !== []) {
+            $ph = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
+            $jobConds[] = "j.job_id IN ($ph)";
+            foreach ($viewerAssignedJobs as $jid) { $jobParams[] = $jid; }
+        }
     }
 }
 $jobWhereSql = 'WHERE ' . implode(' AND ', $jobConds);

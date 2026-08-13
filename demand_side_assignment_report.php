@@ -164,7 +164,8 @@ render_header('Assignment Report', ['main_container_class' => 'container-fluid']
 render_page_header('Demand Side · Assignment Report', [
     'icon' => 'bi-file-earmark-bar-graph',
     'subtitle' => 'Per-user progress plus a Job Agency pivot combining pool size, assignment coverage and edit completion.',
-    'actions' => '<a class="btn btn-light" href="/demand_side_assignments.php"><i class="bi bi-arrow-left me-1"></i>Back to Assignments</a>',
+    'actions' => '<a class="btn btn-light me-1" href="/demand_side_employer_users_report.php"><i class="bi bi-building-check me-1"></i>Employer-wise Users</a>'
+        . '<a class="btn btn-light" href="/demand_side_assignments.php"><i class="bi bi-arrow-left me-1"></i>Back to Assignments</a>',
 ]);
 ?>
 

@@ -95,14 +95,46 @@ $whereSql = 'WHERE ' . implode(' AND ', $conds);
 
 // Shared FROM clause — used by both the count query and the listing query so
 // filters that reference the aggregated jobs subquery (Open Positions range)
-// work uniformly.
+// work uniformly. When the viewer is a non-admin with a scope, the jobs
+// aggregate is narrowed so the Jobs count / Open Positions per row match
+// what the drill-down will actually show:
+//   - employer in employer-scope       → all jobs of that employer count
+//   - employer reached only via jobs   → only the assigned jobs of that
+//                                         employer count
+$jobsAggInner = "SELECT emp_id, COUNT(*) AS jobs_count, SUM(open_positions) AS total_open_positions
+        FROM demand_employer_jobs
+        GROUP BY emp_id";
+$jobsAggParams = [];
+if ($scopeActive && $scopedEmployerIds !== []) {
+    $scopedFromJobsList = $scopedFromJobs; // employers reached via job scope
+    $viewerAssignedJobs = demand_get_assigned_job_ids($viewerId);
+    // If the viewer has zero job assignments the natural aggregate is fine —
+    // every scoped employer is in employer-scope by definition.
+    if ($viewerAssignedJobs !== []) {
+        // Build the per-user visible job set: all jobs of the employer-scope
+        // employers, plus explicitly assigned job_ids.
+        $whereParts = [];
+        if ($scopedFromEmployers !== []) {
+            $ph = implode(',', array_fill(0, count($scopedFromEmployers), '?'));
+            $whereParts[] = "emp_id IN ($ph)";
+            foreach ($scopedFromEmployers as $sid) { $jobsAggParams[] = $sid; }
+        }
+        $phj = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
+        $whereParts[] = "job_id IN ($phj)";
+        foreach ($viewerAssignedJobs as $jid) { $jobsAggParams[] = $jid; }
+        $jobsAggInner = "SELECT emp_id, COUNT(*) AS jobs_count, SUM(open_positions) AS total_open_positions
+            FROM demand_employer_jobs
+            WHERE " . implode(' OR ', $whereParts) . "
+            GROUP BY emp_id";
+    }
+}
 $fromSql = "FROM demand_employers e
     LEFT JOIN (
-        SELECT emp_id, COUNT(*) AS jobs_count, SUM(open_positions) AS total_open_positions
-        FROM demand_employer_jobs
-        GROUP BY emp_id
+        $jobsAggInner
     ) j ON j.emp_id = e.employer_id
     $whereSql";
+// Subquery placeholders bind first, then the WHERE placeholders.
+$params = array_merge($jobsAggParams, $params);
 
 /* ------------------------------------------------------------------------- *
  * CSV download — respects every active filter (and the per-user scope
