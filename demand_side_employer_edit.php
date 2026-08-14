@@ -1104,15 +1104,29 @@ $nicJoin = static function (?string $code, ?string $name): string {
     rows().forEach((cb) => cb.addEventListener('change', refresh));
     refresh();
 
-    const bulkForm = document.getElementById('bulkUpdateForm');
-    bulkForm?.addEventListener('submit', (ev) => {
+    // Attach via delegation on document — the bulk-update modal form is
+    // defined LATER in the source than this script, so a direct
+    // getElementById('bulkUpdateForm') here returns null and the submit
+    // listener never fires (which produced the "no rows selected" flash
+    // even when checkboxes were ticked, because the hidden job_ids[]
+    // inputs weren't being injected). Delegation avoids the ordering
+    // trap entirely.
+    document.addEventListener('submit', (ev) => {
+        const form = ev.target;
+        if (!(form instanceof HTMLFormElement) || form.id !== 'bulkUpdateForm') return;
+        // Purge any hidden job_ids[] left over from a previous submit
+        // attempt so we don't accumulate stale ids across retries.
+        form.querySelectorAll('input[type="hidden"][name="job_ids[]"]').forEach((n) => n.remove());
         const checked = rows().filter((cb) => cb.checked).map((cb) => cb.value);
-        if (checked.length === 0) { ev.preventDefault(); return; }
-        // Inject the selected job_ids as hidden fields.
+        if (checked.length === 0) {
+            ev.preventDefault();
+            alert('Please select at least one job row before applying a bulk update.');
+            return;
+        }
         checked.forEach((v) => {
             const inp = document.createElement('input');
             inp.type = 'hidden'; inp.name = 'job_ids[]'; inp.value = v;
-            bulkForm.appendChild(inp);
+            form.appendChild(inp);
         });
     });
 })();
