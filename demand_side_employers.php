@@ -93,11 +93,9 @@ if ($categoryFilter !== '' && isset($categoryByName[$categoryFilter])) {
 }
 $whereSql = 'WHERE ' . implode(' AND ', $conds);
 
-// Shared FROM clause — used by both the count query and the listing query so
-// filters that reference the aggregated jobs subquery (Open Positions range)
-// work uniformly. When the viewer is a non-admin with a scope, the jobs
-// aggregate is narrowed so the Jobs count / Open Positions per row match
-// what the drill-down will actually show:
+// Reusable scope filter fragments. The listing narrows the per-employer
+// aggregates (jobs count, open positions, edited count) to what the viewer
+// can actually see, so the numbers on the row match the drill-down:
 //   - employer where the user has ANY specific assigned jobs → only those
 //     specific jobs count (specific-job assignment always narrows, even
 //     when the employer is also in the user's employer scope);
@@ -105,45 +103,63 @@ $whereSql = 'WHERE ' . implode(' AND ', $conds);
 //     → all jobs of that employer count;
 //   - employer reached only via job-scope → only the assigned jobs of
 //     that employer count (this is the same rule as the first bullet).
+$viewerAssignedJobs = ($scopeActive && $scopedEmployerIds !== []) ? demand_get_assigned_job_ids($viewerId) : [];
+$scopeFilterUnq    = null;   // WHERE fragment for scans of demand_employer_jobs (unqualified columns)
+$scopeFilterQual   = null;   // same, but with `j.` alias for subqueries that JOIN
+$scopeFilterParams = [];     // params for either fragment — SAME set of values in the SAME order
+if ($viewerAssignedJobs !== []) {
+    $phj = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
+    $unqParts = ["job_id IN ($phj)"];
+    $qualParts = ["j.job_id IN ($phj)"];
+    foreach ($viewerAssignedJobs as $jid) { $scopeFilterParams[] = $jid; }
+    if ($scopedFromEmployers !== []) {
+        $phe = implode(',', array_fill(0, count($scopedFromEmployers), '?'));
+        $unqParts[]  = "(emp_id   IN ($phe) AND emp_id   NOT IN (SELECT DISTINCT emp_id FROM demand_employer_jobs WHERE job_id IN ($phj)))";
+        $qualParts[] = "(j.emp_id IN ($phe) AND j.emp_id NOT IN (SELECT DISTINCT emp_id FROM demand_employer_jobs WHERE job_id IN ($phj)))";
+        foreach ($scopedFromEmployers as $sid) { $scopeFilterParams[] = $sid; }
+        foreach ($viewerAssignedJobs as $jid) { $scopeFilterParams[] = $jid; }
+    }
+    $scopeFilterUnq  = '(' . implode(' OR ', $unqParts)  . ')';
+    $scopeFilterQual = '(' . implode(' OR ', $qualParts) . ')';
+}
+
 $jobsAggInner = "SELECT emp_id, COUNT(*) AS jobs_count, SUM(open_positions) AS total_open_positions
         FROM demand_employer_jobs
+        " . ($scopeFilterUnq !== null ? "WHERE $scopeFilterUnq" : "") . "
         GROUP BY emp_id";
-$jobsAggParams = [];
-if ($scopeActive && $scopedEmployerIds !== []) {
-    $viewerAssignedJobs = demand_get_assigned_job_ids($viewerId);
-    // If the viewer has zero job assignments the natural aggregate is fine —
-    // every scoped employer is in employer-scope by definition and every
-    // job of the assigned employers is visible.
-    if ($viewerAssignedJobs !== []) {
-        $phj = implode(',', array_fill(0, count($viewerAssignedJobs), '?'));
-        $whereParts = ["job_id IN ($phj)"];
-        foreach ($viewerAssignedJobs as $jid) { $jobsAggParams[] = $jid; }
 
-        if ($scopedFromEmployers !== []) {
-            // Employer-scope branch: only count ALL jobs of employer_scope
-            // employers that DO NOT have any specific job assigned. If an
-            // employer has any specific jobs assigned, the first branch
-            // above (`job_id IN (...)`) covers it and the "all jobs" path
-            // is intentionally skipped so the specific-job narrowing wins.
-            $phe = implode(',', array_fill(0, count($scopedFromEmployers), '?'));
-            $whereParts[] = "(emp_id IN ($phe) AND emp_id NOT IN (
-                SELECT DISTINCT emp_id FROM demand_employer_jobs WHERE job_id IN ($phj)))";
-            foreach ($scopedFromEmployers as $sid) { $jobsAggParams[] = $sid; }
-            foreach ($viewerAssignedJobs as $jid) { $jobsAggParams[] = $jid; }
-        }
-        $jobsAggInner = "SELECT emp_id, COUNT(*) AS jobs_count, SUM(open_positions) AS total_open_positions
-            FROM demand_employer_jobs
-            WHERE " . implode(' OR ', $whereParts) . "
-            GROUP BY emp_id";
-    }
-}
+// Edits by anyone — one row per employer with count of DISTINCT scoped
+// jobs that have at least one `status` change in the edit log.
+$editsAnyInner = "SELECT j.emp_id, COUNT(DISTINCT j.job_id) AS edited_any
+        FROM demand_employer_jobs j
+        INNER JOIN demand_employer_job_edit_log l ON l.job_row_id = j.id AND l.field_name = 'status'
+        " . ($scopeFilterQual !== null ? "WHERE $scopeFilterQual" : "") . "
+        GROUP BY j.emp_id";
+
+// Edits by ME (the current viewer) — same set narrowed by edited_by.
+// Only meaningful for scoped users; for admins the number is naturally 0
+// unless the admin has personally made status edits, and the "You" line
+// below is hidden anyway.
+$editsMineInner = "SELECT j.emp_id, COUNT(DISTINCT j.job_id) AS edited_mine
+        FROM demand_employer_jobs j
+        INNER JOIN demand_employer_job_edit_log l ON l.job_row_id = j.id AND l.field_name = 'status' AND l.edited_by = ?
+        " . ($scopeFilterQual !== null ? "WHERE $scopeFilterQual" : "") . "
+        GROUP BY j.emp_id";
+
 $fromSql = "FROM demand_employers e
-    LEFT JOIN (
-        $jobsAggInner
-    ) j ON j.emp_id = e.employer_id
+    LEFT JOIN ( $jobsAggInner   ) j  ON j.emp_id  = e.employer_id
+    LEFT JOIN ( $editsAnyInner  ) je ON je.emp_id = e.employer_id
+    LEFT JOIN ( $editsMineInner ) jm ON jm.emp_id = e.employer_id
     $whereSql";
-// Subquery placeholders bind first, then the WHERE placeholders.
-$params = array_merge($jobsAggParams, $params);
+
+// Subquery placeholders bind first (jobs agg → edits any → edits mine),
+// then the outer WHERE placeholders.
+$subqueryParams = array_merge(
+    $scopeFilterParams,           // jobs aggregate
+    $scopeFilterParams,           // edits by anyone
+    [$viewerId], $scopeFilterParams   // edits by me — userId comes BEFORE the scope filter (JOIN condition)
+);
+$params = array_merge($subqueryParams, $params);
 
 /* ------------------------------------------------------------------------- *
  * CSV download — respects every active filter (and the per-user scope
@@ -254,9 +270,19 @@ $totalPages = max((int) ceil($totalRecords / $perPage), 1);
 $page = min($page, $totalPages);
 $offset = ($page - 1) * $perPage;
 
-$listStmt = db()->prepare("SELECT e.*, COALESCE(j.jobs_count, 0) AS jobs_count, COALESCE(j.total_open_positions, 0) AS total_open_positions
+// ORDER BY completion percentage ASC (most pending on top). Employers with
+// no visible jobs land at the very bottom via NULL-handling — dividing by
+// zero returns NULL, which we sort last with `IS NULL`.
+$listStmt = db()->prepare("SELECT e.*,
+        COALESCE(j.jobs_count, 0) AS jobs_count,
+        COALESCE(j.total_open_positions, 0) AS total_open_positions,
+        COALESCE(je.edited_any, 0) AS edited_any,
+        COALESCE(jm.edited_mine, 0) AS edited_mine,
+        CASE WHEN COALESCE(j.jobs_count, 0) > 0
+             THEN COALESCE(je.edited_any, 0) * 100.0 / j.jobs_count
+             ELSE NULL END AS completion_pct
     $fromSql
-    ORDER BY e.employer_id ASC
+    ORDER BY completion_pct IS NULL ASC, completion_pct ASC, e.employer_id ASC
     LIMIT ? OFFSET ?");
 $listStmt->execute([...$params, $perPage, $offset]);
 $rows = $listStmt->fetchAll();
@@ -432,6 +458,7 @@ render_page_header('Demand Side · Employer', [
                     <th class="text-end">Jobs</th>
                     <th class="text-end">Open Positions</th>
                     <th>Category</th>
+                    <th style="min-width:180px;">Completion</th>
                     <th>Active Status</th>
                     <th>Final Status</th>
                     <th class="text-end">Actions</th>
@@ -439,10 +466,17 @@ render_page_header('Demand Side · Employer', [
             </thead>
             <tbody>
                 <?php if ($rows === []): ?>
-                    <tr><td colspan="11"><div class="empty-state"><i class="bi bi-inbox"></i>No employers match the filters.</div></td></tr>
+                    <tr><td colspan="12"><div class="empty-state"><i class="bi bi-inbox"></i>No employers match the filters.</div></td></tr>
                 <?php endif; ?>
                 <?php $idx = $offset + 1; foreach ($rows as $row): ?>
-                    <?php $jobsCount = (int) ($row['jobs_count'] ?? 0); ?>
+                    <?php
+                        $jobsCount   = (int) ($row['jobs_count'] ?? 0);
+                        $editedAny   = (int) ($row['edited_any'] ?? 0);
+                        $editedMine  = (int) ($row['edited_mine'] ?? 0);
+                        $pct         = $jobsCount > 0 ? round(($editedAny * 100) / $jobsCount, 1) : null;
+                        $barTone     = $pct === null ? 'secondary' : ($pct >= 90 ? 'success' : ($pct >= 50 ? 'warning' : 'danger'));
+                        $minePct     = $jobsCount > 0 ? round(($editedMine * 100) / $jobsCount, 1) : null;
+                    ?>
                     <tr>
                         <td><?= $idx++ ?></td>
                         <td><?= esc((string) ($row['employer_id'] ?? '')) ?></td>
@@ -459,6 +493,24 @@ render_page_header('Demand Side · Employer', [
                         <td class="text-end"><?= number_format((int) ($row['total_open_positions'] ?? 0)) ?></td>
                         <?php $rowCat = demand_category_for_positions((int) ($row['total_open_positions'] ?? 0), $categories); ?>
                         <td><?= $rowCat !== '' ? '<span class="status-chip status-info">' . esc($rowCat) . '</span>' : '<span class="text-muted">&mdash;</span>' ?></td>
+                        <td>
+                            <?php if ($pct === null): ?>
+                                <span class="text-muted small">&mdash;</span>
+                            <?php else: ?>
+                                <div class="d-flex align-items-center gap-2" title="<?= number_format($editedAny) ?> of <?= number_format($jobsCount) ?> job(s) have a status edit">
+                                    <div class="progress flex-grow-1" style="height:8px; max-width:100px;">
+                                        <div class="progress-bar bg-<?= esc($barTone) ?>" role="progressbar" style="width: <?= (float) $pct ?>%;" aria-valuenow="<?= (float) $pct ?>" aria-valuemin="0" aria-valuemax="100"></div>
+                                    </div>
+                                    <span class="fw-bold small"><?= number_format($pct, 1) ?>%</span>
+                                </div>
+                                <?php if (!$viewerIsAdministrator && $editedMine > 0 && $editedMine !== $editedAny): ?>
+                                    <div class="small text-muted mt-1" title="Status edits you personally made on your scope of this employer">
+                                        <i class="bi bi-person-check me-1"></i>You: <?= number_format($editedMine) ?> / <?= number_format($jobsCount) ?>
+                                        <span class="ms-1">(<?= number_format((float) $minePct, 1) ?>%)</span>
+                                    </div>
+                                <?php endif; ?>
+                            <?php endif; ?>
+                        </td>
                         <td><?= render_status_chip((string) ($row['active_status'] ?? '')) ?></td>
                         <td><?= esc((string) ($row['final_status'] ?? '')) ?></td>
                         <td class="text-end">
