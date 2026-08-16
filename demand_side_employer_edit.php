@@ -731,11 +731,31 @@ $nicJoin = static function (?string $code, ?string $name): string {
                             'number_of_applications' => '# Applications',
                         ];
                         $extraColCount = $isEdit ? 0 : count($extraJobCols);
-                        // Edit mode is now narrower — 10 cols (checkbox + 9 data).
-                        // View mode keeps its full 13 + extras layout.
-                        $editCols = 10;
-                        $viewCols = 13;
+                        // Edit mode is now narrower — 11 cols (checkbox + 9 data
+                        // + applicants). View mode keeps its full 14 + extras.
+                        $editCols = 11;
+                        $viewCols = 14;
                         $totalCols = ($isEdit ? $editCols : $viewCols) + $extraColCount;
+                        // Renders the four applicant-funnel counts as a
+                        // compact 2x2 grid inside a single table cell so the
+                        // Jobs table stays scannable. Called from both the
+                        // edit and view branches below.
+                        $renderApplicantCounts = static function (array $job): string {
+                            $fmt = static function ($v): string {
+                                return $v === null || $v === '' ? '<span class="text-muted">&mdash;</span>' : number_format((int) $v);
+                            };
+                            return
+                                '<div class="small" style="line-height:1.25;min-width:120px;">'
+                                . '<div class="d-flex justify-content-between gap-2"><span class="text-success">Sel</span>'
+                                    . '<span class="fw-semibold">' . $fmt($job['selected']    ?? null) . '</span></div>'
+                                . '<div class="d-flex justify-content-between gap-2"><span class="text-primary">Sht</span>'
+                                    . '<span class="fw-semibold">' . $fmt($job['shortlisted'] ?? null) . '</span></div>'
+                                . '<div class="d-flex justify-content-between gap-2"><span class="text-warning">OH</span>'
+                                    . '<span class="fw-semibold">' . $fmt($job['onhold']      ?? null) . '</span></div>'
+                                . '<div class="d-flex justify-content-between gap-2"><span class="text-danger">Rej</span>'
+                                    . '<span class="fw-semibold">' . $fmt($job['rejected']    ?? null) . '</span></div>'
+                                . '</div>';
+                        };
                     ?>
                     <?php if ($isEdit): ?>
                     <tr>
@@ -749,6 +769,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
                         <th>Status<br><span class="small text-muted">Corr. Open Pos.</span></th>
                         <th>Remarks Group<br><span class="small text-muted">Remarks</span></th>
                         <th>Task Owner</th>
+                        <th title="Sel = Selected · Sht = Shortlisted · OH = On Hold · Rej = Rejected">Applicants</th>
                     </tr>
                     <?php else: ?>
                     <tr>
@@ -765,6 +786,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
                         <th>Remarks Group</th>
                         <th>Remarks</th>
                         <th>Task Owner</th>
+                        <th title="Sel = Selected · Sht = Shortlisted · OH = On Hold · Rej = Rejected">Applicants</th>
                         <?php foreach ($extraJobCols as $label): ?>
                             <th class="small text-muted"><?= esc($label) ?></th>
                         <?php endforeach; ?>
@@ -831,6 +853,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
                                 <?= esc((string) ($job['task_owner_name'] ?? '')) ?>
                                 <div class="small mt-1 js-row-save-status text-muted" style="min-height:1em;"></div>
                             </td>
+                            <td><?= $renderApplicantCounts($job) ?></td>
                         </tr>
                     <?php else: ?>
                         <tr>
@@ -847,6 +870,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
                             <td><?= esc((string) ($job['remarks_group_name'] ?? '')) ?></td>
                             <td><?= nl2br(esc((string) ($job['remarks'] ?? ''))) ?></td>
                             <td class="small text-muted"><?= esc((string) ($job['task_owner_name'] ?? '')) ?></td>
+                            <td><?= $renderApplicantCounts($job) ?></td>
                             <?php foreach (array_keys($extraJobCols) as $ecol): ?>
                                 <?php $ev = (string) ($job[$ecol] ?? ''); ?>
                                 <td class="small"><?= $ev === '' ? '<span class="text-muted">&mdash;</span>' : nl2br(esc($ev)) ?></td>

@@ -27,6 +27,8 @@ if ($rawType === 'jobs') {
     $type = 'jobs';
 } elseif ($rawType === 'bulk_fields' || $rawType === 'posted_on') {
     $type = 'bulk_fields';
+} elseif ($rawType === 'applicant_counts') {
+    $type = 'applicant_counts';
 } else {
     $type = 'employer';
 }
@@ -41,6 +43,17 @@ if ($type === 'employer') {
 } elseif ($type === 'jobs') {
     $aliasSet = demand_employer_job_upload_columns();
     $requiredCols = demand_employer_job_upload_required();
+} elseif ($type === 'applicant_counts') {
+    // Applicant funnel counts, keyed by job_id. Every count column is
+    // optional; blank cells are skipped so the existing value is preserved.
+    $aliasSet = [
+        'job_id'      => ['job_id', 'jobid'],
+        'selected'    => ['selected', 'selectedcount', 'selected_count'],
+        'shortlisted' => ['shortlisted', 'shortlistedcount', 'shortlisted_count', 'shortlist'],
+        'onhold'      => ['onhold', 'on_hold', 'holdcount', 'hold', 'onholdcount'],
+        'rejected'    => ['rejected', 'rejectedcount', 'rejected_count', 'rejection', 'rejections'],
+    ];
+    $requiredCols = ['job_id'];
 } else {
     // Bulk update of a handful of Job fields, keyed by job_id. Every column
     // other than job_id is optional; blank cells are skipped so the existing
@@ -353,6 +366,74 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                     if ($affected === 1) $inserted++;
                     elseif ($affected >= 2) $updated++;
                 }
+            } elseif ($type === 'applicant_counts') {
+                // Bulk update the four applicant-funnel count columns
+                // (selected / shortlisted / onhold / rejected) keyed by
+                // job_id. Blank CSV cells are skipped so the existing value
+                // is preserved. Non-numeric cells produce a per-row skip
+                // with a reason. Real changes are written to the job edit
+                // log and the row's task_owner_id is set to the uploader.
+                $countFields = ['selected', 'shortlisted', 'onhold', 'rejected'];
+                $lookup = db()->prepare("SELECT id, selected, shortlisted, onhold, rejected FROM demand_employer_jobs WHERE job_id = ?");
+                @set_time_limit(0);
+                ignore_user_abort(true);
+                while (($row = fgetcsv($fh)) !== false) {
+                    $processed++;
+                    $get = static fn(string $c): string => $colIndex[$c] < 0 ? '' : trim((string) ($row[$colIndex[$c]] ?? ''));
+                    $jid = demand_parse_int($get('job_id'));
+                    if ($jid === null || $jid <= 0) {
+                        $skipped++;
+                        if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: missing/invalid job_id";
+                        continue;
+                    }
+                    $lookup->execute([$jid]);
+                    $existing = $lookup->fetch();
+                    if (!$existing) {
+                        $skipped++;
+                        if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: job_id $jid not found";
+                        continue;
+                    }
+                    $rowJobId    = (int) $existing['id'];
+                    $updateSets  = [];
+                    $updateParms = [];
+                    $logEntries  = [];
+                    $rowError    = null;
+                    foreach ($countFields as $cf) {
+                        $raw = $get($cf);
+                        if ($raw === '') continue;
+                        // Accept plain non-negative integers only; comma
+                        // thousand-separators tolerated.
+                        $stripped = str_replace(',', '', $raw);
+                        if (!ctype_digit($stripped)) {
+                            $rowError = "$cf value '$raw' is not a non-negative integer";
+                            break;
+                        }
+                        $newVal = (int) $stripped;
+                        $oldVal = $existing[$cf] === null ? null : (int) $existing[$cf];
+                        if ($oldVal === $newVal) continue;
+                        $updateSets[]  = "$cf = ?";
+                        $updateParms[] = $newVal;
+                        $logEntries[]  = [$cf, $oldVal === null ? '' : (string) $oldVal, (string) $newVal];
+                    }
+                    if ($rowError !== null) {
+                        $skipped++;
+                        if (count($skipReasons) < 5) $skipReasons[] = "Row $processed: $rowError";
+                        continue;
+                    }
+                    if ($updateSets === []) {
+                        continue; // nothing changed
+                    }
+                    $updateSets[]  = 'task_owner_id = ?'; $updateParms[] = $userId;
+                    $updateSets[]  = 'updated_by = ?';    $updateParms[] = $userId;
+                    $updateSets[]  = 'updated_at = NOW()';
+                    $updateParms[] = $jid;
+                    $upd = db()->prepare('UPDATE demand_employer_jobs SET ' . implode(', ', $updateSets) . ' WHERE job_id = ?');
+                    $upd->execute($updateParms);
+                    foreach ($logEntries as [$field, $oldStr, $newStr]) {
+                        demand_write_edit_log('job', $rowJobId, $field, $oldStr, $newStr, $userId);
+                    }
+                    $updated++;
+                }
             } elseif ($type === 'bulk_fields') {
                 // Bulk update of a small set of Job fields keyed by job_id:
                 //   Expiry Date       -> expired_date
@@ -566,6 +647,7 @@ render_page_header('Demand Side · Upload Data', [
     <li class="nav-item"><a class="nav-link <?= $type === 'employer' ? 'active' : '' ?>" href="/demand_side_upload.php?type=employer"><i class="bi bi-building me-1"></i>Upload Employer</a></li>
     <li class="nav-item"><a class="nav-link <?= $type === 'jobs' ? 'active' : '' ?>" href="/demand_side_upload.php?type=jobs"><i class="bi bi-briefcase me-1"></i>Upload Employer Jobs</a></li>
     <li class="nav-item"><a class="nav-link <?= $type === 'bulk_fields' ? 'active' : '' ?>" href="/demand_side_upload.php?type=bulk_fields"><i class="bi bi-pencil-square me-1"></i>Bulk update Job fields</a></li>
+    <li class="nav-item"><a class="nav-link <?= $type === 'applicant_counts' ? 'active' : '' ?>" href="/demand_side_upload.php?type=applicant_counts"><i class="bi bi-people-fill me-1"></i>Bulk update Applicant Counts</a></li>
 </ul>
 
 <div class="card mb-3">
@@ -577,7 +659,7 @@ render_page_header('Demand Side · Upload Data', [
             <input type="hidden" name="action" value="preview">
             <input type="hidden" name="type" value="<?= esc($type) ?>">
             <div class="col-md-6">
-                <?php $csvLabel = ['employer' => 'Employer', 'jobs' => 'Employer Jobs', 'bulk_fields' => 'Bulk Job field update']; ?>
+                <?php $csvLabel = ['employer' => 'Employer', 'jobs' => 'Employer Jobs', 'bulk_fields' => 'Bulk Job field update', 'applicant_counts' => 'Applicant Counts']; ?>
                 <label class="form-label">CSV file (<?= esc($csvLabel[$type]) ?>)</label>
                 <input type="file" class="form-control" name="csv_file" accept=".csv,text/csv" required>
             </div>
@@ -599,6 +681,16 @@ render_page_header('Demand Side · Upload Data', [
             <?php if ($type === 'jobs'): ?>
                 <div class="mt-2"><em>Note:</em> <code>emp_id</code> is a foreign key to <code>Employers.employer_id</code>&nbsp;— upload Employer first, then Employer Jobs. Rows whose <code>emp_id</code> isn't found in Employers are skipped and reported.</div>
                 <div class="mt-1"><em>Also:</em> <code>status</code>, <code>remarks</code>, <code>remarks_group</code>, <code>posted_on</code>, <code>posted_by</code>, <code>expired_date</code> and <code>corrected_open_position</code> are managed inside the app on the Edit screen, so they are not part of the upload.</div>
+            <?php elseif ($type === 'applicant_counts'): ?>
+                <div class="mt-2"><em>What it does:</em> for every CSV row (keyed by <code>job_id</code>), the four applicant-funnel count columns are refreshed on <code>demand_employer_jobs</code>:
+                    <ul class="mb-1 mt-1">
+                        <li><code>selected</code></li>
+                        <li><code>shortlisted</code></li>
+                        <li><code>onhold</code> (also accepts <code>on_hold</code>, <code>hold</code>)</li>
+                        <li><code>rejected</code></li>
+                    </ul>
+                    Blank cells are skipped (existing value preserved). Non-numeric cells fail the row with a reason. Values must be non-negative integers (commas as thousand-separators are tolerated). Missing jobs are skipped and reported. Each real change is logged in the Job Edit History and the row's Task Owner is set to you. The four counts show up on the Jobs table inside the Employer view.
+                </div>
             <?php elseif ($type === 'bulk_fields'): ?>
                 <div class="mt-2"><em>What it does:</em> for every CSV row (keyed by <code>job_id</code>), matching Job Fields are refreshed:
                     <ul class="mb-1 mt-1">

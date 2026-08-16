@@ -127,6 +127,13 @@ function demand_side_bootstrap(): void
         'posted_in_job_fair'     => 'VARCHAR(20) NULL',
         'number_of_applications' => 'INT NULL',
         'job_status_data'        => 'VARCHAR(100) NULL',
+        // Applicant funnel counts — populated via the "Bulk update Applicant
+        // Counts" upload tab in Demand Side · Upload Data. NULL means "never
+        // uploaded" (distinct from an explicit 0).
+        'selected'               => 'INT NULL',
+        'shortlisted'            => 'INT NULL',
+        'onhold'                 => 'INT NULL',
+        'rejected'               => 'INT NULL',
     ];
     foreach ($extraCols as $col => $def) {
         if (!isset($existing[$col])) {
