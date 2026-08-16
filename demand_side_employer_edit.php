@@ -813,7 +813,28 @@ $nicJoin = static function (?string $code, ?string $name): string {
                     <?php if ($isEdit): ?>
                         <tr data-job-row-id="<?= (int) $job['id'] ?>" data-job-id="<?= (int) $job['job_id'] ?>">
                             <td><input type="checkbox" class="js-bulk-row" value="<?= (int) $job['id'] ?>"></td>
-                            <td><?= (int) $job['job_id'] ?></td>
+                            <?php
+                                // Serialize the job (+ derived labels) once so
+                                // the shared details modal can render every
+                                // field client-side without another round-trip.
+                                $jobModalPayload = $job;
+                                $jobModalPayload['posted_on']    = substr((string) ($job['posted_on'] ?? ''), 0, 10);
+                                $jobModalPayload['expired_date'] = substr((string) ($job['expired_date'] ?? ''), 0, 10);
+                                $jobModalJson = htmlspecialchars(
+                                    json_encode($jobModalPayload, JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT),
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                );
+                            ?>
+                            <td>
+                                <button type="button"
+                                        class="btn btn-link btn-sm p-0 fw-semibold text-decoration-underline js-job-details-btn"
+                                        data-bs-toggle="modal" data-bs-target="#jobDetailsModal"
+                                        data-job="<?= $jobModalJson ?>"
+                                        title="View all fields of this job">
+                                    <?= (int) $job['job_id'] ?>
+                                </button>
+                            </td>
                             <td class="fw-semibold" style="min-width:180px;">
                                 <div><?= esc((string) ($job['jobtitle'] ?? '')) ?></div>
                                 <?php if ($jsd !== ''): ?>
@@ -1202,6 +1223,116 @@ $nicJoin = static function (?string $code, ?string $name): string {
         </div>
     </div>
 </div>
+
+<!-- Job details modal — one shared shell; body is populated client-side
+     from the data-job JSON attribute on the clicked Job ID button. -->
+<div class="modal fade" id="jobDetailsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="jobDetailsTitle"><i class="bi bi-briefcase me-1"></i>Job details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="jobDetailsBody">
+                <div class="text-muted">Loading…</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    // Field groups rendered as ordered sections inside the modal body.
+    // Each section is a title + a 3-column grid of {label, key} pairs.
+    // Order within a group is meaningful; adding a new column to
+    // demand_employer_jobs later needs a matching entry here.
+    const FIELD_GROUPS = [
+        {title: 'Job basics', fields: [
+            ['Job ID', 'job_id'], ['Job Title', 'jobtitle'], ['Employer ID', 'emp_id'],
+            ['Employer Name', 'emp_name'], ['Job Category', 'job_category'], ['Job Sub Category', 'job_sub_category'],
+        ]},
+        {title: 'Vacancies', fields: [
+            ['Open Positions', 'open_positions'], ['Corrected Open Position', 'corrected_open_position'],
+            ['# Applications', 'number_of_applications'],
+        ]},
+        {title: 'Verification (in-app)', fields: [
+            ['Status', 'status'], ['Remarks Group', 'remarks_group_name'], ['Remarks', 'remarks'],
+        ]},
+        {title: 'Applicant Funnel', fields: [
+            ['Selected', 'selected'], ['Shortlisted', 'shortlisted'],
+            ['On Hold', 'onhold'], ['Rejected', 'rejected'],
+        ]},
+        {title: 'Dates & Poster', fields: [
+            ['Posted On', 'posted_on'], ['Posted By', 'posted_by'], ['Expired Date', 'expired_date'],
+            ['Job Status data', 'job_status_data'],
+        ]},
+        {title: 'Location & Mode', fields: [
+            ['Location', 'location'], ['Location Type', 'location_type'],
+            ['Employment Mode', 'employment_mode'], ['Job Agency', 'job_agency'],
+        ]},
+        {title: 'Skills & Preferences', fields: [
+            ['Domain Skills', 'domain_skills'], ['Soft Skills', 'soft_skills'], ['Specialization', 'specialization'],
+            ['Courses', 'courses'], ['Academic Preference', 'academic_preference'], ['Qualification', 'qualificationcategory'],
+            ['Min Experience', 'min_experience'], ['Max Experience', 'max_experience'], ['Age Preference', 'age_preference'],
+            ['Gender Preference', 'gender_preference'], ['Job Sector', 'job_sector'],
+        ]},
+        {title: 'Salary', fields: [
+            ['Salary Type', 'salary_type'], ['Salary Slab', 'salary_slab'],
+        ]},
+        {title: 'Job Fair Flags', fields: [
+            ['Job Fair Only Job', 'jobfair_only_job'], ['Posted in Job Fair', 'posted_in_job_fair'],
+            ['VK Flag', 'vk_flag'],
+        ]},
+        {title: 'Task Owner', fields: [
+            ['Task Owner', 'task_owner_name'],
+        ]},
+    ];
+
+    const escapeHtml = (s) => String(s).replace(/[<>&"']/g, (c) => ({
+        '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+
+    const isBlank = (v) => v === null || v === undefined || v === '' || (typeof v === 'string' && v.trim() === '');
+
+    function renderCell(label, value) {
+        const display = isBlank(value) ? '<span class="text-muted">&mdash;</span>' : escapeHtml(value).replace(/\n/g, '<br>');
+        return `<div class="col-md-4">
+            <div class="small text-muted">${escapeHtml(label)}</div>
+            <div class="fw-semibold">${display}</div>
+        </div>`;
+    }
+
+    function renderModalBody(d) {
+        return FIELD_GROUPS.map((g) => {
+            const cells = g.fields.map(([lbl, key]) => renderCell(lbl, d[key])).join('');
+            return `<h6 class="mt-3 mb-2 text-primary text-uppercase small border-bottom pb-1">${escapeHtml(g.title)}</h6>
+                <div class="row g-3">${cells}</div>`;
+        }).join('');
+    }
+
+    const modalEl = document.getElementById('jobDetailsModal');
+    if (!modalEl) return;
+    modalEl.addEventListener('show.bs.modal', (ev) => {
+        const trigger = ev.relatedTarget;
+        if (!trigger) return;
+        let payload = {};
+        try {
+            payload = JSON.parse(trigger.getAttribute('data-job') || '{}');
+        } catch (e) {
+            payload = {};
+        }
+        const title = document.getElementById('jobDetailsTitle');
+        if (title) {
+            const jt = payload.jobtitle ? ` · ${escapeHtml(payload.jobtitle)}` : '';
+            title.innerHTML = `<i class="bi bi-briefcase me-1"></i>Job #${escapeHtml(payload.job_id || '')}${jt}`;
+        }
+        const body = document.getElementById('jobDetailsBody');
+        if (body) body.innerHTML = renderModalBody(payload);
+    });
+})();
+</script>
 <?php endif; ?>
 
 <?php render_footer(); ?>
