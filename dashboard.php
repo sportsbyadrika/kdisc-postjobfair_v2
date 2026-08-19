@@ -292,7 +292,7 @@ render_header('Dashboard');
         <div class="col-6 col-md-4">
             <div class="card card-stat accent-primary h-100">
                 <div class="card-body d-flex align-items-start justify-content-between gap-2">
-                    <div>
+                    <div class="w-100">
                         <p class="stat-label">Jobs</p>
                         <p class="stat-value"><?= number_format($demandJobCount) ?></p>
                         <?php
@@ -304,26 +304,6 @@ render_header('Dashboard');
                             <span class="text-muted ms-1">(jobs &minus; invalid)</span>
                         </div>
                         <span class="data-meta">Across all employers</span>
-                    </div>
-                    <span class="stat-icon-box tone-primary"><i class="bi bi-briefcase"></i></span>
-                </div>
-            </div>
-        </div>
-        <div class="col-12 col-md-4">
-            <div class="card card-stat accent-success h-100">
-                <div class="card-body d-flex align-items-start justify-content-between gap-2">
-                    <div class="w-100">
-                        <p class="stat-label">Job Positions</p>
-                        <p class="stat-value"><?= number_format($demandOpenPositions) ?></p>
-                        <?php
-                            $netPositions = max(0, $demandOpenPositions - $demandStatusInvalidPositions);
-                            $netPosTone   = ($demandStatusInvalidPositions > 0) ? 'danger' : 'success';
-                        ?>
-                        <div class="small mb-1">
-                            <span class="badge text-bg-<?= esc($netPosTone) ?>"><i class="bi bi-dash-circle me-1"></i>Net <?= number_format($netPositions) ?></span>
-                            <span class="text-muted ms-1">(positions &minus; invalid)</span>
-                        </div>
-                        <span class="data-meta">Sum of open_positions</span>
                         <?php if (!empty($demandJobStatusBreakdown)): ?>
                             <div class="mt-2">
                                 <div class="small text-muted text-uppercase mb-1" style="letter-spacing:.03em;">By job status</div>
@@ -343,6 +323,26 @@ render_header('Dashboard');
                                 </div>
                             </div>
                         <?php endif; ?>
+                    </div>
+                    <span class="stat-icon-box tone-primary"><i class="bi bi-briefcase"></i></span>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-4">
+            <div class="card card-stat accent-success h-100">
+                <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                    <div>
+                        <p class="stat-label">Job Positions</p>
+                        <p class="stat-value"><?= number_format($demandOpenPositions) ?></p>
+                        <?php
+                            $netPositions = max(0, $demandOpenPositions - $demandStatusInvalidPositions);
+                            $netPosTone   = ($demandStatusInvalidPositions > 0) ? 'danger' : 'success';
+                        ?>
+                        <div class="small mb-1">
+                            <span class="badge text-bg-<?= esc($netPosTone) ?>"><i class="bi bi-dash-circle me-1"></i>Net <?= number_format($netPositions) ?></span>
+                            <span class="text-muted ms-1">(positions &minus; invalid)</span>
+                        </div>
+                        <span class="data-meta">Sum of open_positions</span>
                     </div>
                     <span class="stat-icon-box tone-success"><i class="bi bi-person-plus"></i></span>
                 </div>
