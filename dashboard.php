@@ -42,13 +42,17 @@ if ($isAdmin) {
         $demandStatusNotStartedPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status IS NULL OR TRIM(status) = ''")->fetchColumn();
         // Per-source-status breakdown for the Job Positions card. Uses
         // job_status_data (the DWMS source status like Active / Expired /
-        // Closed / On Hold), NOT the in-app verification status.
+        // Closed / On Hold), NOT the in-app verification `status` column.
+        // GROUPs on the normalised expression rather than an alias named
+        // `status` — an alias with the same name as a real column silently
+        // resolves back to the column in MySQL, which was collapsing every
+        // group into the wrong bucket (all rows appeared as "Closed").
         $demandJobStatusBreakdown = db()->query(
-            "SELECT COALESCE(NULLIF(TRIM(job_status_data), ''), '(Unknown)') AS status,
+            "SELECT COALESCE(NULLIF(TRIM(job_status_data), ''), '(Unknown)') AS status_label,
                     COUNT(*) AS jobs_count,
                     COALESCE(SUM(open_positions), 0) AS positions_sum
              FROM demand_employer_jobs
-             GROUP BY status
+             GROUP BY COALESCE(NULLIF(TRIM(job_status_data), ''), '(Unknown)')
              ORDER BY jobs_count DESC"
         )->fetchAll();
     } catch (Throwable $e) { /* demand-side tables not yet available */ }
@@ -326,7 +330,7 @@ render_header('Dashboard');
                                 <div class="d-flex flex-wrap gap-1">
                                     <?php foreach ($demandJobStatusBreakdown as $sb): ?>
                                         <?php
-                                            $label = (string) ($sb['status'] ?? '');
+                                            $label = (string) ($sb['status_label'] ?? '');
                                             $jobs  = (int) ($sb['jobs_count'] ?? 0);
                                             $pos   = (int) ($sb['positions_sum'] ?? 0);
                                             $tone  = demand_job_source_status_tone($label);
