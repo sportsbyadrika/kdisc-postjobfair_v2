@@ -63,6 +63,26 @@ if ($isAdmin) {
              GROUP BY COALESCE(NULLIF(TRIM(job_status_data), ''), '(Unknown)')
              ORDER BY jobs_count DESC"
         )->fetchAll();
+        // Per-(verification-status, source-status) breakdown so each
+        // Verification Status card can show the same DWMS job_status_data
+        // chip block as the Jobs card, scoped to that verification bucket.
+        $rawVerBreakdown = db()->query(
+            "SELECT COALESCE(NULLIF(TRIM(status), ''), '') AS verification_status,
+                    COALESCE(NULLIF(TRIM(job_status_data), ''), '(Unknown)') AS status_label,
+                    COUNT(*) AS jobs_count,
+                    COALESCE(SUM(open_positions), 0) AS positions_sum
+             FROM demand_employer_jobs
+             GROUP BY 1, 2
+             ORDER BY 1 ASC, jobs_count DESC"
+        )->fetchAll();
+        $demandVerificationStatusBreakdown = [];
+        foreach ($rawVerBreakdown as $r) {
+            $demandVerificationStatusBreakdown[(string) $r['verification_status']][] = [
+                'status_label'  => (string) ($r['status_label'] ?? ''),
+                'jobs_count'    => (int) ($r['jobs_count'] ?? 0),
+                'positions_sum' => (int) ($r['positions_sum'] ?? 0),
+            ];
+        }
     } catch (Throwable $e) { /* demand-side tables not yet available */ }
 }
 
@@ -409,23 +429,43 @@ render_header('Dashboard');
             // Only the Valid card's positions read as "verified"; Invalid and
             // Corrected keep "affected" since those aren't verified yet.
             $editStatCards = [
-                ['label' => 'Valid',           'value' => $demandStatusValid,       'positions' => $demandStatusValidPositions,     'positions_label' => 'verified open positions', 'tone' => 'success', 'icon' => 'bi-check-circle-fill'],
-                ['label' => 'Invalid',         'value' => $demandStatusInvalid,     'positions' => $demandStatusInvalidPositions,   'positions_label' => 'affected open positions', 'tone' => 'danger',  'icon' => 'bi-x-circle-fill'],
-                ['label' => 'Corrected',       'value' => $demandStatusCorrected,   'positions' => $demandStatusCorrectedPositions, 'positions_label' => 'affected open positions', 'tone' => 'warning', 'icon' => 'bi-pencil-square'],
-                ['label' => 'Not Yet Started', 'value' => $demandStatusNotStarted,  'positions' => $demandStatusNotStartedPositions, 'positions_label' => 'affected open positions', 'tone' => 'neutral', 'icon' => 'bi-hourglass-split'],
+                ['label' => 'Valid',           'value' => $demandStatusValid,       'positions' => $demandStatusValidPositions,     'positions_label' => 'verified open positions', 'tone' => 'success', 'icon' => 'bi-check-circle-fill',  'ver_key' => 'Valid'],
+                ['label' => 'Invalid',         'value' => $demandStatusInvalid,     'positions' => $demandStatusInvalidPositions,   'positions_label' => 'affected open positions', 'tone' => 'danger',  'icon' => 'bi-x-circle-fill',      'ver_key' => 'Invalid'],
+                ['label' => 'Corrected',       'value' => $demandStatusCorrected,   'positions' => $demandStatusCorrectedPositions, 'positions_label' => 'affected open positions', 'tone' => 'warning', 'icon' => 'bi-pencil-square',      'ver_key' => 'Corrected'],
+                ['label' => 'Not Yet Started', 'value' => $demandStatusNotStarted,  'positions' => $demandStatusNotStartedPositions, 'positions_label' => 'affected open positions', 'tone' => 'neutral', 'icon' => 'bi-hourglass-split',    'ver_key' => ''],
             ];
         ?>
         <?php foreach ($editStatCards as $card): ?>
+            <?php $cardBreakdown = $demandVerificationStatusBreakdown[$card['ver_key']] ?? []; ?>
             <div class="col-6 col-md-3">
                 <div class="card card-stat accent-<?= esc($card['tone']) ?> h-100">
                     <div class="card-body d-flex align-items-start justify-content-between gap-2">
-                        <div>
+                        <div class="w-100">
                             <p class="stat-label"><?= esc($card['label']) ?></p>
                             <p class="stat-value"><?= number_format((int) $card['value']) ?></p>
                             <?php if ($card['positions'] !== null): ?>
                                 <div class="small text-muted mb-1"><i class="bi bi-person-plus me-1"></i><strong><?= number_format((int) $card['positions']) ?></strong> <?= esc((string) $card['positions_label']) ?></div>
                             <?php endif; ?>
                             <a class="stat-link" href="/demand_side_stats.php">View statistics <i class="bi bi-arrow-right-short"></i></a>
+                            <?php if ($cardBreakdown !== []): ?>
+                                <div class="mt-2">
+                                    <div class="small text-muted text-uppercase mb-1" style="letter-spacing:.03em;">By job status</div>
+                                    <div class="d-flex flex-wrap gap-1">
+                                        <?php foreach ($cardBreakdown as $sb): ?>
+                                            <?php
+                                                $label = (string) $sb['status_label'];
+                                                $jobs  = (int) $sb['jobs_count'];
+                                                $pos   = (int) $sb['positions_sum'];
+                                                $tone  = demand_job_source_status_tone($label);
+                                            ?>
+                                            <span class="badge text-bg-<?= esc($tone) ?>"
+                                                  title="<?= number_format($jobs) ?> job(s) &middot; <?= number_format($pos) ?> position(s)">
+                                                <?= esc($label) ?> <span class="fw-bold ms-1"><?= number_format($jobs) ?></span>
+                                            </span>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
                         </div>
                         <span class="stat-icon-box tone-<?= esc($card['tone']) ?>"><i class="bi <?= esc($card['icon']) ?>"></i></span>
                     </div>
