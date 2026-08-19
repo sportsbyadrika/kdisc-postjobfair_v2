@@ -40,7 +40,33 @@ if ($isAdmin) {
         $demandStatusInvalidPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status = 'Invalid'")->fetchColumn();
         $demandStatusCorrectedPositions = (int) db()->query("SELECT COALESCE(SUM(COALESCE(corrected_open_position, open_positions)), 0) FROM demand_employer_jobs WHERE status = 'Corrected'")->fetchColumn();
         $demandStatusNotStartedPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status IS NULL OR TRIM(status) = ''")->fetchColumn();
+        // Per-source-status breakdown for the Job Positions card. Uses
+        // job_status_data (the DWMS source status like Active / Expired /
+        // Closed / On Hold), NOT the in-app verification status.
+        $demandJobStatusBreakdown = db()->query(
+            "SELECT COALESCE(NULLIF(TRIM(job_status_data), ''), '(Unknown)') AS status,
+                    COUNT(*) AS jobs_count,
+                    COALESCE(SUM(open_positions), 0) AS positions_sum
+             FROM demand_employer_jobs
+             GROUP BY status
+             ORDER BY jobs_count DESC"
+        )->fetchAll();
     } catch (Throwable $e) { /* demand-side tables not yet available */ }
+}
+
+/* Semantic tone for each source-status label — same buckets the Job Status
+ * badge uses on the Employer Jobs table, kept here so the dashboard chips
+ * read the same way. Returns a Bootstrap "text-bg-*" suffix. */
+if (!function_exists('demand_job_source_status_tone')) {
+    function demand_job_source_status_tone(string $label): string {
+        $key = strtolower(preg_replace('/[^a-z0-9]+/i', '', $label));
+        if ($key === '' || $key === 'unknown') return 'secondary';
+        if (in_array($key, ['active', 'open', 'live', 'valid'], true)) return 'success';
+        if (in_array($key, ['expired', 'closed', 'inactive', 'invalid'], true)) return 'danger';
+        if (in_array($key, ['draft', 'pending', 'unpublished', 'onhold', 'hold'], true)) return 'warning';
+        if (in_array($key, ['corrected', 'updated', 'modified'], true)) return 'info';
+        return 'secondary';
+    }
 }
 
 $selectedCount = (int) db()->query("SELECT COUNT(*) FROM job_fair_result WHERE LOWER(REPLACE(TRIM(Selection_Status), ' ', '')) = 'selected'")->fetchColumn();
@@ -282,8 +308,8 @@ render_header('Dashboard');
         <div class="col-12 col-md-4">
             <div class="card card-stat accent-success h-100">
                 <div class="card-body d-flex align-items-start justify-content-between gap-2">
-                    <div>
-                        <p class="stat-label">Open Positions</p>
+                    <div class="w-100">
+                        <p class="stat-label">Job Positions</p>
                         <p class="stat-value"><?= number_format($demandOpenPositions) ?></p>
                         <?php
                             $netPositions = max(0, $demandOpenPositions - $demandStatusInvalidPositions);
@@ -294,6 +320,25 @@ render_header('Dashboard');
                             <span class="text-muted ms-1">(positions &minus; invalid)</span>
                         </div>
                         <span class="data-meta">Sum of open_positions</span>
+                        <?php if (!empty($demandJobStatusBreakdown)): ?>
+                            <div class="mt-2">
+                                <div class="small text-muted text-uppercase mb-1" style="letter-spacing:.03em;">By job status</div>
+                                <div class="d-flex flex-wrap gap-1">
+                                    <?php foreach ($demandJobStatusBreakdown as $sb): ?>
+                                        <?php
+                                            $label = (string) ($sb['status'] ?? '');
+                                            $jobs  = (int) ($sb['jobs_count'] ?? 0);
+                                            $pos   = (int) ($sb['positions_sum'] ?? 0);
+                                            $tone  = demand_job_source_status_tone($label);
+                                        ?>
+                                        <span class="badge text-bg-<?= esc($tone) ?>"
+                                              title="<?= number_format($jobs) ?> job(s) &middot; <?= number_format($pos) ?> position(s)">
+                                            <?= esc($label) ?> <span class="fw-bold ms-1"><?= number_format($jobs) ?></span>
+                                        </span>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        <?php endif; ?>
                     </div>
                     <span class="stat-icon-box tone-success"><i class="bi bi-person-plus"></i></span>
                 </div>
