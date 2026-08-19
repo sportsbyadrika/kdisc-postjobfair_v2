@@ -5,15 +5,16 @@ require_once __DIR__ . '/includes/demand_side_helpers.php';
 require_admin();
 demand_side_bootstrap();
 
-$employerIdFilter   = trim((string) ($_GET['employer_id']   ?? ''));
-$employerNameFilter = trim((string) ($_GET['employer_name'] ?? ''));
-$activeStatusFilter = trim((string) ($_GET['active_status'] ?? ''));
-$finalStatusFilter  = trim((string) ($_GET['final_status']  ?? ''));
-$jobIdFilter        = trim((string) ($_GET['job_id']        ?? ''));
-$jobAgencyFilter    = trim((string) ($_GET['jobagency']     ?? ''));
-$openMinFilter      = trim((string) ($_GET['open_min']      ?? ''));
-$openMaxFilter      = trim((string) ($_GET['open_max']      ?? ''));
-$categoryFilter     = trim((string) ($_GET['category']      ?? ''));
+$employerIdFilter    = trim((string) ($_GET['employer_id']    ?? ''));
+$employerNameFilter  = trim((string) ($_GET['employer_name']  ?? ''));
+$activeStatusFilter  = trim((string) ($_GET['active_status']  ?? ''));
+$finalStatusFilter   = trim((string) ($_GET['final_status']   ?? ''));
+$jobIdFilter         = trim((string) ($_GET['job_id']         ?? ''));
+$jobAgencyFilter     = trim((string) ($_GET['jobagency']      ?? ''));
+$jobPostStatusFilter = trim((string) ($_GET['job_post_status'] ?? ''));
+$openMinFilter       = trim((string) ($_GET['open_min']       ?? ''));
+$openMaxFilter       = trim((string) ($_GET['open_max']       ?? ''));
+$categoryFilter      = trim((string) ($_GET['category']       ?? ''));
 $categories         = demand_get_categories();
 $categoryByName     = [];
 foreach ($categories as $c) { $categoryByName[(string) $c['name']] = $c; }
@@ -70,6 +71,21 @@ if ($jobIdFilter !== '' && ctype_digit($jobIdFilter)) {
     // Employers that have at least one Job with this job_id.
     $conds[] = 'EXISTS (SELECT 1 FROM demand_employer_jobs j2 WHERE j2.emp_id = e.employer_id AND j2.job_id = ?)';
     $params[] = (int) $jobIdFilter;
+}
+if ($jobPostStatusFilter !== '') {
+    // Employers that have at least one Job whose DWMS source posting status
+    // (`job_status_data`) matches — trimmed on both sides. '(Unknown)' picks
+    // up rows where the source status is NULL or blank.
+    if ($jobPostStatusFilter === '(Unknown)') {
+        $conds[] = 'EXISTS (SELECT 1 FROM demand_employer_jobs j2
+                            WHERE j2.emp_id = e.employer_id
+                              AND (j2.job_status_data IS NULL OR TRIM(j2.job_status_data) = ""))';
+    } else {
+        $conds[] = 'EXISTS (SELECT 1 FROM demand_employer_jobs j2
+                            WHERE j2.emp_id = e.employer_id
+                              AND TRIM(j2.job_status_data) = ?)';
+        $params[] = $jobPostStatusFilter;
+    }
 }
 // Open positions range filter runs against the aggregated
 // total_open_positions produced by the LEFT JOIN subquery. Employers with
@@ -307,6 +323,21 @@ $jobAgencyOptions = array_map(
     static fn(array $r): string => (string) $r['value'],
     db()->query("SELECT DISTINCT jobagency AS value FROM demand_employers WHERE jobagency IS NOT NULL AND TRIM(jobagency) <> '' ORDER BY value ASC")->fetchAll()
 );
+// Distinct DWMS source-posting-status values across the Jobs table. Blank
+// / NULL values collapse to a single '(Unknown)' entry so operators can
+// still target them from the dropdown.
+$jobPostStatusOptionsRaw = array_map(
+    static fn(array $r): string => trim((string) $r['value']),
+    db()->query("SELECT DISTINCT job_status_data AS value FROM demand_employer_jobs")->fetchAll()
+);
+$jobPostStatusOptions = [];
+$hasBlankJobPostStatus = false;
+foreach ($jobPostStatusOptionsRaw as $v) {
+    if ($v === '') { $hasBlankJobPostStatus = true; continue; }
+    $jobPostStatusOptions[] = $v;
+}
+sort($jobPostStatusOptions, SORT_NATURAL | SORT_FLAG_CASE);
+if ($hasBlankJobPostStatus) { $jobPostStatusOptions[] = '(Unknown)'; }
 
 $baseParams = $_GET;
 unset($baseParams['page']);
@@ -397,6 +428,15 @@ render_page_header('Demand Side · Employer', [
                     <option value="">All</option>
                     <?php foreach ($categories as $c): ?>
                         <option value="<?= esc((string) $c['name']) ?>" <?= $categoryFilter === (string) $c['name'] ? 'selected' : '' ?>><?= esc((string) $c['name']) ?> (<?= number_format((int) $c['min_positions']) ?>–<?= number_format((int) $c['max_positions']) ?>)</option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Job Posting Status <span class="small text-muted">(any job)</span></label>
+                <select class="form-select" name="job_post_status">
+                    <option value="">All</option>
+                    <?php foreach ($jobPostStatusOptions as $opt): ?>
+                        <option value="<?= esc($opt) ?>" <?= $jobPostStatusFilter === $opt ? 'selected' : '' ?>><?= esc($opt) ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
