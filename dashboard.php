@@ -40,6 +40,14 @@ if ($isAdmin) {
         $demandStatusInvalidPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status = 'Invalid'")->fetchColumn();
         $demandStatusCorrectedPositions = (int) db()->query("SELECT COALESCE(SUM(COALESCE(corrected_open_position, open_positions)), 0) FROM demand_employer_jobs WHERE status = 'Corrected'")->fetchColumn();
         $demandStatusNotStartedPositions = (int) db()->query("SELECT COALESCE(SUM(open_positions), 0) FROM demand_employer_jobs WHERE status IS NULL OR TRIM(status) = ''")->fetchColumn();
+        // Per-job-agency employer count for the Employers card.
+        $demandEmployerAgencyBreakdown = db()->query(
+            "SELECT COALESCE(NULLIF(TRIM(jobagency), ''), '(Unknown)') AS agency_label,
+                    COUNT(*) AS employer_count
+             FROM demand_employers
+             GROUP BY COALESCE(NULLIF(TRIM(jobagency), ''), '(Unknown)')
+             ORDER BY employer_count DESC"
+        )->fetchAll();
         // Per-source-status breakdown for the Job Positions card. Uses
         // job_status_data (the DWMS source status like Active / Expired /
         // Closed / On Hold), NOT the in-app verification `status` column.
@@ -280,10 +288,36 @@ render_header('Dashboard');
         <div class="col-6 col-md-4">
             <div class="card card-stat accent-info h-100">
                 <div class="card-body d-flex align-items-start justify-content-between gap-2">
-                    <div>
+                    <div class="w-100">
                         <p class="stat-label">Employers</p>
                         <p class="stat-value"><?= number_format($demandEmployerCount) ?></p>
                         <a class="stat-link" href="/demand_side_employers.php">Open list <i class="bi bi-arrow-right-short"></i></a>
+                        <?php if (!empty($demandEmployerAgencyBreakdown)): ?>
+                            <div class="mt-2">
+                                <div class="small text-muted text-uppercase mb-1" style="letter-spacing:.03em;">By job agency</div>
+                                <div class="d-flex flex-wrap gap-1">
+                                    <?php foreach ($demandEmployerAgencyBreakdown as $ab): ?>
+                                        <?php
+                                            $agencyLabel = (string) ($ab['agency_label'] ?? '');
+                                            $agencyCnt   = (int) ($ab['employer_count'] ?? 0);
+                                            // Same fallback tone rule the status helper uses for
+                                            // '(Unknown)'; every real agency reads as info blue so
+                                            // the list stays scannable without a colour code the
+                                            // operator has to memorise.
+                                            $agencyTone  = $agencyLabel === '(Unknown)' ? 'secondary' : 'info';
+                                            $agencyHref  = $agencyLabel === '(Unknown)'
+                                                ? '/demand_side_employers.php'
+                                                : '/demand_side_employers.php?jobagency=' . urlencode($agencyLabel);
+                                        ?>
+                                        <a class="badge text-bg-<?= esc($agencyTone) ?> text-decoration-none"
+                                           href="<?= esc($agencyHref) ?>"
+                                           title="<?= number_format($agencyCnt) ?> employer(s) under <?= esc($agencyLabel) ?>">
+                                            <?= esc($agencyLabel) ?> <span class="fw-bold ms-1"><?= number_format($agencyCnt) ?></span>
+                                        </a>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        <?php endif; ?>
                     </div>
                     <span class="stat-icon-box tone-info"><i class="bi bi-building"></i></span>
                 </div>
