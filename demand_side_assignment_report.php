@@ -172,31 +172,47 @@ foreach ($userRows as $u) {
         $effectiveOpenings  = (int) $t['s'];
     }
     // Distinct jobs (from the effective set) where THIS user has made a
-    // status edit. Bounded by INNER JOIN so we don't double-count.
-    $statusEditsMade = 0;
+    // status edit ("user completion"), and the same count for edits by
+    // ANY user ("actual completion" — what got done on this scope
+    // regardless of who did the work). Both use an INNER JOIN so
+    // pre-log-migration jobs never inflate the numerator.
+    $statusEditsMade   = 0;   // edits made by THIS user
+    $statusEditsAnyone = 0;   // distinct scoped jobs with ANY status edit
     if ($effectiveJobIds !== []) {
         $ph = implode(',', array_fill(0, count($effectiveJobIds), '?'));
-        $sql = "SELECT COUNT(DISTINCT j.job_id) AS c
+        $sqlMine = "SELECT COUNT(DISTINCT j.job_id) AS c
             FROM demand_employer_job_edit_log l
             INNER JOIN demand_employer_jobs j ON j.id = l.job_row_id
             WHERE l.field_name = 'status'
               AND l.edited_by = ?
               AND j.job_id IN ($ph)";
-        $stmt = db()->prepare($sql);
+        $stmt = db()->prepare($sqlMine);
         $stmt->execute([$uid, ...$effectiveJobIds]);
         $statusEditsMade = (int) ($stmt->fetch()['c'] ?? 0);
+
+        $sqlAny = "SELECT COUNT(DISTINCT j.job_id) AS c
+            FROM demand_employer_job_edit_log l
+            INNER JOIN demand_employer_jobs j ON j.id = l.job_row_id
+            WHERE l.field_name = 'status'
+              AND j.job_id IN ($ph)";
+        $stmt = db()->prepare($sqlAny);
+        $stmt->execute($effectiveJobIds);
+        $statusEditsAnyone = (int) ($stmt->fetch()['c'] ?? 0);
     }
-    $completionPct = $effectiveJobCount > 0 ? round(($statusEditsMade / $effectiveJobCount) * 100, 1) : 0.0;
+    $completionPct       = $effectiveJobCount > 0 ? round(($statusEditsMade   / $effectiveJobCount) * 100, 1) : 0.0;
+    $completionActualPct = $effectiveJobCount > 0 ? round(($statusEditsAnyone / $effectiveJobCount) * 100, 1) : 0.0;
     $userSummary[] = [
-        'user_id'            => $uid,
-        'user_name'          => (string) $u['name'],
-        'user_role'          => (string) $u['role'],
-        'employers_assigned' => count($empIds),
-        'jobs_assigned'      => count($jobIds),
-        'effective_jobs'     => $effectiveJobCount,
-        'effective_openings' => $effectiveOpenings,
-        'status_edits_made'  => $statusEditsMade,
-        'completion_pct'     => $completionPct,
+        'user_id'              => $uid,
+        'user_name'            => (string) $u['name'],
+        'user_role'            => (string) $u['role'],
+        'employers_assigned'   => count($empIds),
+        'jobs_assigned'        => count($jobIds),
+        'effective_jobs'       => $effectiveJobCount,
+        'effective_openings'   => $effectiveOpenings,
+        'status_edits_made'    => $statusEditsMade,
+        'status_edits_anyone'  => $statusEditsAnyone,
+        'completion_pct'       => $completionPct,
+        'completion_actual_pct' => $completionActualPct,
     ];
 }
 
@@ -301,18 +317,21 @@ render_page_header('Demand Side · Assignment Report', [
                     <th class="text-end">Employers Assigned</th>
                     <th class="text-end">Jobs Assigned</th>
                     <th class="text-end">Effective Job Openings</th>
-                    <th class="text-end">Status Edits Made</th>
-                    <th class="text-end">Completion %</th>
+                    <th class="text-end" title="Distinct scoped jobs where THIS user has made a status edit / total effective jobs">Status Edits Made</th>
+                    <th class="text-end" title="What THIS user personally completed on their scope">User Completion %</th>
+                    <th class="text-end" title="What actually got completed on this user's scope by ANYONE (including edits by other users on the same jobs)">Actual Completion %</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($userSummary === []): ?>
-                    <tr><td colspan="8"><div class="empty-state"><i class="bi bi-inbox"></i>No user assignments yet.</div></td></tr>
+                    <tr><td colspan="9"><div class="empty-state"><i class="bi bi-inbox"></i>No user assignments yet.</div></td></tr>
                 <?php endif; ?>
                 <?php $i = 1; foreach ($userSummary as $s): ?>
                     <?php
-                        $pct = (float) $s['completion_pct'];
-                        $barTone = $pct >= 90 ? 'success' : ($pct >= 50 ? 'warning' : 'danger');
+                        $pct       = (float) $s['completion_pct'];
+                        $pctActual = (float) $s['completion_actual_pct'];
+                        $barTone       = $pct       >= 90 ? 'success' : ($pct       >= 50 ? 'warning' : 'danger');
+                        $barToneActual = $pctActual >= 90 ? 'success' : ($pctActual >= 50 ? 'warning' : 'danger');
                     ?>
                     <tr>
                         <td><?= $i++ ?></td>
@@ -330,10 +349,28 @@ render_page_header('Demand Side · Assignment Report', [
                                 <span class="fw-bold"><?= number_format($pct, 1) ?>%</span>
                             </div>
                         </td>
+                        <td class="text-end" style="min-width:160px;">
+                            <div class="d-flex align-items-center justify-content-end gap-2"
+                                 title="<?= number_format((int) $s['status_edits_anyone']) ?> of <?= number_format((int) $s['effective_jobs']) ?> scoped job(s) have a status edit by anyone">
+                                <div class="progress flex-grow-1" style="height:8px; max-width:100px;">
+                                    <div class="progress-bar bg-<?= esc($barToneActual) ?>" role="progressbar" style="width: <?= (float) $pctActual ?>%;" aria-valuenow="<?= (float) $pctActual ?>" aria-valuemin="0" aria-valuemax="100"></div>
+                                </div>
+                                <span class="fw-bold"><?= number_format($pctActual, 1) ?>%</span>
+                            </div>
+                            <?php if ((int) $s['status_edits_anyone'] > (int) $s['status_edits_made']): ?>
+                                <div class="small text-muted mt-1">
+                                    <i class="bi bi-people me-1"></i>+<?= number_format((int) $s['status_edits_anyone'] - (int) $s['status_edits_made']) ?> by others
+                                </div>
+                            <?php endif; ?>
+                        </td>
                     </tr>
                 <?php endforeach; ?>
             </tbody>
         </table>
+    </div>
+    <div class="card-footer small text-muted">
+        <strong>User Completion %</strong> = status edits made <em>by this user</em> on their scoped jobs &divide; effective jobs.
+        <strong>Actual Completion %</strong> = distinct scoped jobs with <em>any</em> status edit (regardless of who made it) &divide; effective jobs — so if another user closed some of this user's jobs, both figures diverge and the gap surfaces here.
     </div>
 </div>
 
