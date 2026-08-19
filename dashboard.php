@@ -331,7 +331,7 @@ render_header('Dashboard');
         <div class="col-12 col-md-4">
             <div class="card card-stat accent-success h-100">
                 <div class="card-body d-flex align-items-start justify-content-between gap-2">
-                    <div>
+                    <div class="w-100">
                         <p class="stat-label">Job Positions</p>
                         <p class="stat-value"><?= number_format($demandOpenPositions) ?></p>
                         <?php
@@ -343,6 +343,25 @@ render_header('Dashboard');
                             <span class="text-muted ms-1">(positions &minus; invalid)</span>
                         </div>
                         <span class="data-meta">Sum of open_positions</span>
+                        <?php if (!empty($demandJobStatusBreakdown)): ?>
+                            <div class="mt-2">
+                                <div class="small text-muted text-uppercase mb-1" style="letter-spacing:.03em;">Positions by job status</div>
+                                <div class="d-flex flex-wrap gap-1">
+                                    <?php foreach ($demandJobStatusBreakdown as $sb): ?>
+                                        <?php
+                                            $label = (string) ($sb['status_label'] ?? '');
+                                            $jobs  = (int) ($sb['jobs_count'] ?? 0);
+                                            $pos   = (int) ($sb['positions_sum'] ?? 0);
+                                            $tone  = demand_job_source_status_tone($label);
+                                        ?>
+                                        <span class="badge text-bg-<?= esc($tone) ?>"
+                                              title="<?= number_format($pos) ?> position(s) &middot; <?= number_format($jobs) ?> job(s)">
+                                            <?= esc($label) ?> <span class="fw-bold ms-1"><?= number_format($pos) ?></span>
+                                        </span>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        <?php endif; ?>
                     </div>
                     <span class="stat-icon-box tone-success"><i class="bi bi-person-plus"></i></span>
                 </div>
