@@ -252,6 +252,55 @@ if ($download === 'users' && $userRows !== []) {
     }
     fclose($out); exit;
 }
+if ($download === 'jobs_status') {
+    // Snapshot export — one row per demand_employer_jobs row with its
+    // current modification status. Respects the Category filter above
+    // (from/to date filters intentionally don't apply here — they scope
+    // the edit-log, not the current status of each job).
+    @set_time_limit(0);
+    ignore_user_abort(true);
+    $conds  = ['1=1'];
+    $params = [];
+    if ($categoryEmployerIds !== null) {
+        if ($categoryEmployerIds === []) {
+            $conds[] = '1=0';
+        } else {
+            $eidList = implode(',', array_map('intval', $categoryEmployerIds));
+            $conds[] = "e.employer_id IN ($eidList)";
+        }
+    }
+    $sql = "SELECT e.employer_id, e.employer_name, e.jobagency,
+                j.job_id, j.jobtitle, j.status
+            FROM demand_employer_jobs j
+            INNER JOIN demand_employers e ON e.employer_id = j.emp_id
+            WHERE " . implode(' AND ', $conds) . "
+            ORDER BY e.employer_id ASC, j.job_id ASC";
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+
+    $filename = 'demand_stats_jobs_status_' . date('Ymd_His') . '.csv';
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    $out = fopen('php://output', 'w'); fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['Employer ID', 'Name of Employer', 'Agency', 'Job ID', 'Job Title', 'Modification Status']);
+    while ($r = $stmt->fetch()) {
+        $status = trim((string) ($r['status'] ?? ''));
+        // NULL / blank in-app status renders as "Pending" per the user's
+        // requested vocabulary (matches the "Not Yet Started" bucket on
+        // the Verification Status card).
+        if ($status === '') { $status = 'Pending'; }
+        fputcsv($out, [
+            (string) ($r['employer_id'] ?? ''),
+            (string) ($r['employer_name'] ?? ''),
+            (string) ($r['jobagency'] ?? ''),
+            (string) ($r['job_id'] ?? ''),
+            (string) ($r['jobtitle'] ?? ''),
+            $status,
+        ]);
+    }
+    fclose($out); exit;
+}
 if ($download === 'edits' && $editDetailTotal > 0 && isset($detailBaseSql, $detailParams)) {
     // Run the SAME filtered query as the on-page table, but without the
     // LIMIT so the export always returns every matching row.
@@ -282,10 +331,15 @@ if ($download === 'edits' && $editDetailTotal > 0 && isset($detailBaseSql, $deta
 }
 
 render_header('Demand Side · Data Modification Statistics', ['main_container_class' => 'container-fluid']);
+$jobsStatusCsvUrl = '/demand_side_stats.php?' . http_build_query(array_filter([
+    'category' => $categoryFilter,
+    'download' => 'jobs_status',
+], static fn($v): bool => $v !== '' && $v !== null));
 render_page_header('Demand Side · Data Modification Statistics', [
     'icon' => 'bi-bar-chart-line',
     'subtitle' => 'Date-wise employer_jobs status change counts (Valid / Invalid / Corrected). Click a date row for user-wise breakdown across employers and jobs.',
-    'actions' => '<a class="btn btn-light" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>',
+    'actions' => '<a class="btn btn-light me-1" href="' . esc($jobsStatusCsvUrl) . '" title="Download every job with its current Valid / Invalid / Corrected / Pending status"><i class="bi bi-download me-1"></i>Download Jobs Status CSV</a>'
+        . '<a class="btn btn-light" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>',
 ]);
 ?>
 
