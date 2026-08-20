@@ -301,6 +301,7 @@ if (is_post() && $mode === 'edit') {
 $jobIdSearch        = trim((string) ($_GET['job_ids_search']    ?? ''));
 $jobTitleSearch     = trim((string) ($_GET['job_title_search']  ?? ''));
 $jobPostStatusFilter = trim((string) ($_GET['job_post_status']  ?? ''));
+$jobStatusFilter    = trim((string) ($_GET['job_status']        ?? ''));
 $rawJobSort     = strtolower((string) ($_GET['job_sort']    ?? 'job_id'));
 $rawJobDir      = strtolower((string) ($_GET['job_dir']     ?? 'asc'));
 $allowedJobSort = [
@@ -333,6 +334,17 @@ if ($jobPostStatusFilter !== '') {
     } else {
         $jobConds[] = 'TRIM(j.job_status_data) = ?';
         $jobParams[] = $jobPostStatusFilter;
+    }
+}
+if ($jobStatusFilter !== '') {
+    // In-app verification status filter (`status`) — the operator's own
+    // Valid / Invalid / Corrected verdict. "Not Yet Started" targets rows
+    // where no verdict has been rendered (NULL or blank in the DB).
+    if ($jobStatusFilter === 'Not Yet Started') {
+        $jobConds[] = '(j.status IS NULL OR TRIM(j.status) = "")';
+    } else {
+        $jobConds[] = 'j.status = ?';
+        $jobParams[] = $jobStatusFilter;
     }
 }
 // Per-user job scope. Rule per requirement:
@@ -462,7 +474,7 @@ $employerVacancies = (int) $vacRow['positions'];
 // URL builder for column-sort links. Sort resets to page 1 (per-page size
 // is preserved) so the operator doesn't land on an out-of-range page after
 // re-sorting.
-$jobSortLink = static function (string $col, string $label) use ($jobSort, $jobDir, $jobIdSearch, $jobTitleSearch, $jobPostStatusFilter, $jobsPerPage): string {
+$jobSortLink = static function (string $col, string $label) use ($jobSort, $jobDir, $jobIdSearch, $jobTitleSearch, $jobPostStatusFilter, $jobStatusFilter, $jobsPerPage): string {
     $nextDir = ($jobSort === $col && $jobDir === 'asc') ? 'desc' : 'asc';
     $params = array_filter([
         'id'               => (int) ($_GET['id'] ?? 0),
@@ -470,6 +482,7 @@ $jobSortLink = static function (string $col, string $label) use ($jobSort, $jobD
         'job_ids_search'   => $jobIdSearch,
         'job_title_search' => $jobTitleSearch,
         'job_post_status'  => $jobPostStatusFilter,
+        'job_status'       => $jobStatusFilter,
         'job_sort'         => $col,
         'job_dir'          => $nextDir,
         'jobs_per_page'    => $jobsPerPage,
@@ -699,6 +712,16 @@ $nicJoin = static function (?string $code, ?string $name): string {
                 </select>
             </div>
             <div class="col-md-2">
+                <label class="form-label small mb-1">Status <span class="text-muted">(verification)</span></label>
+                <select class="form-select form-select-sm" name="job_status">
+                    <option value="">All</option>
+                    <?php foreach (demand_employer_job_status_options() as $opt): ?>
+                        <option value="<?= esc($opt) ?>" <?= $jobStatusFilter === $opt ? 'selected' : '' ?>><?= esc($opt) ?></option>
+                    <?php endforeach; ?>
+                    <option value="Not Yet Started" <?= $jobStatusFilter === 'Not Yet Started' ? 'selected' : '' ?>>Not Yet Started</option>
+                </select>
+            </div>
+            <div class="col-md-2">
                 <label class="form-label small mb-1">Per page</label>
                 <select class="form-select form-select-sm" name="jobs_per_page" onchange="this.form.submit()">
                     <?php foreach ($jobsPerPageAllowed as $pp): ?>
@@ -716,6 +739,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
                         'job_ids_search' => $jobIdSearch,
                         'job_title_search' => $jobTitleSearch,
                         'job_post_status' => $jobPostStatusFilter,
+                        'job_status' => $jobStatusFilter,
                         'job_sort' => $jobSort,
                         'job_dir' => $jobDir,
                         'jobs_download' => 'csv',
@@ -737,6 +761,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
             'job_ids_search'   => $jobIdSearch,
             'job_title_search' => $jobTitleSearch,
             'job_post_status'  => $jobPostStatusFilter,
+            'job_status'       => $jobStatusFilter,
             'job_sort'         => $jobSort,
             'job_dir'          => $jobDir,
             'jobs_per_page'    => $jobsPerPage,
