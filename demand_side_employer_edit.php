@@ -298,8 +298,9 @@ if (is_post() && $mode === 'edit') {
  * search/sort state is carried via GET only, so the row-level Save POSTs
  * on this page are unaffected.
  * ------------------------------------------------------------------------- */
-$jobIdSearch    = trim((string) ($_GET['job_ids_search']    ?? ''));
-$jobTitleSearch = trim((string) ($_GET['job_title_search']  ?? ''));
+$jobIdSearch        = trim((string) ($_GET['job_ids_search']    ?? ''));
+$jobTitleSearch     = trim((string) ($_GET['job_title_search']  ?? ''));
+$jobPostStatusFilter = trim((string) ($_GET['job_post_status']  ?? ''));
 $rawJobSort     = strtolower((string) ($_GET['job_sort']    ?? 'job_id'));
 $rawJobDir      = strtolower((string) ($_GET['job_dir']     ?? 'asc'));
 $allowedJobSort = [
@@ -322,6 +323,17 @@ if ($parsedJobIdSearch !== []) {
 if ($jobTitleSearch !== '') {
     $jobConds[] = 'j.jobtitle LIKE ?';
     $jobParams[] = '%' . $jobTitleSearch . '%';
+}
+if ($jobPostStatusFilter !== '') {
+    // DWMS source posting status filter (`job_status_data`) — same rule as
+    // the Employer listing filter: '(Unknown)' targets rows where the
+    // source status is NULL or blank.
+    if ($jobPostStatusFilter === '(Unknown)') {
+        $jobConds[] = '(j.job_status_data IS NULL OR TRIM(j.job_status_data) = "")';
+    } else {
+        $jobConds[] = 'TRIM(j.job_status_data) = ?';
+        $jobParams[] = $jobPostStatusFilter;
+    }
 }
 // Per-user job scope. Rule per requirement:
 //   - Assigning an employer means "you own every job of that employer",
@@ -371,6 +383,27 @@ $jobsPage = max(1, (int) ($_GET['page'] ?? 1));
 if ($jobsPage === 1 && ($_GET['jobs_page'] ?? '') !== '') {
     $jobsPage = max(1, (int) $_GET['jobs_page']);
 }
+
+// Distinct source-posting-status values across this employer's jobs — for
+// the filter dropdown below. Pulled once per page load and grouped so blank
+// / NULL rows collapse to a single '(Unknown)' entry the operator can still
+// pick from. Scoped by emp_id (not by the current filter set) so the
+// dropdown always reflects every real bucket, not just those matching the
+// currently selected filter.
+$jsdStmt = db()->prepare("SELECT DISTINCT job_status_data AS value FROM demand_employer_jobs WHERE emp_id = ?");
+$jsdStmt->execute([(int) $employer['employer_id']]);
+$jobPostStatusOptionsRaw = array_map(
+    static fn(array $r): string => trim((string) $r['value']),
+    $jsdStmt->fetchAll()
+);
+$jobPostStatusOptions = [];
+$hasBlankJobPostStatus = false;
+foreach ($jobPostStatusOptionsRaw as $v) {
+    if ($v === '') { $hasBlankJobPostStatus = true; continue; }
+    $jobPostStatusOptions[] = $v;
+}
+sort($jobPostStatusOptions, SORT_NATURAL | SORT_FLAG_CASE);
+if ($hasBlankJobPostStatus) { $jobPostStatusOptions[] = '(Unknown)'; }
 
 $jobsCountStmt = db()->prepare("SELECT COUNT(*) FROM demand_employer_jobs j $jobWhereSql");
 $jobsCountStmt->execute($jobParams);
@@ -429,13 +462,14 @@ $employerVacancies = (int) $vacRow['positions'];
 // URL builder for column-sort links. Sort resets to page 1 (per-page size
 // is preserved) so the operator doesn't land on an out-of-range page after
 // re-sorting.
-$jobSortLink = static function (string $col, string $label) use ($jobSort, $jobDir, $jobIdSearch, $jobTitleSearch, $jobsPerPage): string {
+$jobSortLink = static function (string $col, string $label) use ($jobSort, $jobDir, $jobIdSearch, $jobTitleSearch, $jobPostStatusFilter, $jobsPerPage): string {
     $nextDir = ($jobSort === $col && $jobDir === 'asc') ? 'desc' : 'asc';
     $params = array_filter([
         'id'               => (int) ($_GET['id'] ?? 0),
         'mode'             => (string) ($_GET['mode'] ?? 'view'),
         'job_ids_search'   => $jobIdSearch,
         'job_title_search' => $jobTitleSearch,
+        'job_post_status'  => $jobPostStatusFilter,
         'job_sort'         => $col,
         'job_dir'          => $nextDir,
         'jobs_per_page'    => $jobsPerPage,
@@ -656,6 +690,15 @@ $nicJoin = static function (?string $code, ?string $name): string {
                 <input type="text" class="form-control form-control-sm" name="job_title_search" value="<?= esc($jobTitleSearch) ?>" placeholder="Search title">
             </div>
             <div class="col-md-2">
+                <label class="form-label small mb-1">Job Posting Status</label>
+                <select class="form-select form-select-sm" name="job_post_status">
+                    <option value="">All</option>
+                    <?php foreach ($jobPostStatusOptions as $opt): ?>
+                        <option value="<?= esc($opt) ?>" <?= $jobPostStatusFilter === $opt ? 'selected' : '' ?>><?= esc($opt) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-2">
                 <label class="form-label small mb-1">Per page</label>
                 <select class="form-select form-select-sm" name="jobs_per_page" onchange="this.form.submit()">
                     <?php foreach ($jobsPerPageAllowed as $pp): ?>
@@ -672,6 +715,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
                         'mode' => $mode,
                         'job_ids_search' => $jobIdSearch,
                         'job_title_search' => $jobTitleSearch,
+                        'job_post_status' => $jobPostStatusFilter,
                         'job_sort' => $jobSort,
                         'job_dir' => $jobDir,
                         'jobs_download' => 'csv',
@@ -692,6 +736,7 @@ $nicJoin = static function (?string $code, ?string $name): string {
             'mode'             => $mode,
             'job_ids_search'   => $jobIdSearch,
             'job_title_search' => $jobTitleSearch,
+            'job_post_status'  => $jobPostStatusFilter,
             'job_sort'         => $jobSort,
             'job_dir'          => $jobDir,
             'jobs_per_page'    => $jobsPerPage,
