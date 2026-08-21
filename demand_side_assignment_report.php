@@ -365,12 +365,58 @@ render_page_header('Demand Side · Assignment Report', [
                         </td>
                     </tr>
                 <?php endforeach; ?>
+                <?php if ($userSummary !== []): ?>
+                    <?php
+                        // Totals row — plain sums for the count columns; the
+                        // two completion percentages are weighted averages
+                        // (aggregate edits / aggregate effective jobs) so
+                        // they still read as a true "overall completion".
+                        $totEmp   = 0; $totJobs = 0; $totOpen = 0;
+                        $totEff   = 0; $totEditsMine = 0; $totEditsAny = 0;
+                        foreach ($userSummary as $s) {
+                            $totEmp        += (int) $s['employers_assigned'];
+                            $totJobs       += (int) $s['jobs_assigned'];
+                            $totOpen       += (int) $s['effective_openings'];
+                            $totEff        += (int) $s['effective_jobs'];
+                            $totEditsMine  += (int) $s['status_edits_made'];
+                            $totEditsAny   += (int) $s['status_edits_anyone'];
+                        }
+                        $totPctMine   = $totEff > 0 ? round(($totEditsMine / $totEff) * 100, 1) : 0.0;
+                        $totPctAny    = $totEff > 0 ? round(($totEditsAny  / $totEff) * 100, 1) : 0.0;
+                        $totToneMine  = $totPctMine >= 90 ? 'success' : ($totPctMine >= 50 ? 'warning' : 'danger');
+                        $totToneAny   = $totPctAny  >= 90 ? 'success' : ($totPctAny  >= 50 ? 'warning' : 'danger');
+                    ?>
+                    <tr class="table-secondary fw-semibold">
+                        <td colspan="3">Total <span class="text-muted small ms-1">(<?= number_format(count($userSummary)) ?> user<?= count($userSummary) === 1 ? '' : 's' ?>)</span></td>
+                        <td class="text-end"><?= number_format($totEmp) ?></td>
+                        <td class="text-end"><?= number_format($totJobs) ?></td>
+                        <td class="text-end"><?= number_format($totOpen) ?></td>
+                        <td class="text-end"><?= number_format($totEditsMine) ?> / <?= number_format($totEff) ?></td>
+                        <td class="text-end" style="min-width:140px;">
+                            <div class="d-flex align-items-center justify-content-end gap-2" title="Weighted across all users: <?= number_format($totEditsMine) ?> of <?= number_format($totEff) ?> effective job(s)">
+                                <div class="progress flex-grow-1" style="height:8px; max-width:100px;">
+                                    <div class="progress-bar bg-<?= esc($totToneMine) ?>" role="progressbar" style="width: <?= (float) $totPctMine ?>%;" aria-valuenow="<?= (float) $totPctMine ?>" aria-valuemin="0" aria-valuemax="100"></div>
+                                </div>
+                                <span class="fw-bold"><?= number_format($totPctMine, 1) ?>%</span>
+                            </div>
+                        </td>
+                        <td class="text-end" style="min-width:160px;">
+                            <div class="d-flex align-items-center justify-content-end gap-2" title="Weighted across all users: <?= number_format($totEditsAny) ?> of <?= number_format($totEff) ?> effective job(s)">
+                                <div class="progress flex-grow-1" style="height:8px; max-width:100px;">
+                                    <div class="progress-bar bg-<?= esc($totToneAny) ?>" role="progressbar" style="width: <?= (float) $totPctAny ?>%;" aria-valuenow="<?= (float) $totPctAny ?>" aria-valuemin="0" aria-valuemax="100"></div>
+                                </div>
+                                <span class="fw-bold"><?= number_format($totPctAny, 1) ?>%</span>
+                            </div>
+                        </td>
+                    </tr>
+                <?php endif; ?>
             </tbody>
         </table>
     </div>
     <div class="card-footer small text-muted">
         <strong>User Completion %</strong> = status edits made <em>by this user</em> on their scoped jobs &divide; effective jobs.
         <strong>Actual Completion %</strong> = distinct scoped jobs with <em>any</em> status edit (regardless of who made it) &divide; effective jobs — so if another user closed some of this user's jobs, both figures diverge and the gap surfaces here.
+        The <strong>Total</strong> row's percentages are weighted across every user: aggregate edits &divide; aggregate effective jobs, not a simple average of each row.
     </div>
 </div>
 
