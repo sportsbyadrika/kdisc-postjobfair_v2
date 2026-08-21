@@ -172,8 +172,8 @@ function district_pmu_bootstrap(): void
         KEY idx_authority (owning_authority_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
-    // Idempotent: add the `district` column (and its index) on Phase-2
-    // installs that already had the assets table without it.
+    // Idempotent: add the `district` + submission-locking columns (and
+    // their indexes) on installs that already have the assets table.
     $assetCols = [];
     foreach ($db->query('SHOW COLUMNS FROM district_pmu_assets')->fetchAll() as $col) {
         $assetCols[strtolower((string) $col['Field'])] = $col;
@@ -182,6 +182,41 @@ function district_pmu_bootstrap(): void
         try { $db->query('ALTER TABLE district_pmu_assets ADD COLUMN district VARCHAR(120) NULL AFTER user_id'); } catch (Throwable $e) { /* ignore */ }
         try { $db->query('ALTER TABLE district_pmu_assets ADD KEY idx_district (district)'); } catch (Throwable $e) { /* ignore */ }
     }
+    if (!isset($assetCols['submission_id'])) {
+        try { $db->query('ALTER TABLE district_pmu_assets ADD COLUMN submission_id INT NULL AFTER concerned_person'); } catch (Throwable $e) { /* ignore */ }
+        try { $db->query('ALTER TABLE district_pmu_assets ADD COLUMN submitted_at DATETIME NULL AFTER submission_id'); } catch (Throwable $e) { /* ignore */ }
+        try { $db->query('ALTER TABLE district_pmu_assets ADD KEY idx_submission (submission_id)'); } catch (Throwable $e) { /* ignore */ }
+    }
+
+    /* -------------------------------------------------------------------- *
+     * Asset submissions — a batch of asset rows the operator locks in with
+     * a single click, generating a shareable submission_number that
+     * appears on the printed Approved Asset Register. The approver signs
+     * the printout by hand; nothing about the physical approval is stored
+     * in this table.
+     * -------------------------------------------------------------------- */
+    $db->query("CREATE TABLE IF NOT EXISTS district_pmu_asset_submissions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        submission_number VARCHAR(64) NULL,
+        district VARCHAR(120) NOT NULL,
+        submitted_by INT NULL,
+        submitted_at DATETIME NULL,
+        asset_count INT NOT NULL DEFAULT 0,
+        notes TEXT NULL,
+        UNIQUE KEY unique_submission_number (submission_number),
+        KEY idx_district (district),
+        KEY idx_submitted_at (submitted_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+/**
+ * Format a submission number from a numeric id + creation date.
+ * Chosen to be human-readable at a glance: DPMU-<Ymd>-<6-digit id>.
+ */
+function district_pmu_submission_number(int $id, ?string $dateYmd = null): string
+{
+    $dateYmd = $dateYmd ?: date('Ymd');
+    return sprintf('DPMU-%s-%06d', $dateYmd, $id);
 }
 
 /**

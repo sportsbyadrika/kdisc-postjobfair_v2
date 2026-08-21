@@ -26,13 +26,82 @@ foreach ($assetSubtypes as $st) {
     $subtypesByType[(int) $st['asset_type_id']][] = ['id' => (int) $st['id'], 'name' => (string) $st['name']];
 }
 
-// Delete handler
+// Delete handler — locked rows (submission_id IS NOT NULL) refuse.
 if (is_post() && ($_POST['action'] ?? '') === 'delete') {
     $delId = (int) ($_POST['id'] ?? 0);
     if ($delId > 0 && $district !== '') {
-        $stmt = db()->prepare('DELETE FROM district_pmu_assets WHERE id = ? AND district = ?');
+        $stmt = db()->prepare('DELETE FROM district_pmu_assets WHERE id = ? AND district = ? AND submission_id IS NULL');
         $stmt->execute([$delId, $district]);
-        $flashMessage = 'Asset row deleted.';
+        if ($stmt->affectedRows() > 0) {
+            $flashMessage = 'Asset row deleted.';
+        } else {
+            $flashMessage = 'Row already submitted — delete is locked. Only unsubmitted rows can be removed.';
+            $flashType = 'warning';
+        }
+    }
+}
+
+// Bulk submission handler — locks the selected rows behind a fresh
+// submission_number that appears on the printed report. Rows already
+// tied to a submission are silently skipped so a stale re-post can't
+// re-lock or reassign an approved row.
+if (is_post() && ($_POST['action'] ?? '') === 'submit_selected') {
+    if ($district === '') {
+        $flashMessage = 'No district selected.';
+        $flashType = 'danger';
+    } else {
+        $rawIds = $_POST['asset_ids'] ?? [];
+        if (!is_array($rawIds)) { $rawIds = [$rawIds]; }
+        $ids = array_values(array_unique(array_filter(array_map('intval', $rawIds), static fn(int $v): bool => $v > 0)));
+        if ($ids === []) {
+            $flashMessage = 'Pick at least one un-submitted row before clicking Submit.';
+            $flashType = 'warning';
+        } else {
+            // Sanity check: reject any id whose row isn't in this district
+            // or that's already been submitted. Same query the UPDATE uses,
+            // just as a pre-count so the flash number is honest.
+            $ph = implode(',', array_fill(0, count($ids), '?'));
+            $chkStmt = db()->prepare("SELECT id FROM district_pmu_assets
+                WHERE district = ? AND submission_id IS NULL AND id IN ($ph)");
+            $chkStmt->execute([$district, ...$ids]);
+            $eligible = array_map(static fn(array $r): int => (int) $r['id'], $chkStmt->fetchAll());
+
+            if ($eligible === []) {
+                $flashMessage = 'None of the selected rows were eligible — they may already be submitted.';
+                $flashType = 'warning';
+            } else {
+                db()->query('START TRANSACTION');
+                try {
+                    $now = date('Y-m-d H:i:s');
+                    // Insert the submission shell so we get the id.
+                    $ins = db()->prepare('INSERT INTO district_pmu_asset_submissions
+                        (submission_number, district, submitted_by, submitted_at, asset_count, notes)
+                        VALUES (?, ?, ?, ?, ?, ?)');
+                    $ins->execute([null, $district, $userId, $now, count($eligible), null]);
+                    $subId  = (int) db()->lastInsertId();
+                    $subNum = district_pmu_submission_number($subId, date('Ymd'));
+                    db()->prepare('UPDATE district_pmu_asset_submissions SET submission_number = ? WHERE id = ?')
+                        ->execute([$subNum, $subId]);
+
+                    // Lock the asset rows to this submission.
+                    $phe = implode(',', array_fill(0, count($eligible), '?'));
+                    $upd = db()->prepare("UPDATE district_pmu_assets
+                        SET submission_id = ?, submitted_at = ?
+                        WHERE district = ? AND submission_id IS NULL AND id IN ($phe)");
+                    $upd->execute([$subId, $now, $district, ...$eligible]);
+
+                    db()->query('COMMIT');
+                    $flashMessage = sprintf(
+                        'Submission %s created with %d asset row(s). These rows are now locked from further edits.',
+                        $subNum, count($eligible)
+                    );
+                } catch (Throwable $e) {
+                    db()->query('ROLLBACK');
+                    $flashMessage = 'Submission failed: ' . $e->getMessage();
+                    $flashType = 'danger';
+                }
+            }
+        }
     }
 }
 
@@ -80,14 +149,19 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 $u = db()->prepare('UPDATE district_pmu_assets
                     SET asset_type_id = ?, subtype_id = ?, description = ?, owning_authority_id = ?,
                         quantity = ?, remarks = ?, concerned_person = ?, updated_at = NOW()
-                    WHERE id = ? AND district = ?');
+                    WHERE id = ? AND district = ? AND submission_id IS NULL');
                 $u->execute([
                     $assetTypeId, $subtypeId, $description === '' ? null : $description,
                     $authId > 0 ? $authId : null, $quantity,
                     $remarks === '' ? null : $remarks, $concerned === '' ? null : $concerned,
                     $rowId, $district,
                 ]);
-                $flashMessage = 'Asset row updated.';
+                if ($u->affectedRows() > 0) {
+                    $flashMessage = 'Asset row updated.';
+                } else {
+                    $flashMessage = 'That row is already submitted and cannot be edited.';
+                    $flashType = 'warning';
+                }
             } else {
                 $u = db()->prepare('INSERT INTO district_pmu_assets
                     (user_id, district, asset_type_id, subtype_id, description, owning_authority_id, quantity, remarks, concerned_person, created_at, updated_at)
@@ -108,7 +182,20 @@ if ($editingId > 0 && $editingRow === null && $district !== '') {
     $stmt = db()->prepare('SELECT * FROM district_pmu_assets WHERE id = ? AND district = ?');
     $stmt->execute([$editingId, $district]);
     $r = $stmt->fetch();
-    if ($r !== false) $editingRow = $r;
+    if ($r !== false) {
+        if ($r['submission_id'] !== null) {
+            $flashMessage = 'That row belongs to submission #' . (int) $r['submission_id'] . ' and is locked from edits.';
+            $flashType = 'warning';
+            $editingId = 0; // fall back to the empty Add form
+        } else {
+            $editingRow = $r;
+        }
+    }
+}
+// Same guard on the save path — if a saved row is locked between form
+// open and submit, we reject silently rather than clobber the lock.
+if (is_post() && ($_POST['action'] ?? '') === 'save' && (int) ($_POST['id'] ?? 0) > 0 && $editingRow === null) {
+    // Above branch already errored + reset — nothing to do here.
 }
 
 // Filters + list
@@ -155,16 +242,20 @@ if (($_GET['download'] ?? '') === 'csv') {
     fclose($out); exit;
 }
 
-$listSql = "SELECT a.*, t.name AS type_name, s.name AS subtype_name, auth.name AS authority_name
+$listSql = "SELECT a.*, t.name AS type_name, s.name AS subtype_name, auth.name AS authority_name,
+        sub.submission_number AS submission_number
     FROM district_pmu_assets a
     LEFT JOIN district_pmu_asset_types t ON t.id = a.asset_type_id
     LEFT JOIN district_pmu_asset_subtypes s ON s.id = a.subtype_id
     LEFT JOIN district_pmu_owning_authorities auth ON auth.id = a.owning_authority_id
+    LEFT JOIN district_pmu_asset_submissions sub ON sub.id = a.submission_id
     $whereSql
     ORDER BY t.sort_order ASC, s.sort_order ASC, a.id DESC";
 $listStmt = db()->prepare($listSql);
 $listStmt->execute($params);
 $assetRows = $listStmt->fetchAll();
+$unsubmittedCount = 0;
+foreach ($assetRows as $ar) { if ($ar['submission_id'] === null) $unsubmittedCount++; }
 
 // Filter dropdown options — subtype list on the filter shows every
 // active subtype, filtered client-side by chosen type.
@@ -312,56 +403,121 @@ render_page_header('District PMU · Asset Register', [
     </div>
 </form>
 
-<div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-box-seam text-primary me-1"></i>Assets</span>
-        <span class="status-chip status-info"><?= number_format(count($assetRows)) ?> row<?= count($assetRows) === 1 ? '' : 's' ?></span>
-    </div>
-    <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0">
-            <thead>
-                <tr>
-                    <th>Sl No</th>
-                    <th>Type</th>
-                    <th>Sub type</th>
-                    <th>Description</th>
-                    <th>Owning Authority</th>
-                    <th class="text-end">Quantity</th>
-                    <th>Concerned Person</th>
-                    <th>Remarks</th>
-                    <th class="text-end">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if ($assetRows === []): ?>
-                    <tr><td colspan="9"><div class="empty-state"><i class="bi bi-inbox"></i>No assets recorded yet. Use the form above to add one.</div></td></tr>
+<form method="post" id="submitAssetsForm" onsubmit="return confirm('Lock the selected rows behind a new submission number? They cannot be edited or deleted afterwards.');">
+    <input type="hidden" name="action" value="submit_selected">
+    <input type="hidden" name="district" value="<?= esc($district) ?>">
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span><i class="bi bi-box-seam text-primary me-1"></i>Assets</span>
+            <div class="d-flex align-items-center gap-2">
+                <span class="status-chip status-info"><?= number_format(count($assetRows)) ?> row<?= count($assetRows) === 1 ? '' : 's' ?></span>
+                <?php if ($unsubmittedCount > 0): ?>
+                    <button type="submit" class="btn btn-sm btn-warning" id="submitSelectedBtn" disabled>
+                        <i class="bi bi-check2-square me-1"></i>Submit selected <span class="badge bg-dark ms-1" id="submitSelectedCount">0</span>
+                    </button>
                 <?php endif; ?>
-                <?php $i = 1; foreach ($assetRows as $r): ?>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
                     <tr>
-                        <td><?= $i++ ?></td>
-                        <td><span class="status-chip status-<?= str_contains(strtolower((string) $r['type_name']), 'non') ? 'neutral' : 'info' ?>"><?= esc((string) ($r['type_name'] ?? '')) ?></span></td>
-                        <td class="fw-semibold"><?= esc((string) ($r['subtype_name'] ?? '')) ?></td>
-                        <td class="small text-muted"><?= nl2br(esc((string) ($r['description'] ?? ''))) ?></td>
-                        <td class="small"><?= esc((string) ($r['authority_name'] ?? '—')) ?></td>
-                        <td class="text-end fw-bold"><?= number_format((int) ($r['quantity'] ?? 0)) ?></td>
-                        <td><?= esc((string) ($r['concerned_person'] ?? '')) ?></td>
-                        <td class="small text-muted"><?= nl2br(esc((string) ($r['remarks'] ?? ''))) ?></td>
-                        <td class="text-end">
-                            <div class="d-inline-flex gap-1">
-                                <a class="btn btn-sm btn-outline-primary" href="/district_pmu_assets.php?district=<?= urlencode($district) ?>&amp;edit=<?= (int) $r['id'] ?>#assetForm"><i class="bi bi-pencil-square"></i></a>
-                                <form method="post" class="d-inline" onsubmit="return confirm('Delete this asset row?');">
-                                    <input type="hidden" name="action" value="delete">
-                                    <input type="hidden" name="id" value="<?= (int) $r['id'] ?>">
-                                    <input type="hidden" name="district" value="<?= esc($district) ?>">
-                                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
-                                </form>
-                            </div>
-                        </td>
+                        <th style="width:34px;"><input type="checkbox" id="assetsSelectAll" title="Select all un-submitted rows"></th>
+                        <th>Sl No</th>
+                        <th>Type</th>
+                        <th>Sub type</th>
+                        <th>Description</th>
+                        <th>Owning Authority</th>
+                        <th class="text-end">Quantity</th>
+                        <th>Concerned Person</th>
+                        <th>Remarks</th>
+                        <th>Submission</th>
+                        <th class="text-end">Actions</th>
                     </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    <?php if ($assetRows === []): ?>
+                        <tr><td colspan="11"><div class="empty-state"><i class="bi bi-inbox"></i>No assets recorded yet. Use the form above to add one.</div></td></tr>
+                    <?php endif; ?>
+                    <?php $i = 1; foreach ($assetRows as $r): ?>
+                        <?php $locked = $r['submission_id'] !== null; ?>
+                        <tr class="<?= $locked ? 'table-light' : '' ?>">
+                            <td>
+                                <?php if (!$locked): ?>
+                                    <input type="checkbox" class="js-asset-row" name="asset_ids[]" value="<?= (int) $r['id'] ?>">
+                                <?php else: ?>
+                                    <i class="bi bi-lock-fill text-muted" title="Submitted — locked"></i>
+                                <?php endif; ?>
+                            </td>
+                            <td><?= $i++ ?></td>
+                            <td><span class="status-chip status-<?= str_contains(strtolower((string) $r['type_name']), 'non') ? 'neutral' : 'info' ?>"><?= esc((string) ($r['type_name'] ?? '')) ?></span></td>
+                            <td class="fw-semibold"><?= esc((string) ($r['subtype_name'] ?? '')) ?></td>
+                            <td class="small text-muted"><?= nl2br(esc((string) ($r['description'] ?? ''))) ?></td>
+                            <td class="small"><?= esc((string) ($r['authority_name'] ?? '—')) ?></td>
+                            <td class="text-end fw-bold"><?= number_format((int) ($r['quantity'] ?? 0)) ?></td>
+                            <td><?= esc((string) ($r['concerned_person'] ?? '')) ?></td>
+                            <td class="small text-muted"><?= nl2br(esc((string) ($r['remarks'] ?? ''))) ?></td>
+                            <td class="small">
+                                <?php if ($locked): ?>
+                                    <span class="badge text-bg-success" title="Submitted at <?= esc((string) ($r['submitted_at'] ?? '')) ?>"><?= esc((string) ($r['submission_number'] ?? '—')) ?></span>
+                                <?php else: ?>
+                                    <span class="text-muted">—</span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="text-end">
+                                <?php if (!$locked): ?>
+                                    <div class="d-inline-flex gap-1">
+                                        <a class="btn btn-sm btn-outline-primary" href="/district_pmu_assets.php?district=<?= urlencode($district) ?>&amp;edit=<?= (int) $r['id'] ?>#assetForm"><i class="bi bi-pencil-square"></i></a>
+                                        <button type="button" class="btn btn-sm btn-outline-danger js-delete-asset" data-id="<?= (int) $r['id'] ?>" title="Delete this asset row"><i class="bi bi-trash"></i></button>
+                                    </div>
+                                <?php else: ?>
+                                    <span class="text-muted small">Locked</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
     </div>
-</div>
+</form>
+<script>
+(function () {
+    // Select-all + submit-button enable/disable.
+    const selAll  = document.getElementById('assetsSelectAll');
+    const btn     = document.getElementById('submitSelectedBtn');
+    const badge   = document.getElementById('submitSelectedCount');
+    const rows    = () => Array.from(document.querySelectorAll('.js-asset-row'));
+    const refresh = () => {
+        const n = rows().filter((c) => c.checked).length;
+        if (badge) badge.textContent = String(n);
+        if (btn)   btn.disabled = (n === 0);
+    };
+    selAll?.addEventListener('change', () => {
+        rows().forEach((c) => { c.checked = selAll.checked; });
+        refresh();
+    });
+    rows().forEach((c) => c.addEventListener('change', refresh));
+    refresh();
+
+    // Delete via delegation — building the form on the fly keeps the
+    // per-row markup free of nested <form>s (which HTML forbids).
+    const currentDistrict = <?= json_encode($district, JSON_UNESCAPED_UNICODE) ?>;
+    document.addEventListener('click', (ev) => {
+        const btnDel = ev.target.closest('.js-delete-asset');
+        if (!btnDel) return;
+        ev.preventDefault();
+        if (!confirm('Delete this asset row?')) return;
+        const f = document.createElement('form');
+        f.method = 'post';
+        const mk = (n, v) => { const i = document.createElement('input'); i.type = 'hidden'; i.name = n; i.value = v; return i; };
+        f.appendChild(mk('action', 'delete'));
+        f.appendChild(mk('id', btnDel.getAttribute('data-id')));
+        f.appendChild(mk('district', currentDistrict));
+        document.body.appendChild(f);
+        f.submit();
+    });
+})();
+</script>
 
 <?php render_footer(); ?>
