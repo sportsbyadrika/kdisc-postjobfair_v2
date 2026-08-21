@@ -136,14 +136,15 @@ function ensure_user_role_support(Database $database): void
     }
 
     $roleType = (string) ($roleColumn[0]['Type'] ?? '');
-    $hasDistrict = str_contains($roleType, "'district_user'");
-    $hasStateDsm = str_contains($roleType, "'state_dsm'");
-    $hasDsmAdmin = str_contains($roleType, "'dsm_admin'");
-    if ($hasDistrict && $hasStateDsm && $hasDsmAdmin) {
+    $hasDistrict    = str_contains($roleType, "'district_user'");
+    $hasStateDsm    = str_contains($roleType, "'state_dsm'");
+    $hasDsmAdmin    = str_contains($roleType, "'dsm_admin'");
+    $hasDistrictPmu = str_contains($roleType, "'district_pmu'");
+    if ($hasDistrict && $hasStateDsm && $hasDsmAdmin && $hasDistrictPmu) {
         return;
     }
 
-    $database->query("ALTER TABLE users MODIFY COLUMN role ENUM('administrator', 'crm_member', 'district_user', 'state_dsm', 'dsm_admin') NOT NULL");
+    $database->query("ALTER TABLE users MODIFY COLUMN role ENUM('administrator', 'crm_member', 'district_user', 'state_dsm', 'dsm_admin', 'district_pmu') NOT NULL");
 }
 
 function db(): Database

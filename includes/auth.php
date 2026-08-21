@@ -62,6 +62,22 @@ function is_district_user(array $user): bool
     return ($user['role'] ?? '') === 'district_user';
 }
 
+function is_district_pmu(array $user): bool
+{
+    return ($user['role'] ?? '') === 'district_pmu';
+}
+
+function require_district_pmu(): void
+{
+    require_auth();
+    $u = current_user();
+    if (($u['role'] ?? '') !== 'district_pmu') {
+        http_response_code(403);
+        echo 'Access denied — District PMU role required.';
+        exit;
+    }
+}
+
 function is_post(): bool
 {
     return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST';

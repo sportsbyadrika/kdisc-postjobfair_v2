@@ -9,6 +9,7 @@ function role_label(string $role): string
         'district_user' => 'District User',
         'state_dsm' => 'State DSM',
         'dsm_admin' => 'DSM Admin',
+        'district_pmu' => 'District PMU',
         default => ucwords(str_replace('_', ' ', $role)),
     };
 }
@@ -98,12 +99,16 @@ function render_header(string $title, array $options = []): void
                                 // State DSM and DSM Admin see a slimmer top menu — Dashboard
                                 // and Demand Side only (DSM Admin additionally gets
                                 // Administration). Job Fair, Masters and Reports are hidden.
+                                // District PMU is scoped even more tightly: no Job Fair,
+                                // no Masters, no Reports, no Demand Side — only the
+                                // District PMU menu (rendered in a later phase).
                                 $role = (string) ($user['role'] ?? '');
                                 $isDemandOnly = ($role === 'state_dsm' || $role === 'dsm_admin');
+                                $isDistrictPmu = ($role === 'district_pmu');
                                 // Aliased for backwards-compat with other blocks in this file.
                                 $isStateDsm = ($role === 'state_dsm');
                             ?>
-                            <?php if (!$isDemandOnly): ?>
+                            <?php if (!$isDemandOnly && !$isDistrictPmu): ?>
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'notifications.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'job_fair_conversion_data_export.php', 'manage_candidate.php', 'crm_process.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
                                 <ul class="dropdown-menu">
