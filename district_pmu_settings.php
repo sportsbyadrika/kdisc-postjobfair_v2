@@ -2,14 +2,17 @@
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/district_pmu_helpers.php';
-require_admin();
+require_auth();
 
-$user = current_user();
-if (!is_manage_admin($user)) {
+$user = current_user() ?? [];
+// Administrator, DSM Admin AND EDMS can maintain the District PMU masters —
+// EDMS is the approval authority and needs to add missing subtypes /
+// authorities without waiting on IT. Every other role is rejected.
+if (!is_manage_admin($user) && !is_edms($user)) {
     http_response_code(403);
     render_header('Access denied');
     render_page_header('Access denied', ['icon' => 'bi-shield-lock']);
-    echo '<div class="alert alert-danger">Only Administrator and DSM Admin can manage District PMU masters.</div>';
+    echo '<div class="alert alert-danger">Only Administrator, DSM Admin and EDMS can manage District PMU masters.</div>';
     render_footer();
     exit;
 }
