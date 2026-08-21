@@ -221,12 +221,42 @@ function district_pmu_submission_number(int $id, ?string $dateYmd = null): strin
 
 /**
  * Parse a user's assigned_districts column into a clean, order-preserving
- * array of trimmed district names. Empty / NULL input returns [] which
- * the calling page renders as "ask an Administrator to assign a district".
+ * array of trimmed district names. Empty / NULL input returns [].
+ *
+ * The value is normally cached on $user by login_user(), but if that
+ * cache is missing (old sessions from before Phase 3D) OR if the caller
+ * wants the freshest value straight from the DB (e.g. after an admin
+ * edited the row), we transparently fall back to a lookup keyed by
+ * users.id. The lookup result is also stashed back into $_SESSION so
+ * subsequent calls in the same request avoid the round-trip.
  */
 function district_pmu_user_districts(array $user): array
 {
-    $raw = trim((string) ($user['assigned_districts'] ?? ''));
+    $raw = null;
+    if (array_key_exists('assigned_districts', $user)) {
+        $raw = $user['assigned_districts'];
+    }
+    if ($raw === null) {
+        // Session cache miss (pre-Phase-3D login or refreshed data
+        // needed). Look up straight from the users table.
+        $uid = (int) ($user['id'] ?? 0);
+        if ($uid > 0) {
+            static $lookupCache = [];
+            if (!array_key_exists($uid, $lookupCache)) {
+                $stmt = db()->prepare('SELECT assigned_districts FROM users WHERE id = ?');
+                $stmt->execute([$uid]);
+                $row = $stmt->fetch();
+                $lookupCache[$uid] = $row === false ? null : ($row['assigned_districts'] ?? null);
+            }
+            $raw = $lookupCache[$uid];
+            // Warm the session so downstream helpers don't hit the DB
+            // again on the same request.
+            if (isset($_SESSION['user']) && is_array($_SESSION['user'])) {
+                $_SESSION['user']['assigned_districts'] = $raw;
+            }
+        }
+    }
+    $raw = trim((string) ($raw ?? ''));
     if ($raw === '') return [];
     $out = [];
     foreach (explode(',', $raw) as $part) {

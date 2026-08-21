@@ -116,6 +116,11 @@ function login_user(string $mobile, string $password): ?string
         'mobile_number' => $user['mobile_number'],
         'role' => $user['role'],
         'email' => $user['email'],
+        // Cached in the session so role-scoped pages (District PMU etc)
+        // don't need a lookup on every request. Refresh helpers below
+        // still fall back to the DB if the key is missing on an old
+        // session.
+        'assigned_districts' => $user['assigned_districts'] ?? null,
     ];
 
     $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
