@@ -2,7 +2,7 @@
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/district_pmu_helpers.php';
-require_district_pmu();
+require_pmu_user();
 district_pmu_bootstrap();
 
 $user       = current_user();

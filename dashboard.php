@@ -7,11 +7,16 @@ $user = current_user();
 $uid = $user['id'];
 $isDistrictUser = is_district_user($user);
 $isAdmin = is_admin($user);
+$isEdms  = is_edms($user);
+// EDMS gets the admin-style dashboard (DPMU snapshot + photos gallery)
+// but is NOT is_admin (Demand Side / Statistics / Administration stay
+// admin-only). Use this flag for dashboard-view gates only.
+$isDashboardAdminView = $isAdmin || $isEdms;
 
-// District PMU users have their own scoped dashboard (office profile
-// status + asset counts). Redirect early so they don't fall through to
-// the generic Post Job Fair blocks below.
-if (is_district_pmu($user)) {
+// District PMU + State PMU share a scoped dashboard (office profile
+// status + asset counts). Redirect early so they don't fall through
+// to the generic Post Job Fair blocks below.
+if (is_pmu_user($user)) {
     header('Location: /district_pmu_dashboard.php');
     exit;
 }
@@ -28,10 +33,11 @@ $demandStatusValidPositions = 0;
 $demandStatusInvalidPositions = 0;
 $demandStatusCorrectedPositions = 0;
 $demandStatusNotStartedPositions = 0;
-if ($isAdmin) {
+if ($isDashboardAdminView) {
     $totalUsers = (int) db()->query('SELECT COUNT(*) FROM users WHERE active_status = 1')->fetchColumn();
-    // Demand-side snapshot for the admin / state_dsm dashboard. Wrapped in a
-    // try so a fresh install without the demand_* tables yet still renders.
+    // Demand-side + District PMU snapshot for the admin / EDMS dashboard.
+    // Wrapped in a try so a fresh install without those tables yet still
+    // renders the rest of the page.
     try {
         require_once __DIR__ . '/includes/demand_side_helpers.php';
         demand_side_bootstrap();
@@ -209,7 +215,7 @@ $joinedPct = $totalSelectedCount > 0 ? round(($totalJoinedCount / $totalSelected
 // Adds "mine_*" columns that count calls authored by the currently logged in user, so the user
 // can compare their own activity against the team total.
 $last5DaysCallRows = [];
-if (!$isAdmin) {
+if (!$isDashboardAdminView) {
     $stmt = db()->prepare(
         "SELECT
             DATE(call_datetime) AS call_date,
@@ -333,7 +339,7 @@ $allKpis = [
     'notif'        => ['label' => 'My Notifications',    'value' => $myNotificationCount,          'icon' => 'bi-bell-fill',          'tone' => 'warning', 'link' => '/notifications.php',       'link_text' => 'Open notifications'],
 ];
 
-if ($isAdmin) {
+if ($isDashboardAdminView) {
     $kpiKeys = ['users', 'job_fairs', 'selected', 'shortlisted', 'onhold', 'total_sel', 'joined', 'notif'];
 } elseif ($isDistrictUser) {
     $kpiKeys = ['job_fairs', 'candidates', 'selected', 'shortlisted', 'total_sel', 'offer', 'joined', 'notif'];
@@ -391,7 +397,7 @@ render_header('Dashboard');
     </div>
 </div>
 
-<?php if ($isAdmin): ?>
+<?php if ($isDashboardAdminView): ?>
 <div class="mb-1">
     <h2 class="h6 text-muted text-uppercase mb-2"><i class="bi bi-building me-1"></i>Demand Side Snapshot <span class="text-muted small">(based on DWMS database)</span></h2>
     <div class="row g-3">
@@ -582,7 +588,7 @@ render_header('Dashboard');
 </div>
 <?php endif; ?>
 
-<?php if ($isAdmin): ?>
+<?php if ($isDashboardAdminView): ?>
     <?php
         $dpmuProfilePct  = $dpmuDistrictsCoveredCount > 0
             ? (int) round(($dpmuProfilesFilledCount / $dpmuDistrictsCoveredCount) * 100)
@@ -729,7 +735,7 @@ render_header('Dashboard');
     <?php endif; ?>
 <?php endif; ?>
 
-<h2 class="h6 text-muted text-uppercase mb-2 <?= $isAdmin ? 'mt-4' : '' ?>"><i class="bi bi-clipboard2-data me-1"></i>Post Job Fair Status</h2>
+<h2 class="h6 text-muted text-uppercase mb-2 <?= $isDashboardAdminView ? 'mt-4' : '' ?>"><i class="bi bi-clipboard2-data me-1"></i>Post Job Fair Status</h2>
 <div class="row g-3 mb-1">
     <?php foreach ($kpiKeys as $kpiKey): ?>
         <?php $kpi = $allKpis[$kpiKey]; ?>
@@ -752,7 +758,7 @@ render_header('Dashboard');
     <?php endforeach; ?>
 </div>
 
-<?php if (!$isAdmin): ?>
+<?php if (!$isDashboardAdminView): ?>
 <div class="card mt-3">
     <div class="card-body">
         <h2 class="h5 mb-3"><i class="bi bi-lightning-charge-fill text-primary me-1"></i>Quick Actions</h2>
@@ -767,7 +773,7 @@ render_header('Dashboard');
 </div>
 <?php endif; ?>
 
-<?php if (!$isAdmin): ?>
+<?php if (!$isDashboardAdminView): ?>
 <div class="card table-card mt-3">
     <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-telephone-fill text-primary me-1"></i>Last 5 Days Call Statistics</span>
@@ -877,7 +883,7 @@ render_header('Dashboard');
 </div>
 <?php endif; ?>
 
-<?php if (!$isAdmin): ?>
+<?php if (!$isDashboardAdminView): ?>
 <div class="card table-card mt-3">
     <div class="card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-calendar-event text-primary me-1"></i>Job Fair wise Status</span>
@@ -1017,6 +1023,6 @@ render_header('Dashboard');
         </div>
     </div>
 </div>
-<?php endif; /* !$isAdmin — hides Job Fair wise Status + District wise Record Count */ ?>
+<?php endif; /* !$isDashboardAdminView — hides Job Fair wise Status + District wise Record Count */ ?>
 
 <?php render_footer(); ?>

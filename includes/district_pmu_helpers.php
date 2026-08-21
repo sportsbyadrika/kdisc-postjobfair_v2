@@ -203,10 +203,29 @@ function district_pmu_bootstrap(): void
         submitted_at DATETIME NULL,
         asset_count INT NOT NULL DEFAULT 0,
         notes TEXT NULL,
+        approval_status ENUM('pending','approved','rejected','returned') NOT NULL DEFAULT 'pending',
+        reviewed_by INT NULL,
+        reviewed_at DATETIME NULL,
+        review_remarks TEXT NULL,
         UNIQUE KEY unique_submission_number (submission_number),
         KEY idx_district (district),
-        KEY idx_submitted_at (submitted_at)
+        KEY idx_submitted_at (submitted_at),
+        KEY idx_approval (approval_status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // Idempotent: add the approval-workflow columns on installs that
+    // already have the submissions table without them.
+    $subCols = [];
+    foreach ($db->query('SHOW COLUMNS FROM district_pmu_asset_submissions')->fetchAll() as $col) {
+        $subCols[strtolower((string) $col['Field'])] = $col;
+    }
+    if (!isset($subCols['approval_status'])) {
+        try { $db->query("ALTER TABLE district_pmu_asset_submissions ADD COLUMN approval_status ENUM('pending','approved','rejected','returned') NOT NULL DEFAULT 'pending' AFTER notes"); } catch (Throwable $e) { /* ignore */ }
+        try { $db->query('ALTER TABLE district_pmu_asset_submissions ADD COLUMN reviewed_by INT NULL AFTER approval_status'); } catch (Throwable $e) { /* ignore */ }
+        try { $db->query('ALTER TABLE district_pmu_asset_submissions ADD COLUMN reviewed_at DATETIME NULL AFTER reviewed_by'); } catch (Throwable $e) { /* ignore */ }
+        try { $db->query('ALTER TABLE district_pmu_asset_submissions ADD COLUMN review_remarks TEXT NULL AFTER reviewed_at'); } catch (Throwable $e) { /* ignore */ }
+        try { $db->query('ALTER TABLE district_pmu_asset_submissions ADD KEY idx_approval (approval_status)'); } catch (Throwable $e) { /* ignore */ }
+    }
 }
 
 /**
@@ -282,27 +301,38 @@ function district_pmu_current_district(array $user): string
 }
 
 /**
- * Reusable HTML for the district switcher shown on District-PMU pages.
- * Single-district users see a plain read-only chip; multi-district users
- * get a GET-form dropdown that reloads the current page with ?district=.
- * `$extraHidden` lets a caller preserve any other query params (like the
- * active Assets filters) across the switch.
+ * "District" for District PMU users, "State Level" for State PMU users.
+ * Used as the label on the switcher, form fields and card subtitles so
+ * the copy makes sense for either role without duplicating pages.
+ */
+function pmu_scope_label(array $user): string
+{
+    return (($user['role'] ?? '') === 'state_pmu') ? 'State Level' : 'District';
+}
+
+/**
+ * Reusable HTML for the scope switcher shown on PMU pages (District PMU
+ * OR State PMU). Single-scope users see a plain read-only chip; multi-
+ * scope users get a GET-form dropdown that reloads the current page
+ * with ?district=. `$extraHidden` lets a caller preserve any other
+ * query params (like the active Assets filters) across the switch.
  */
 function district_pmu_render_district_switcher(array $user, string $currentDistrict, array $extraHidden = []): string
 {
     $districts = district_pmu_user_districts($user);
+    $label     = pmu_scope_label($user);
     if ($districts === []) {
-        return '<span class="badge text-bg-warning" title="Ask an Administrator to set your assigned districts">No district assigned</span>';
+        return '<span class="badge text-bg-warning" title="Ask an Administrator to set your assigned ' . htmlspecialchars(strtolower($label), ENT_QUOTES, 'UTF-8') . '">No ' . htmlspecialchars(strtolower($label), ENT_QUOTES, 'UTF-8') . ' assigned</span>';
     }
     if (count($districts) === 1) {
-        return '<span class="badge text-bg-light border" title="Your assigned district"><i class="bi bi-geo-alt me-1"></i>' . htmlspecialchars($districts[0], ENT_QUOTES, 'UTF-8') . '</span>';
+        return '<span class="badge text-bg-light border" title="Your assigned ' . htmlspecialchars(strtolower($label), ENT_QUOTES, 'UTF-8') . '"><i class="bi bi-geo-alt me-1"></i>' . htmlspecialchars($districts[0], ENT_QUOTES, 'UTF-8') . '</span>';
     }
     $html  = '<form method="get" class="d-inline-flex align-items-center gap-2">';
     foreach ($extraHidden as $k => $v) {
         if ($k === 'district' || $v === '' || $v === null) continue;
         $html .= '<input type="hidden" name="' . htmlspecialchars((string) $k, ENT_QUOTES, 'UTF-8') . '" value="' . htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8') . '">';
     }
-    $html .= '<label class="small text-muted mb-0"><i class="bi bi-geo-alt me-1"></i>District</label>';
+    $html .= '<label class="small text-muted mb-0"><i class="bi bi-geo-alt me-1"></i>' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '</label>';
     $html .= '<select class="form-select form-select-sm" name="district" onchange="this.form.submit()" style="width:auto;">';
     foreach ($districts as $d) {
         $sel = ($d === $currentDistrict) ? ' selected' : '';
