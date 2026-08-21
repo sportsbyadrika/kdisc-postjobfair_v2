@@ -100,10 +100,20 @@ if ($hasExplicitPick) {
 // when split_by=job) are excluded from the pool. Prevents re-assigning
 // something that already has an owner and keeps the fair-split meaningful.
 if ($splitBy === 'job') {
+    // Two exclusions:
+    //   (a) the individual job is already in demand_user_job_assignments,
+    //   (b) the job's parent employer is already in
+    //       demand_user_employer_assignments — assigning the employer to
+    //       someone means every job of that employer is implicitly theirs,
+    //       so those jobs shouldn't be re-handed out one at a time.
+    // Net effect: the pool is every job of every UN-assigned employer that
+    // also has no per-job owner — which matches the requested "if employer
+    // 1040 is not yet assigned and has 630 jobs, distribute those 630".
     $poolSql = "SELECT j.job_id, j.emp_id, e.employer_name, j.jobtitle, COALESCE(j.open_positions, 0) AS positions_count
         FROM demand_employer_jobs j
         INNER JOIN demand_employers e ON e.employer_id = j.emp_id
-        WHERE j.job_id NOT IN (SELECT job_id FROM demand_user_job_assignments)";
+        WHERE j.job_id NOT IN (SELECT job_id FROM demand_user_job_assignments)
+          AND j.emp_id NOT IN (SELECT employer_id FROM demand_user_employer_assignments)";
     if ($categoryFilter !== '' && isset($categoryByName[$categoryFilter])) {
         $c = $categoryByName[$categoryFilter];
         $poolSql .= " AND j.emp_id IN (
