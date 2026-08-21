@@ -116,15 +116,25 @@ if ($isDashboardAdminView) {
     $dpmuSubmissionsByDistrict = [];  // [{district, submissions, assets}]
     $dpmuPhotoRows            = [];   // [{district, office_name, building_photo_path, room_photo_path}]
     try {
+        // Ensure the district_pmu_* tables exist before we query them —
+        // an admin can log in and hit the dashboard before any PMU user
+        // has visited a page that would have bootstrapped the schema,
+        // which was making every DPMU counter silently return 0.
+        require_once __DIR__ . '/includes/district_pmu_helpers.php';
+        district_pmu_bootstrap();
+
+        // District PMU + State PMU count together, since both are on the
+        // enum and reach the same district_pmu_* tables. Filtering to
+        // just district_pmu was hiding State PMU users on the card.
         $dpmuUserCount = (int) db()->query(
-            "SELECT COUNT(*) FROM users WHERE role = 'district_pmu' AND active_status = 1"
+            "SELECT COUNT(*) FROM users WHERE role IN ('district_pmu', 'state_pmu') AND active_status = 1"
         )->fetchColumn();
 
-        // Distinct districts across every active District PMU user's
+        // Distinct districts across every active PMU user's
         // assigned_districts CSV. Small enough to parse in PHP.
         $districtsSet = [];
         $ur = db()->query("SELECT assigned_districts FROM users
-            WHERE role = 'district_pmu' AND active_status = 1
+            WHERE role IN ('district_pmu', 'state_pmu') AND active_status = 1
               AND assigned_districts IS NOT NULL AND TRIM(assigned_districts) <> ''");
         foreach ($ur->fetchAll() as $row) {
             foreach (explode(',', (string) $row['assigned_districts']) as $p) {
@@ -443,7 +453,7 @@ render_header('Dashboard');
             <div class="card card-stat accent-primary h-100">
                 <div class="card-body d-flex align-items-start justify-content-between gap-2">
                     <div class="w-100">
-                        <p class="stat-label">Jobs</p>
+                        <p class="stat-label">Job Titles</p>
                         <p class="stat-value"><?= number_format($demandJobCount) ?></p>
                         <?php
                             $netJobs = max(0, $demandJobCount - $demandStatusInvalid);
@@ -482,7 +492,7 @@ render_header('Dashboard');
             <div class="card card-stat accent-success h-100">
                 <div class="card-body d-flex align-items-start justify-content-between gap-2">
                     <div class="w-100">
-                        <p class="stat-label">Job Positions</p>
+                        <p class="stat-label">Job Vacancies</p>
                         <p class="stat-value"><?= number_format($demandOpenPositions) ?></p>
                         <?php
                             $netPositions = max(0, $demandOpenPositions - $demandStatusInvalidPositions);
@@ -539,9 +549,13 @@ render_header('Dashboard');
                         <div class="w-100">
                             <p class="stat-label"><?= esc($card['label']) ?></p>
                             <p class="stat-value"><?= number_format((int) $card['value']) ?></p>
-                            <?php if ($card['positions'] !== null): ?>
-                                <div class="small text-muted mb-1"><i class="bi bi-person-plus me-1"></i><strong><?= number_format((int) $card['positions']) ?></strong> <?= esc((string) $card['positions_label']) ?></div>
-                            <?php endif; ?>
+                            <?php /* The former "N verified/affected open positions"
+                                     line was removed — it summed open_positions for
+                                     three cards but corrected_open_position on the
+                                     Corrected card, so the number didn't match the
+                                     chip totals below. The single "N position(s)
+                                     across the chips" line is now the authoritative
+                                     positions figure per card. */ ?>
                             <a class="stat-link" href="/demand_side_stats.php">View statistics <i class="bi bi-arrow-right-short"></i></a>
                             <?php if ($cardBreakdown !== []): ?>
                                 <div class="mt-2">

@@ -204,9 +204,9 @@ function render_header(string $title, array $options = []): void
                                 </li>
                             <?php endif; ?>
                             <?php if ($isEdms): ?>
-                                <li class="nav-item">
-                                    <a class="nav-link<?= $isActive(['dashboard.php']) ?>" href="/dashboard.php"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a>
-                                </li>
+                                <?php /* The generic Dashboard link on line 73 is emitted
+                                         for every logged-in user, so we DON'T repeat it
+                                         here — otherwise EDMS sees two Dashboard tabs. */ ?>
                                 <li class="nav-item dropdown">
                                     <a class="nav-link dropdown-toggle<?= $isActive(['edms_profiles.php', 'edms_profile_detail.php', 'edms_submissions.php', 'edms_submission_detail.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-collection me-1"></i>PMU Assets</a>
                                     <ul class="dropdown-menu">
