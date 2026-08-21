@@ -310,7 +310,7 @@ render_page_header('District PMU · Asset Register', [
             </div>
             <div class="col-md-3">
                 <label class="form-label">Sub type <span class="text-danger">*</span></label>
-                <select class="form-select" name="subtype_id" id="assetSub type" required>
+                <select class="form-select" name="subtype_id" id="assetSubtype" required>
                     <option value="">Pick a type first…</option>
                 </select>
             </div>
@@ -345,17 +345,17 @@ render_page_header('District PMU · Asset Register', [
         </form>
         <script>
         (function () {
-            const bySub typeByType = <?= json_encode($subtypesByType, JSON_UNESCAPED_UNICODE) ?>;
+            const bySubtypeByType = <?= json_encode($subtypesByType, JSON_UNESCAPED_UNICODE) ?>;
             const typeSel    = document.getElementById('assetType');
-            const subtypeSel = document.getElementById('assetSub type');
-            const preselectSub type = <?= (int) ($editingRow['subtype_id'] ?? 0) ?>;
+            const subtypeSel = document.getElementById('assetSubtype');
+            const preselectSubtype = <?= (int) ($editingRow['subtype_id'] ?? 0) ?>;
             const refresh = () => {
                 const t = parseInt(typeSel.value, 10) || 0;
-                const opts = bySub typeByType[t] || [];
+                const opts = bySubtypeByType[t] || [];
                 subtypeSel.innerHTML = opts.length === 0
                     ? '<option value="">— no active subtypes —</option>'
                     : '<option value="">Select…</option>' + opts.map((o) => `<option value="${o.id}">${o.name.replace(/</g,'&lt;')}</option>`).join('');
-                if (preselectSub type) subtypeSel.value = String(preselectSub type);
+                if (preselectSubtype) subtypeSel.value = String(preselectSubtype);
             };
             typeSel.addEventListener('change', refresh);
             refresh();
