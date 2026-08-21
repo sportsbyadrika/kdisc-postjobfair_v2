@@ -10,6 +10,8 @@ function role_label(string $role): string
         'state_dsm' => 'State DSM',
         'dsm_admin' => 'DSM Admin',
         'district_pmu' => 'District PMU',
+        'state_pmu' => 'State PMU',
+        'edms' => 'EDMS',
         default => ucwords(str_replace('_', ' ', $role)),
     };
 }
@@ -99,16 +101,20 @@ function render_header(string $title, array $options = []): void
                                 // State DSM and DSM Admin see a slimmer top menu — Dashboard
                                 // and Demand Side only (DSM Admin additionally gets
                                 // Administration). Job Fair, Masters and Reports are hidden.
-                                // District PMU is scoped even more tightly: no Job Fair,
-                                // no Masters, no Reports, no Demand Side — only the
-                                // District PMU menu (rendered in a later phase).
+                                // District PMU and State PMU share a scoped menu — Office
+                                // Profile / Asset Register / Report. EDMS is a viewer +
+                                // approval role: Dashboard, District PMU Masters, and a
+                                // PMU Assets dropdown (built in Phase 4B).
                                 $role = (string) ($user['role'] ?? '');
                                 $isDemandOnly = ($role === 'state_dsm' || $role === 'dsm_admin');
                                 $isDistrictPmu = ($role === 'district_pmu');
+                                $isStatePmu = ($role === 'state_pmu');
+                                $isPmuUser  = ($isDistrictPmu || $isStatePmu);
+                                $isEdms = ($role === 'edms');
                                 // Aliased for backwards-compat with other blocks in this file.
                                 $isStateDsm = ($role === 'state_dsm');
                             ?>
-                            <?php if (!$isDemandOnly && !$isDistrictPmu): ?>
+                            <?php if (!$isDemandOnly && !$isPmuUser && !$isEdms): ?>
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'notifications.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'job_fair_conversion_data_export.php', 'manage_candidate.php', 'crm_process.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
                                 <ul class="dropdown-menu">
@@ -183,7 +189,7 @@ function render_header(string $title, array $options = []): void
                                     </li>
                                 <?php endif; ?>
                             <?php endif; ?>
-                            <?php if ($isDistrictPmu): ?>
+                            <?php if ($isPmuUser): ?>
                                 <li class="nav-item">
                                     <a class="nav-link<?= $isActive(['district_pmu_office_profile.php']) ?>" href="/district_pmu_office_profile.php"><i class="bi bi-building-check me-1"></i>Office Profile</a>
                                 </li>
@@ -197,11 +203,24 @@ function render_header(string $title, array $options = []): void
                                     </ul>
                                 </li>
                             <?php endif; ?>
-                            <?php if (is_manage_admin($user)): ?>
-                                <?php /* Administrator + DSM Admin get access to the District PMU
-                                         masters (asset types / subtypes / owning authorities).
-                                         Rendered as a small extra link so it doesn't clash with
-                                         the Administration dropdown next to it. */ ?>
+                            <?php if ($isEdms): ?>
+                                <li class="nav-item">
+                                    <a class="nav-link<?= $isActive(['dashboard.php']) ?>" href="/dashboard.php"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a>
+                                </li>
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['edms_profiles.php', 'edms_profile_detail.php', 'edms_submissions.php', 'edms_submission_detail.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-collection me-1"></i>PMU Assets</a>
+                                    <ul class="dropdown-menu">
+                                        <li><a class="dropdown-item" href="/edms_profiles.php"><i class="bi bi-building-check me-2"></i>District Profile</a></li>
+                                        <li><a class="dropdown-item" href="/edms_submissions.php"><i class="bi bi-box-seam me-2"></i>Asset Register</a></li>
+                                    </ul>
+                                </li>
+                            <?php endif; ?>
+                            <?php if (is_manage_admin($user) || $isEdms): ?>
+                                <?php /* Administrator + DSM Admin manage District PMU masters
+                                         (asset types / subtypes / owning authorities). EDMS
+                                         also gets the link so they can add missing subtypes
+                                         without asking IT. Rendered as a small extra link so
+                                         it doesn't clash with the Administration dropdown. */ ?>
                                 <li class="nav-item">
                                     <a class="nav-link<?= $isActive(['district_pmu_settings.php']) ?>" href="/district_pmu_settings.php" title="Manage District PMU masters (asset types, subtypes, owning authorities)"><i class="bi bi-diagram-2 me-1"></i>District PMU Masters</a>
                                 </li>

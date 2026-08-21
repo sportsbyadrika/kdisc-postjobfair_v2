@@ -7,11 +7,16 @@ $user = current_user();
 $uid = $user['id'];
 $isDistrictUser = is_district_user($user);
 $isAdmin = is_admin($user);
+$isEdms  = is_edms($user);
+// EDMS gets the admin-style dashboard (DPMU snapshot + photos gallery)
+// but is NOT is_admin (Demand Side / Statistics / Administration stay
+// admin-only). Use this flag for dashboard-view gates only.
+$isDashboardAdminView = $isAdmin || $isEdms;
 
-// District PMU users have their own scoped dashboard (office profile
-// status + asset counts). Redirect early so they don't fall through to
-// the generic Post Job Fair blocks below.
-if (is_district_pmu($user)) {
+// District PMU + State PMU share a scoped dashboard (office profile
+// status + asset counts). Redirect early so they don't fall through
+// to the generic Post Job Fair blocks below.
+if (is_pmu_user($user)) {
     header('Location: /district_pmu_dashboard.php');
     exit;
 }
@@ -28,10 +33,11 @@ $demandStatusValidPositions = 0;
 $demandStatusInvalidPositions = 0;
 $demandStatusCorrectedPositions = 0;
 $demandStatusNotStartedPositions = 0;
-if ($isAdmin) {
+if ($isDashboardAdminView) {
     $totalUsers = (int) db()->query('SELECT COUNT(*) FROM users WHERE active_status = 1')->fetchColumn();
-    // Demand-side snapshot for the admin / state_dsm dashboard. Wrapped in a
-    // try so a fresh install without the demand_* tables yet still renders.
+    // Demand-side + District PMU snapshot for the admin / EDMS dashboard.
+    // Wrapped in a try so a fresh install without those tables yet still
+    // renders the rest of the page.
     try {
         require_once __DIR__ . '/includes/demand_side_helpers.php';
         demand_side_bootstrap();
@@ -108,6 +114,7 @@ if ($isAdmin) {
     $dpmuTypeBreakdown        = [];   // [{name, count}]
     $dpmuDistrictProfiles     = [];   // [district => bool]
     $dpmuSubmissionsByDistrict = [];  // [{district, submissions, assets}]
+    $dpmuPhotoRows            = [];   // [{district, office_name, building_photo_path, room_photo_path}]
     try {
         $dpmuUserCount = (int) db()->query(
             "SELECT COUNT(*) FROM users WHERE role = 'district_pmu' AND active_status = 1"
@@ -164,6 +171,14 @@ if ($isAdmin) {
             FROM district_pmu_asset_submissions
             GROUP BY district
             ORDER BY submissions DESC, district ASC")->fetchAll();
+
+        // Per-district photo gallery — every profile row that has at least
+        // one of the two photos on disk. Ordered so districts still missing
+        // both photos surface FIRST (the admin sees the gaps at a glance).
+        $dpmuPhotoRows = db()->query("SELECT district, office_name, building_photo_path, room_photo_path, updated_at
+            FROM district_pmu_office_profile
+            WHERE building_photo_path IS NOT NULL OR room_photo_path IS NOT NULL
+            ORDER BY district ASC")->fetchAll();
     } catch (Throwable $e) { /* district_pmu_* tables not bootstrapped yet */ }
 }
 
@@ -200,7 +215,7 @@ $joinedPct = $totalSelectedCount > 0 ? round(($totalJoinedCount / $totalSelected
 // Adds "mine_*" columns that count calls authored by the currently logged in user, so the user
 // can compare their own activity against the team total.
 $last5DaysCallRows = [];
-if (!$isAdmin) {
+if (!$isDashboardAdminView) {
     $stmt = db()->prepare(
         "SELECT
             DATE(call_datetime) AS call_date,
@@ -324,7 +339,7 @@ $allKpis = [
     'notif'        => ['label' => 'My Notifications',    'value' => $myNotificationCount,          'icon' => 'bi-bell-fill',          'tone' => 'warning', 'link' => '/notifications.php',       'link_text' => 'Open notifications'],
 ];
 
-if ($isAdmin) {
+if ($isDashboardAdminView) {
     $kpiKeys = ['users', 'job_fairs', 'selected', 'shortlisted', 'onhold', 'total_sel', 'joined', 'notif'];
 } elseif ($isDistrictUser) {
     $kpiKeys = ['job_fairs', 'candidates', 'selected', 'shortlisted', 'total_sel', 'offer', 'joined', 'notif'];
@@ -382,7 +397,7 @@ render_header('Dashboard');
     </div>
 </div>
 
-<?php if ($isAdmin): ?>
+<?php if ($isDashboardAdminView): ?>
 <div class="mb-1">
     <h2 class="h6 text-muted text-uppercase mb-2"><i class="bi bi-building me-1"></i>Demand Side Snapshot <span class="text-muted small">(based on DWMS database)</span></h2>
     <div class="row g-3">
@@ -573,7 +588,7 @@ render_header('Dashboard');
 </div>
 <?php endif; ?>
 
-<?php if ($isAdmin): ?>
+<?php if ($isDashboardAdminView): ?>
     <?php
         $dpmuProfilePct  = $dpmuDistrictsCoveredCount > 0
             ? (int) round(($dpmuProfilesFilledCount / $dpmuDistrictsCoveredCount) * 100)
@@ -663,9 +678,64 @@ render_header('Dashboard');
             </div>
         </div>
     </div>
+
+    <?php if ($dpmuPhotoRows !== []): ?>
+        <div class="card mt-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-images text-primary me-1"></i>District PMU Office Photos</span>
+                <span class="status-chip status-info"><?= number_format(count($dpmuPhotoRows)) ?> district<?= count($dpmuPhotoRows) === 1 ? '' : 's' ?> with photos</span>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <?php foreach ($dpmuPhotoRows as $pr): ?>
+                        <div class="col-12 col-md-6 col-xl-4">
+                            <div class="border rounded p-2 h-100">
+                                <div class="d-flex justify-content-between align-items-baseline mb-2">
+                                    <div>
+                                        <div class="fw-semibold"><?= esc((string) $pr['district']) ?></div>
+                                        <?php if (trim((string) ($pr['office_name'] ?? '')) !== ''): ?>
+                                            <div class="small text-muted"><?= esc((string) $pr['office_name']) ?></div>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="small text-muted"><?= esc(substr((string) ($pr['updated_at'] ?? ''), 0, 10)) ?></div>
+                                </div>
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <div class="small text-muted mb-1"><i class="bi bi-building me-1"></i>Building</div>
+                                        <?php if (!empty($pr['building_photo_path'])): ?>
+                                            <a href="<?= esc((string) $pr['building_photo_path']) ?>" target="_blank" rel="noopener">
+                                                <img src="<?= esc((string) $pr['building_photo_path']) ?>" alt="Building photo · <?= esc((string) $pr['district']) ?>"
+                                                     style="width:100%; aspect-ratio: 4/3; object-fit: cover; border-radius:.25rem; border:1px solid var(--bs-border-color);">
+                                            </a>
+                                        <?php else: ?>
+                                            <div class="d-flex align-items-center justify-content-center text-muted small border rounded"
+                                                 style="width:100%; aspect-ratio: 4/3; background: var(--bs-secondary-bg);">Not uploaded</div>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="small text-muted mb-1"><i class="bi bi-door-open me-1"></i>Room</div>
+                                        <?php if (!empty($pr['room_photo_path'])): ?>
+                                            <a href="<?= esc((string) $pr['room_photo_path']) ?>" target="_blank" rel="noopener">
+                                                <img src="<?= esc((string) $pr['room_photo_path']) ?>" alt="Room photo · <?= esc((string) $pr['district']) ?>"
+                                                     style="width:100%; aspect-ratio: 4/3; object-fit: cover; border-radius:.25rem; border:1px solid var(--bs-border-color);">
+                                            </a>
+                                        <?php else: ?>
+                                            <div class="d-flex align-items-center justify-content-center text-muted small border rounded"
+                                                 style="width:100%; aspect-ratio: 4/3; background: var(--bs-secondary-bg);">Not uploaded</div>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <div class="card-footer small text-muted"><i class="bi bi-info-circle me-1"></i>Click a thumbnail to open the full-size photo in a new tab.</div>
+        </div>
+    <?php endif; ?>
 <?php endif; ?>
 
-<h2 class="h6 text-muted text-uppercase mb-2 <?= $isAdmin ? 'mt-4' : '' ?>"><i class="bi bi-clipboard2-data me-1"></i>Post Job Fair Status</h2>
+<h2 class="h6 text-muted text-uppercase mb-2 <?= $isDashboardAdminView ? 'mt-4' : '' ?>"><i class="bi bi-clipboard2-data me-1"></i>Post Job Fair Status</h2>
 <div class="row g-3 mb-1">
     <?php foreach ($kpiKeys as $kpiKey): ?>
         <?php $kpi = $allKpis[$kpiKey]; ?>
@@ -688,7 +758,7 @@ render_header('Dashboard');
     <?php endforeach; ?>
 </div>
 
-<?php if (!$isAdmin): ?>
+<?php if (!$isDashboardAdminView): ?>
 <div class="card mt-3">
     <div class="card-body">
         <h2 class="h5 mb-3"><i class="bi bi-lightning-charge-fill text-primary me-1"></i>Quick Actions</h2>
@@ -703,7 +773,7 @@ render_header('Dashboard');
 </div>
 <?php endif; ?>
 
-<?php if (!$isAdmin): ?>
+<?php if (!$isDashboardAdminView): ?>
 <div class="card table-card mt-3">
     <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-telephone-fill text-primary me-1"></i>Last 5 Days Call Statistics</span>
@@ -813,7 +883,7 @@ render_header('Dashboard');
 </div>
 <?php endif; ?>
 
-<?php if (!$isAdmin): ?>
+<?php if (!$isDashboardAdminView): ?>
 <div class="card table-card mt-3">
     <div class="card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-calendar-event text-primary me-1"></i>Job Fair wise Status</span>
@@ -953,6 +1023,6 @@ render_header('Dashboard');
         </div>
     </div>
 </div>
-<?php endif; /* !$isAdmin — hides Job Fair wise Status + District wise Record Count */ ?>
+<?php endif; /* !$isDashboardAdminView — hides Job Fair wise Status + District wise Record Count */ ?>
 
 <?php render_footer(); ?>

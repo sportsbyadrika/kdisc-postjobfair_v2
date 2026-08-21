@@ -2,7 +2,7 @@
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/district_pmu_helpers.php';
-require_district_pmu();
+require_pmu_user();
 district_pmu_bootstrap();
 
 $user      = current_user();
@@ -243,7 +243,8 @@ if (($_GET['download'] ?? '') === 'csv') {
 }
 
 $listSql = "SELECT a.*, t.name AS type_name, s.name AS subtype_name, auth.name AS authority_name,
-        sub.submission_number AS submission_number
+        sub.submission_number AS submission_number,
+        sub.approval_status  AS approval_status
     FROM district_pmu_assets a
     LEFT JOIN district_pmu_asset_types t ON t.id = a.asset_type_id
     LEFT JOIN district_pmu_asset_subtypes s ON s.id = a.subtype_id
@@ -459,7 +460,17 @@ render_page_header('District PMU · Asset Register', [
                             <td class="small text-muted"><?= nl2br(esc((string) ($r['remarks'] ?? ''))) ?></td>
                             <td class="small">
                                 <?php if ($locked): ?>
-                                    <span class="badge text-bg-success" title="Submitted at <?= esc((string) ($r['submitted_at'] ?? '')) ?>"><?= esc((string) ($r['submission_number'] ?? '—')) ?></span>
+                                    <?php
+                                        $apSt = (string) ($r['approval_status'] ?? 'pending');
+                                        $apTone = match ($apSt) {
+                                            'approved' => 'success',
+                                            'rejected' => 'danger',
+                                            'returned' => 'warning',
+                                            default    => 'secondary',
+                                        };
+                                    ?>
+                                    <div><span class="badge text-bg-<?= esc($apTone) ?>" title="EDMS approval status: <?= esc($apSt) ?>"><?= esc((string) ($r['submission_number'] ?? '—')) ?></span></div>
+                                    <div class="small text-muted mt-1 text-uppercase" style="letter-spacing:.03em;"><?= esc($apSt) ?></div>
                                 <?php else: ?>
                                     <span class="text-muted">—</span>
                                 <?php endif; ?>

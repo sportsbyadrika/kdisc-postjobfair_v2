@@ -92,11 +92,18 @@ $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $users = $stmt->fetchAll();
 
-// Distinct candidate districts to populate the multi-select.
+// Distinct candidate districts to populate the multi-select. A synthetic
+// "State Level" option is prepended so State PMU users can be scoped to
+// the state-wide bucket rather than a specific district — the value
+// travels through the same assigned_districts CSV column, and the PMU
+// pages treat it as any other district (photos live under
+// uploads/district_pmu/State_Level/, assets are stored with district =
+// "State Level" etc).
 $districtOptions = array_map(
     static fn(array $row): string => (string) $row['Candidate_District'],
-    db()->query("SELECT DISTINCT Candidate_District FROM job_fair_result WHERE Candidate_District IS NOT NULL AND TRIM(Candidate_District) <> '' ORDER BY Candidate_District ASC")->fetchAll()
+    db()->query("SELECT DISTINCT Candidate_District FROM job_fair_result WHERE Candidate_District IS NOT NULL AND TRIM(Candidate_District) <> '' AND Candidate_District <> 'State Level' ORDER BY Candidate_District ASC")->fetchAll()
 );
+array_unshift($districtOptions, 'State Level');
 
 render_header('Users');
 render_page_header('User Management', [
@@ -118,7 +125,7 @@ render_page_header('User Management', [
         </div>
         <div class="col-6 col-md-2">
             <label class="form-label">Role</label>
-            <select class="form-select" name="role"><option value="">All Roles</option><option value="administrator" <?= $filterRole==='administrator'?'selected':'' ?>>Administrator</option><option value="dsm_admin" <?= $filterRole==='dsm_admin'?'selected':'' ?>>DSM Admin</option><option value="state_dsm" <?= $filterRole==='state_dsm'?'selected':'' ?>>State DSM</option><option value="crm_member" <?= $filterRole==='crm_member'?'selected':'' ?>>CRM Member</option><option value="district_user" <?= $filterRole==='district_user'?'selected':'' ?>>District User</option><option value="district_pmu" <?= $filterRole==='district_pmu'?'selected':'' ?>>District PMU</option></select>
+            <select class="form-select" name="role"><option value="">All Roles</option><option value="administrator" <?= $filterRole==='administrator'?'selected':'' ?>>Administrator</option><option value="dsm_admin" <?= $filterRole==='dsm_admin'?'selected':'' ?>>DSM Admin</option><option value="state_dsm" <?= $filterRole==='state_dsm'?'selected':'' ?>>State DSM</option><option value="crm_member" <?= $filterRole==='crm_member'?'selected':'' ?>>CRM Member</option><option value="district_user" <?= $filterRole==='district_user'?'selected':'' ?>>District User</option><option value="district_pmu" <?= $filterRole==='district_pmu'?'selected':'' ?>>District PMU</option><option value="state_pmu" <?= $filterRole==='state_pmu'?'selected':'' ?>>State PMU</option><option value="edms" <?= $filterRole==='edms'?'selected':'' ?>>EDMS</option></select>
         </div>
         <div class="col-6 col-md-2">
             <label class="form-label">Status</label>
@@ -183,7 +190,7 @@ render_page_header('User Management', [
             <input type="hidden" name="id" id="userId">
             <div class="row g-2">
                 <div class="col-md-6"><label class="form-label">Name</label><input class="form-control" name="name" id="name" required></div>
-                <div class="col-md-6"><label class="form-label">Role</label><select class="form-select" name="role" id="role"><option value="administrator">Administrator</option><option value="dsm_admin">DSM Admin</option><option value="state_dsm">State DSM</option><option value="crm_member">CRM Member</option><option value="district_user">District User</option><option value="district_pmu">District PMU</option></select></div>
+                <div class="col-md-6"><label class="form-label">Role</label><select class="form-select" name="role" id="role"><option value="administrator">Administrator</option><option value="dsm_admin">DSM Admin</option><option value="state_dsm">State DSM</option><option value="crm_member">CRM Member</option><option value="district_user">District User</option><option value="district_pmu">District PMU</option><option value="state_pmu">State PMU</option><option value="edms">EDMS</option></select></div>
                 <div class="col-md-6"><label class="form-label">Mobile</label><input class="form-control" name="mobile_number" id="mobile" required></div>
                 <div class="col-md-6"><label class="form-label">Email</label><input class="form-control" type="email" name="email" id="email"></div>
                 <div class="col-md-12"><label class="form-label">Address</label><textarea class="form-control" name="address" id="address"></textarea></div>

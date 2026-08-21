@@ -2,12 +2,18 @@
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/district_pmu_helpers.php';
-require_district_pmu();
+require_auth();
+$viewer = current_user() ?? [];
+if (!is_pmu_user($viewer) && !is_edms($viewer)) {
+    http_response_code(403);
+    echo 'Access denied — PMU or EDMS role required to view this report.';
+    exit;
+}
 district_pmu_bootstrap();
 
-$user       = current_user();
-$userId     = (int) $user['id'];
-$districts  = district_pmu_user_districts($user);
+$user       = $viewer;
+$userId     = (int) ($viewer['id'] ?? 0);
+$districts  = district_pmu_user_districts($viewer);
 $submissionId = (int) ($_GET['submission'] ?? 0);
 if ($submissionId <= 0) {
     http_response_code(400);
@@ -26,9 +32,9 @@ if (!$submission) {
     echo 'Submission not found.';
     exit;
 }
-// Access guard — a district_pmu user can only open reports for their
-// own assigned districts.
-if (!in_array((string) $submission['district'], $districts, true)) {
+// Access guard — PMU users only see submissions for their own assigned
+// districts; EDMS is unrestricted (they're the approval authority).
+if (!is_edms($viewer) && !in_array((string) $submission['district'], $districts, true)) {
     http_response_code(403);
     echo 'Access denied — this submission belongs to a district that is not on your assignment list.';
     exit;
