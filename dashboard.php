@@ -8,6 +8,14 @@ $uid = $user['id'];
 $isDistrictUser = is_district_user($user);
 $isAdmin = is_admin($user);
 
+// District PMU users have their own scoped dashboard (office profile
+// status + asset counts). Redirect early so they don't fall through to
+// the generic Post Job Fair blocks below.
+if (is_district_pmu($user)) {
+    header('Location: /district_pmu_dashboard.php');
+    exit;
+}
+
 $totalUsers = 0;
 $demandEmployerCount = 0;
 $demandJobCount = 0;

@@ -183,6 +183,23 @@ function render_header(string $title, array $options = []): void
                                     </li>
                                 <?php endif; ?>
                             <?php endif; ?>
+                            <?php if ($isDistrictPmu): ?>
+                                <li class="nav-item">
+                                    <a class="nav-link<?= $isActive(['district_pmu_office_profile.php']) ?>" href="/district_pmu_office_profile.php"><i class="bi bi-building-check me-1"></i>Office Profile</a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link<?= $isActive(['district_pmu_assets.php']) ?>" href="/district_pmu_assets.php"><i class="bi bi-box-seam me-1"></i>Asset Register</a>
+                                </li>
+                            <?php endif; ?>
+                            <?php if (is_manage_admin($user)): ?>
+                                <?php /* Administrator + DSM Admin get access to the District PMU
+                                         masters (asset types / subtypes / owning authorities).
+                                         Rendered as a small extra link so it doesn't clash with
+                                         the Administration dropdown next to it. */ ?>
+                                <li class="nav-item">
+                                    <a class="nav-link<?= $isActive(['district_pmu_settings.php']) ?>" href="/district_pmu_settings.php" title="Manage District PMU masters (asset types, subtypes, owning authorities)"><i class="bi bi-diagram-2 me-1"></i>District PMU Masters</a>
+                                </li>
+                            <?php endif; ?>
                         <?php endif; ?>
                     </ul>
                     <div class="dropdown">
