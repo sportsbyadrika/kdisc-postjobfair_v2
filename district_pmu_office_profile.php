@@ -194,27 +194,6 @@ render_page_header('District PMU · Office Profile', [
                 <input type="text" class="form-control" id="spoc_contact" name="spoc_contact" value="<?= esc($spocContact) ?>" placeholder="Mobile number">
             </div>
 
-            <div class="col-md-3">
-                <label class="form-label" for="latitude">Latitude</label>
-                <input type="text" class="form-control" id="latitude" name="latitude" value="<?= esc($latitude) ?>" placeholder="e.g. 8.5241">
-            </div>
-            <div class="col-md-3">
-                <label class="form-label" for="longitude">Longitude</label>
-                <input type="text" class="form-control" id="longitude" name="longitude" value="<?= esc($longitude) ?>" placeholder="e.g. 76.9366">
-            </div>
-            <div class="col-md-6 d-flex align-items-end">
-                <div class="w-100">
-                    <div class="small text-muted mb-1"><i class="bi bi-info-circle me-1"></i>Click a point on the map below to fill both fields. Search box on the map jumps you closer.</div>
-                    <div class="d-flex gap-2">
-                        <input type="text" class="form-control form-control-sm" id="mapSearch" placeholder="Search a place…">
-                        <button type="button" class="btn btn-sm btn-outline-primary" id="mapSearchBtn"><i class="bi bi-search"></i></button>
-                    </div>
-                </div>
-            </div>
-            <div class="col-12">
-                <div id="officeMap" style="height:360px; border:1px solid var(--bs-border-color); border-radius:.375rem;"></div>
-            </div>
-
             <div class="col-md-6">
                 <label class="form-label" for="building_photo">Photo of the building</label>
                 <input type="file" class="form-control" id="building_photo" name="building_photo" accept="image/jpeg,image/png,image/webp">
@@ -238,6 +217,27 @@ render_page_header('District PMU · Office Profile', [
                         </a>
                     </div>
                 <?php endif; ?>
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label" for="latitude">Latitude</label>
+                <input type="text" class="form-control" id="latitude" name="latitude" value="<?= esc($latitude) ?>" placeholder="e.g. 8.5241">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label" for="longitude">Longitude</label>
+                <input type="text" class="form-control" id="longitude" name="longitude" value="<?= esc($longitude) ?>" placeholder="e.g. 76.9366">
+            </div>
+            <div class="col-md-6 d-flex align-items-end">
+                <div class="w-100">
+                    <div class="small text-muted mb-1"><i class="bi bi-info-circle me-1"></i>Click a point on the map below to fill both fields. Search box on the map jumps you closer.</div>
+                    <div class="d-flex gap-2">
+                        <input type="text" class="form-control form-control-sm" id="mapSearch" placeholder="Search a place…">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="mapSearchBtn"><i class="bi bi-search"></i></button>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12">
+                <div id="officeMap" style="height:360px; border:1px solid var(--bs-border-color); border-radius:.375rem;"></div>
             </div>
         </div>
     </div>
