@@ -17,14 +17,25 @@ if (!in_array($report, ['assets'], true)) { $report = 'assets'; }
 $rows = [];
 if ($district !== '') {
     $stmt = db()->prepare("SELECT s.id, s.submission_number, s.submitted_at, s.asset_count, s.district,
-            u.name AS submitted_by_name
+            s.approval_status, s.reviewed_at, s.review_remarks,
+            u.name AS submitted_by_name, ru.name AS reviewed_by_name
         FROM district_pmu_asset_submissions s
-        LEFT JOIN users u ON u.id = s.submitted_by
+        LEFT JOIN users u  ON u.id  = s.submitted_by
+        LEFT JOIN users ru ON ru.id = s.reviewed_by
         WHERE s.district = ?
         ORDER BY s.submitted_at DESC, s.id DESC");
     $stmt->execute([$district]);
     $rows = $stmt->fetchAll();
 }
+
+$statusTone = static function (string $s): string {
+    return match ($s) {
+        'approved' => 'success',
+        'rejected' => 'danger',
+        'returned' => 'warning',
+        default    => 'secondary',
+    };
+};
 
 render_header('District PMU · Reports', ['main_container_class' => 'container-fluid']);
 render_page_header('District PMU · Reports · Asset Register', [
@@ -54,14 +65,16 @@ render_page_header('District PMU · Reports · Asset Register', [
                     <th>District</th>
                     <th>Submitted By</th>
                     <th class="text-end">Assets</th>
+                    <th>Approval</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($rows === []): ?>
-                    <tr><td colspan="7"><div class="empty-state"><i class="bi bi-inbox"></i>No submissions yet. Go to the Asset Register, tick the rows you want to lock in and click "Submit selected".</div></td></tr>
+                    <tr><td colspan="8"><div class="empty-state"><i class="bi bi-inbox"></i>No submissions yet. Go to the Asset Register, tick the rows you want to lock in and click "Submit selected".</div></td></tr>
                 <?php endif; ?>
                 <?php $i = 1; foreach ($rows as $r): ?>
+                    <?php $st = (string) ($r['approval_status'] ?? 'pending'); ?>
                     <tr>
                         <td><?= $i++ ?></td>
                         <td class="fw-semibold"><?= esc((string) ($r['submission_number'] ?? '')) ?></td>
@@ -69,6 +82,12 @@ render_page_header('District PMU · Reports · Asset Register', [
                         <td><?= esc((string) ($r['district'] ?? '')) ?></td>
                         <td><?= esc((string) ($r['submitted_by_name'] ?? '')) ?></td>
                         <td class="text-end fw-bold"><?= number_format((int) ($r['asset_count'] ?? 0)) ?></td>
+                        <td>
+                            <span class="badge text-bg-<?= esc($statusTone($st)) ?> text-uppercase"><?= esc($st) ?></span>
+                            <?php if (!empty($r['review_remarks'])): ?>
+                                <div class="small text-muted mt-1" title="EDMS remarks"><i class="bi bi-chat-left-text me-1"></i><?= esc(mb_strimwidth((string) $r['review_remarks'], 0, 80, '…')) ?></div>
+                            <?php endif; ?>
+                        </td>
                         <td class="text-end">
                             <a class="btn btn-sm btn-primary" href="/district_pmu_report_asset.php?submission=<?= (int) $r['id'] ?>" target="_blank" title="Opens the print-ready page in a new tab">
                                 <i class="bi bi-printer me-1"></i>Generate Report
