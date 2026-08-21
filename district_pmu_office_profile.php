@@ -5,16 +5,24 @@ require_once __DIR__ . '/includes/district_pmu_helpers.php';
 require_district_pmu();
 district_pmu_bootstrap();
 
-$user     = current_user();
-$userId   = (int) $user['id'];
-$district = trim((string) ($user['district'] ?? ''));
+$user       = current_user();
+$userId     = (int) $user['id'];
+$districts  = district_pmu_user_districts($user);
+$district   = district_pmu_current_district($user);
 
 $flashMessage = null;
 $flashType    = 'success';
 
-$profile = district_pmu_get_profile($userId);
+$profile = $district !== '' ? district_pmu_get_profile_by_district($district) : null;
 
 if (is_post() && ($_POST['action'] ?? '') === 'save') {
+    // Guard: the district must be one the user is actually assigned to,
+    // even if the POST value was tampered with.
+    $postDistrict = trim((string) ($_POST['district'] ?? ''));
+    if ($postDistrict !== '' && in_array($postDistrict, $districts, true)) {
+        $district = $postDistrict;
+        $profile  = district_pmu_get_profile_by_district($district);
+    }
     $officeName    = trim((string) ($_POST['office_name']    ?? ''));
     $address       = trim((string) ($_POST['address']        ?? ''));
     $pincode       = trim((string) ($_POST['pincode']        ?? ''));
@@ -82,10 +90,9 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
             $flashType = 'danger';
         } else {
             $stmt = db()->prepare('INSERT INTO district_pmu_office_profile
-                (user_id, district, office_name, address, pincode, spoc_name, spoc_contact, latitude, longitude, building_photo_path, room_photo_path, updated_by, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                (district, office_name, address, pincode, spoc_name, spoc_contact, latitude, longitude, building_photo_path, room_photo_path, updated_by, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON DUPLICATE KEY UPDATE
-                    district            = VALUES(district),
                     office_name         = VALUES(office_name),
                     address             = VALUES(address),
                     pincode             = VALUES(pincode),
@@ -98,7 +105,6 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                     updated_by          = VALUES(updated_by),
                     updated_at          = NOW()');
             $stmt->execute([
-                $userId,
                 $district,
                 $officeName   === '' ? null : $officeName,
                 $address      === '' ? null : $address,
@@ -111,8 +117,8 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 $roomPhotoPath,
                 $userId,
             ]);
-            $flashMessage = 'Office profile saved.';
-            $profile = district_pmu_get_profile($userId); // re-read for the form
+            $flashMessage = 'Office profile saved for ' . $district . '.';
+            $profile = district_pmu_get_profile_by_district($district); // re-read for the form
         }
     }
 }
@@ -133,7 +139,8 @@ render_header('District PMU · Office Profile');
 render_page_header('District PMU · Office Profile', [
     'icon'     => 'bi-building-check',
     'subtitle' => 'Details of the PMU office in your district — used centrally for coordination and reporting.',
-    'actions'  => '<a class="btn btn-light" href="/district_pmu_dashboard.php"><i class="bi bi-arrow-left me-1"></i>Back to Dashboard</a>',
+    'actions'  => district_pmu_render_district_switcher($user, $district)
+        . '<a class="btn btn-light ms-2" href="/district_pmu_dashboard.php"><i class="bi bi-arrow-left me-1"></i>Back to Dashboard</a>',
 ]);
 ?>
 
@@ -141,10 +148,10 @@ render_page_header('District PMU · Office Profile', [
     <div class="alert alert-<?= esc($flashType) ?>"><?= esc($flashMessage) ?></div>
 <?php endif; ?>
 
-<?php if ($district === ''): ?>
+<?php if ($districts === []): ?>
     <div class="alert alert-warning">
         <i class="bi bi-exclamation-triangle-fill me-1"></i>
-        Your user account has no district assigned. Ask an Administrator to set the district on your user record before saving this profile.
+        Your user account has no assigned district. Ask an Administrator to set one (or more) on your user record before saving an Office Profile.
     </div>
 <?php endif; ?>
 
@@ -153,9 +160,14 @@ render_page_header('District PMU · Office Profile', [
     <div class="card-body">
         <div class="row g-3">
             <div class="col-md-3">
-                <label class="form-label">District</label>
+                <label class="form-label">District <span class="text-danger">*</span></label>
                 <input type="text" class="form-control" value="<?= esc($district) ?>" readonly>
-                <div class="small text-muted mt-1">Locked — set by the Administrator.</div>
+                <input type="hidden" name="district" value="<?= esc($district) ?>">
+                <?php if (count($districts) > 1): ?>
+                    <div class="small text-muted mt-1">Use the District switcher at the top-right to edit a different district.</div>
+                <?php else: ?>
+                    <div class="small text-muted mt-1">Assigned by your Administrator.</div>
+                <?php endif; ?>
             </div>
             <div class="col-md-5">
                 <label class="form-label" for="office_name">Office name</label>
@@ -174,12 +186,12 @@ render_page_header('District PMU · Office Profile', [
                 <textarea class="form-control" id="address" name="address" rows="2" placeholder="Full postal address"><?= esc($address) ?></textarea>
             </div>
             <div class="col-md-6">
-                <label class="form-label" for="spoc_name">SPOC name</label>
+                <label class="form-label" for="spoc_name">Existing SPOC Name</label>
                 <input type="text" class="form-control" id="spoc_name" name="spoc_name" value="<?= esc($spocName) ?>">
             </div>
             <div class="col-md-6">
-                <label class="form-label" for="spoc_contact">SPOC contact</label>
-                <input type="text" class="form-control" id="spoc_contact" name="spoc_contact" value="<?= esc($spocContact) ?>" placeholder="Phone / email">
+                <label class="form-label" for="spoc_contact">Existing SPOC contact (Mobile Number)</label>
+                <input type="text" class="form-control" id="spoc_contact" name="spoc_contact" value="<?= esc($spocContact) ?>" placeholder="Mobile number">
             </div>
 
             <div class="col-md-3">

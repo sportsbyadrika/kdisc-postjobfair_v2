@@ -5,8 +5,10 @@ require_once __DIR__ . '/includes/district_pmu_helpers.php';
 require_district_pmu();
 district_pmu_bootstrap();
 
-$user   = current_user();
-$userId = (int) $user['id'];
+$user      = current_user();
+$userId    = (int) $user['id'];
+$districts = district_pmu_user_districts($user);
+$district  = district_pmu_current_district($user);
 
 $flashMessage = null;
 $flashType    = 'success';
@@ -27,9 +29,9 @@ foreach ($assetSubtypes as $st) {
 // Delete handler
 if (is_post() && ($_POST['action'] ?? '') === 'delete') {
     $delId = (int) ($_POST['id'] ?? 0);
-    if ($delId > 0) {
-        $stmt = db()->prepare('DELETE FROM district_pmu_assets WHERE id = ? AND user_id = ?');
-        $stmt->execute([$delId, $userId]);
+    if ($delId > 0 && $district !== '') {
+        $stmt = db()->prepare('DELETE FROM district_pmu_assets WHERE id = ? AND district = ?');
+        $stmt->execute([$delId, $district]);
         $flashMessage = 'Asset row deleted.';
     }
 }
@@ -48,7 +50,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     $concerned   = trim((string) ($_POST['concerned_person'] ?? ''));
 
     if ($assetTypeId <= 0 || $subtypeId <= 0) {
-        $flashMessage = 'Please pick an Asset type and Subtype.';
+        $flashMessage = 'Please pick an Asset type and Sub type.';
         $flashType = 'danger';
         // preserve entered values so the form re-renders them
         $editingRow = [
@@ -71,24 +73,27 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
             $flashMessage = 'Selected subtype does not belong to the chosen asset type.';
             $flashType = 'danger';
         } else {
-            if ($rowId > 0) {
+            if ($district === '') {
+                $flashMessage = 'No district selected — assets are stored per district.';
+                $flashType = 'danger';
+            } elseif ($rowId > 0) {
                 $u = db()->prepare('UPDATE district_pmu_assets
                     SET asset_type_id = ?, subtype_id = ?, description = ?, owning_authority_id = ?,
                         quantity = ?, remarks = ?, concerned_person = ?, updated_at = NOW()
-                    WHERE id = ? AND user_id = ?');
+                    WHERE id = ? AND district = ?');
                 $u->execute([
                     $assetTypeId, $subtypeId, $description === '' ? null : $description,
                     $authId > 0 ? $authId : null, $quantity,
                     $remarks === '' ? null : $remarks, $concerned === '' ? null : $concerned,
-                    $rowId, $userId,
+                    $rowId, $district,
                 ]);
                 $flashMessage = 'Asset row updated.';
             } else {
                 $u = db()->prepare('INSERT INTO district_pmu_assets
-                    (user_id, asset_type_id, subtype_id, description, owning_authority_id, quantity, remarks, concerned_person, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())');
+                    (user_id, district, asset_type_id, subtype_id, description, owning_authority_id, quantity, remarks, concerned_person, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())');
                 $u->execute([
-                    $userId, $assetTypeId, $subtypeId, $description === '' ? null : $description,
+                    $userId, $district, $assetTypeId, $subtypeId, $description === '' ? null : $description,
                     $authId > 0 ? $authId : null, $quantity,
                     $remarks === '' ? null : $remarks, $concerned === '' ? null : $concerned,
                 ]);
@@ -99,9 +104,9 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     }
 }
 
-if ($editingId > 0 && $editingRow === null) {
-    $stmt = db()->prepare('SELECT * FROM district_pmu_assets WHERE id = ? AND user_id = ?');
-    $stmt->execute([$editingId, $userId]);
+if ($editingId > 0 && $editingRow === null && $district !== '') {
+    $stmt = db()->prepare('SELECT * FROM district_pmu_assets WHERE id = ? AND district = ?');
+    $stmt->execute([$editingId, $district]);
     $r = $stmt->fetch();
     if ($r !== false) $editingRow = $r;
 }
@@ -110,8 +115,8 @@ if ($editingId > 0 && $editingRow === null) {
 $typeFilter    = (int) ($_GET['type']    ?? 0);
 $subtypeFilter = (int) ($_GET['subtype'] ?? 0);
 $authFilter    = (int) ($_GET['auth']    ?? 0);
-$conds  = ['a.user_id = ?'];
-$params = [$userId];
+$conds  = ['a.district = ?'];
+$params = [$district !== '' ? $district : '\0__none__'];
 if ($typeFilter > 0)    { $conds[] = 'a.asset_type_id = ?';       $params[] = $typeFilter; }
 if ($subtypeFilter > 0) { $conds[] = 'a.subtype_id = ?';          $params[] = $subtypeFilter; }
 if ($authFilter > 0)    { $conds[] = 'a.owning_authority_id = ?'; $params[] = $authFilter; }
@@ -132,7 +137,7 @@ if (($_GET['download'] ?? '') === 'csv') {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="district_pmu_assets_' . date('Ymd_His') . '.csv"');
     $out = fopen('php://output', 'w'); fwrite($out, "\xEF\xBB\xBF");
-    fputcsv($out, ['Sl No', 'Type', 'Subtype', 'Description', 'Owning Authority', 'Quantity', 'Remarks', 'Concerned Person', 'Last Updated']);
+    fputcsv($out, ['Sl No', 'Type', 'Sub type', 'Description', 'Owning Authority', 'Quantity', 'Remarks', 'Concerned Person', 'Last Updated']);
     $i = 1;
     while ($r = $stmt->fetch()) {
         fputcsv($out, [
@@ -164,17 +169,28 @@ $assetRows = $listStmt->fetchAll();
 // Filter dropdown options — subtype list on the filter shows every
 // active subtype, filtered client-side by chosen type.
 $csvUrl = '/district_pmu_assets.php?' . http_build_query(array_filter([
+    'district' => $district,
     'type' => $typeFilter, 'subtype' => $subtypeFilter, 'auth' => $authFilter, 'download' => 'csv',
 ], static fn($v): bool => $v !== 0 && $v !== '' && $v !== null));
 
 render_header('District PMU · Asset Register', ['main_container_class' => 'container-fluid']);
 render_page_header('District PMU · Asset Register', [
     'icon' => 'bi-box-seam',
-    'subtitle' => 'IT and Non-IT assets held by your district PMU office.',
-    'actions' => '<a class="btn btn-light me-1" href="' . esc($csvUrl) . '"><i class="bi bi-download me-1"></i>Download CSV</a>'
+    'subtitle' => 'IT and Non-IT assets held by the ' . ($district !== '' ? esc($district) : 'selected') . ' district PMU office.',
+    'actions' => district_pmu_render_district_switcher($user, $district, [
+            'type' => $typeFilter, 'subtype' => $subtypeFilter, 'auth' => $authFilter,
+        ])
+        . '<a class="btn btn-light ms-2 me-1" href="' . esc($csvUrl) . '"><i class="bi bi-download me-1"></i>Download CSV</a>'
         . '<a class="btn btn-light" href="/district_pmu_dashboard.php"><i class="bi bi-arrow-left me-1"></i>Back to Dashboard</a>',
 ]);
 ?>
+
+<?php if ($district === ''): ?>
+    <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+        Your user account has no assigned district. Ask an Administrator to set one before adding assets — assets are stored per district.
+    </div>
+<?php endif; ?>
 
 <?php if ($flashMessage !== null): ?>
     <div class="alert alert-<?= esc($flashType) ?>"><?= esc($flashMessage) ?></div>
@@ -191,6 +207,7 @@ render_page_header('District PMU · Asset Register', [
         <form method="post" class="row g-3" id="assetForm">
             <input type="hidden" name="action" value="save">
             <input type="hidden" name="id" value="<?= (int) ($editingRow['id'] ?? 0) ?>">
+            <input type="hidden" name="district" value="<?= esc($district) ?>">
             <div class="col-md-3">
                 <label class="form-label">Asset type <span class="text-danger">*</span></label>
                 <select class="form-select" name="asset_type_id" id="assetType" required>
@@ -201,8 +218,8 @@ render_page_header('District PMU · Asset Register', [
                 </select>
             </div>
             <div class="col-md-3">
-                <label class="form-label">Subtype <span class="text-danger">*</span></label>
-                <select class="form-select" name="subtype_id" id="assetSubtype" required>
+                <label class="form-label">Sub type <span class="text-danger">*</span></label>
+                <select class="form-select" name="subtype_id" id="assetSub type" required>
                     <option value="">Pick a type first…</option>
                 </select>
             </div>
@@ -237,17 +254,17 @@ render_page_header('District PMU · Asset Register', [
         </form>
         <script>
         (function () {
-            const bySubtypeByType = <?= json_encode($subtypesByType, JSON_UNESCAPED_UNICODE) ?>;
+            const bySub typeByType = <?= json_encode($subtypesByType, JSON_UNESCAPED_UNICODE) ?>;
             const typeSel    = document.getElementById('assetType');
-            const subtypeSel = document.getElementById('assetSubtype');
-            const preselectSubtype = <?= (int) ($editingRow['subtype_id'] ?? 0) ?>;
+            const subtypeSel = document.getElementById('assetSub type');
+            const preselectSub type = <?= (int) ($editingRow['subtype_id'] ?? 0) ?>;
             const refresh = () => {
                 const t = parseInt(typeSel.value, 10) || 0;
-                const opts = bySubtypeByType[t] || [];
+                const opts = bySub typeByType[t] || [];
                 subtypeSel.innerHTML = opts.length === 0
                     ? '<option value="">— no active subtypes —</option>'
                     : '<option value="">Select…</option>' + opts.map((o) => `<option value="${o.id}">${o.name.replace(/</g,'&lt;')}</option>`).join('');
-                if (preselectSubtype) subtypeSel.value = String(preselectSubtype);
+                if (preselectSub type) subtypeSel.value = String(preselectSub type);
             };
             typeSel.addEventListener('change', refresh);
             refresh();
@@ -257,6 +274,7 @@ render_page_header('District PMU · Asset Register', [
 </div>
 
 <form method="get" class="card mb-3">
+    <input type="hidden" name="district" value="<?= esc($district) ?>">
     <div class="card-body">
         <div class="row g-3 align-items-end">
             <div class="col-md-3">
@@ -269,7 +287,7 @@ render_page_header('District PMU · Asset Register', [
                 </select>
             </div>
             <div class="col-md-3">
-                <label class="form-label">Filter · Subtype</label>
+                <label class="form-label">Filter · Sub type</label>
                 <select class="form-select" name="subtype">
                     <option value="0">All</option>
                     <?php foreach ($assetSubtypes as $st): ?>
@@ -305,7 +323,7 @@ render_page_header('District PMU · Asset Register', [
                 <tr>
                     <th>Sl No</th>
                     <th>Type</th>
-                    <th>Subtype</th>
+                    <th>Sub type</th>
                     <th>Description</th>
                     <th>Owning Authority</th>
                     <th class="text-end">Quantity</th>
@@ -330,10 +348,11 @@ render_page_header('District PMU · Asset Register', [
                         <td class="small text-muted"><?= nl2br(esc((string) ($r['remarks'] ?? ''))) ?></td>
                         <td class="text-end">
                             <div class="d-inline-flex gap-1">
-                                <a class="btn btn-sm btn-outline-primary" href="/district_pmu_assets.php?edit=<?= (int) $r['id'] ?>#assetForm"><i class="bi bi-pencil-square"></i></a>
+                                <a class="btn btn-sm btn-outline-primary" href="/district_pmu_assets.php?district=<?= urlencode($district) ?>&amp;edit=<?= (int) $r['id'] ?>#assetForm"><i class="bi bi-pencil-square"></i></a>
                                 <form method="post" class="d-inline" onsubmit="return confirm('Delete this asset row?');">
                                     <input type="hidden" name="action" value="delete">
                                     <input type="hidden" name="id" value="<?= (int) $r['id'] ?>">
+                                    <input type="hidden" name="district" value="<?= esc($district) ?>">
                                     <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
                                 </form>
                             </div>

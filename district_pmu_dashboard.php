@@ -5,11 +5,12 @@ require_once __DIR__ . '/includes/district_pmu_helpers.php';
 require_district_pmu();
 district_pmu_bootstrap();
 
-$user     = current_user();
-$userId   = (int) $user['id'];
-$district = trim((string) ($user['district'] ?? ''));
+$user       = current_user();
+$userId     = (int) $user['id'];
+$districts  = district_pmu_user_districts($user);
+$district   = district_pmu_current_district($user);
 
-$profile = district_pmu_get_profile($userId);
+$profile = $district !== '' ? district_pmu_get_profile_by_district($district) : null;
 
 /* Profile completeness — which of the required fields have a value.
    Photos count as one point each. */
@@ -38,37 +39,42 @@ foreach ($profileFields as $col => $label) {
 $profilePct  = $profileTotal > 0 ? (int) round(($profileFilled / $profileTotal) * 100) : 0;
 $profileTone = $profilePct >= 90 ? 'success' : ($profilePct >= 50 ? 'warning' : 'danger');
 
-/* Asset counters — only this user's assets. */
+/* Asset counters — scoped to the currently-selected district (assets are
+   the district's, not the user's). Legacy rows with a NULL district
+   won't show up here — they need to be re-saved to attach a district. */
 $assetTotal = 0;
 $assetsByType = [];
 $assetsByAuthority = [];
-try {
-    $countStmt = db()->prepare('SELECT COUNT(*) FROM district_pmu_assets WHERE user_id = ?');
-    $countStmt->execute([$userId]);
-    $assetTotal = (int) $countStmt->fetchColumn();
+if ($district !== '') {
+    try {
+        $countStmt = db()->prepare('SELECT COUNT(*) FROM district_pmu_assets WHERE district = ?');
+        $countStmt->execute([$district]);
+        $assetTotal = (int) $countStmt->fetchColumn();
 
-    $tStmt = db()->prepare('SELECT t.name AS type_name, COUNT(*) AS c, COALESCE(SUM(a.quantity), 0) AS q
-        FROM district_pmu_assets a
-        LEFT JOIN district_pmu_asset_types t ON t.id = a.asset_type_id
-        WHERE a.user_id = ?
-        GROUP BY t.name');
-    $tStmt->execute([$userId]);
-    $assetsByType = $tStmt->fetchAll();
+        $tStmt = db()->prepare('SELECT t.name AS type_name, COUNT(*) AS c, COALESCE(SUM(a.quantity), 0) AS q
+            FROM district_pmu_assets a
+            LEFT JOIN district_pmu_asset_types t ON t.id = a.asset_type_id
+            WHERE a.district = ?
+            GROUP BY t.name');
+        $tStmt->execute([$district]);
+        $assetsByType = $tStmt->fetchAll();
 
-    $aStmt = db()->prepare('SELECT COALESCE(auth.name, "(Unassigned)") AS auth_name, COUNT(*) AS c, COALESCE(SUM(a.quantity), 0) AS q
-        FROM district_pmu_assets a
-        LEFT JOIN district_pmu_owning_authorities auth ON auth.id = a.owning_authority_id
-        WHERE a.user_id = ?
-        GROUP BY COALESCE(auth.name, "(Unassigned)")
-        ORDER BY c DESC');
-    $aStmt->execute([$userId]);
-    $assetsByAuthority = $aStmt->fetchAll();
-} catch (Throwable $e) { /* tables not bootstrapped yet — treat as empty */ }
+        $aStmt = db()->prepare('SELECT COALESCE(auth.name, "(Unassigned)") AS auth_name, COUNT(*) AS c, COALESCE(SUM(a.quantity), 0) AS q
+            FROM district_pmu_assets a
+            LEFT JOIN district_pmu_owning_authorities auth ON auth.id = a.owning_authority_id
+            WHERE a.district = ?
+            GROUP BY COALESCE(auth.name, "(Unassigned)")
+            ORDER BY c DESC');
+        $aStmt->execute([$district]);
+        $assetsByAuthority = $aStmt->fetchAll();
+    } catch (Throwable $e) { /* tables not bootstrapped yet — treat as empty */ }
+}
 
 render_header('District PMU Dashboard');
 render_page_header('District PMU · Dashboard', [
     'icon'     => 'bi-speedometer2',
     'subtitle' => 'Office profile status + asset register summary for ' . ($district !== '' ? esc($district) : 'your district') . '.',
+    'actions'  => district_pmu_render_district_switcher($user, $district),
 ]);
 ?>
 
