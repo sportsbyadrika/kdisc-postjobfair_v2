@@ -115,21 +115,23 @@ if ($isDashboardAdminView) {
     $dpmuDistrictProfiles     = [];   // [district => bool]
     $dpmuSubmissionsByDistrict = [];  // [{district, submissions, assets}]
     $dpmuPhotoRows            = [];   // [{district, office_name, building_photo_path, room_photo_path}]
+    // Ensure the district_pmu_* tables exist before we query them.
+    // Runs on its own try — a bootstrap failure only skips the DPMU
+    // block, it doesn't zero out counters that a later query populates.
     try {
-        // Ensure the district_pmu_* tables exist before we query them —
-        // an admin can log in and hit the dashboard before any PMU user
-        // has visited a page that would have bootstrapped the schema,
-        // which was making every DPMU counter silently return 0.
         require_once __DIR__ . '/includes/district_pmu_helpers.php';
         district_pmu_bootstrap();
+    } catch (Throwable $e) { /* schema not available yet */ }
 
-        // District PMU + State PMU count together, since both are on the
-        // enum and reach the same district_pmu_* tables. Filtering to
-        // just district_pmu was hiding State PMU users on the card.
+    // Every metric below runs in its OWN try/catch so one bad query
+    // (e.g. a stale column) can't quietly zero out the others.
+    try {
         $dpmuUserCount = (int) db()->query(
             "SELECT COUNT(*) FROM users WHERE role IN ('district_pmu', 'state_pmu') AND active_status = 1"
         )->fetchColumn();
+    } catch (Throwable $e) { /* ignore */ }
 
+    try {
         // Distinct districts across every active PMU user's
         // assigned_districts CSV. Small enough to parse in PHP.
         $districtsSet = [];
@@ -158,38 +160,46 @@ if ($isDashboardAdminView) {
                 }
             }
         }
+    } catch (Throwable $e) { /* ignore */ }
 
-        // Asset totals + pending / submitted split, plus type-wise chips.
-        $aRow = db()->query("SELECT COUNT(*) AS total,
-                COALESCE(SUM(CASE WHEN submission_id IS NULL     THEN 1 ELSE 0 END), 0) AS pending,
-                COALESCE(SUM(CASE WHEN submission_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS submitted
-            FROM district_pmu_assets")->fetch() ?: [];
-        $dpmuAssetsTotal     = (int) ($aRow['total']     ?? 0);
-        $dpmuAssetsPending   = (int) ($aRow['pending']   ?? 0);
-        $dpmuAssetsSubmitted = (int) ($aRow['submitted'] ?? 0);
+    // Asset totals — split so total/pending/submitted come from three
+    // independent COUNT queries instead of one CASE/SUM that would zero
+    // out all three if a single column was mis-named on a stale install.
+    try {
+        $dpmuAssetsTotal = (int) db()->query('SELECT COUNT(*) FROM district_pmu_assets')->fetchColumn();
+    } catch (Throwable $e) { /* ignore */ }
+    try {
+        $dpmuAssetsPending = (int) db()->query('SELECT COUNT(*) FROM district_pmu_assets WHERE submission_id IS NULL')->fetchColumn();
+    } catch (Throwable $e) { /* ignore */ }
+    try {
+        $dpmuAssetsSubmitted = (int) db()->query('SELECT COUNT(*) FROM district_pmu_assets WHERE submission_id IS NOT NULL')->fetchColumn();
+    } catch (Throwable $e) { /* ignore */ }
 
+    try {
         $dpmuTypeBreakdown = db()->query("SELECT COALESCE(t.name, '(Unknown)') AS name, COUNT(*) AS c
             FROM district_pmu_assets a
             LEFT JOIN district_pmu_asset_types t ON t.id = a.asset_type_id
             GROUP BY COALESCE(t.name, '(Unknown)')
             ORDER BY c DESC")->fetchAll();
+    } catch (Throwable $e) { /* ignore */ }
 
-        // Submissions total + per-district counts.
+    try {
         $dpmuSubmissionsCount = (int) db()->query('SELECT COUNT(*) FROM district_pmu_asset_submissions')->fetchColumn();
+    } catch (Throwable $e) { /* ignore */ }
+    try {
         $dpmuSubmissionsByDistrict = db()->query("SELECT district, COUNT(*) AS submissions,
                 COALESCE(SUM(asset_count), 0) AS assets
             FROM district_pmu_asset_submissions
             GROUP BY district
             ORDER BY submissions DESC, district ASC")->fetchAll();
+    } catch (Throwable $e) { /* ignore */ }
 
-        // Per-district photo gallery — every profile row that has at least
-        // one of the two photos on disk. Ordered so districts still missing
-        // both photos surface FIRST (the admin sees the gaps at a glance).
+    try {
         $dpmuPhotoRows = db()->query("SELECT district, office_name, building_photo_path, room_photo_path, updated_at
             FROM district_pmu_office_profile
             WHERE building_photo_path IS NOT NULL OR room_photo_path IS NOT NULL
             ORDER BY district ASC")->fetchAll();
-    } catch (Throwable $e) { /* district_pmu_* tables not bootstrapped yet */ }
+    } catch (Throwable $e) { /* ignore */ }
 }
 
 /* Semantic tone for each source-status label — same buckets the Job Status
