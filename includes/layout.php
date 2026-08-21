@@ -190,6 +190,12 @@ function render_header(string $title, array $options = []): void
                                 <li class="nav-item">
                                     <a class="nav-link<?= $isActive(['district_pmu_assets.php']) ?>" href="/district_pmu_assets.php"><i class="bi bi-box-seam me-1"></i>Asset Register</a>
                                 </li>
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['district_pmu_reports.php', 'district_pmu_report_asset.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-graph-up me-1"></i>Report</a>
+                                    <ul class="dropdown-menu">
+                                        <li><a class="dropdown-item" href="/district_pmu_reports.php?report=assets"><i class="bi bi-file-earmark-text me-2"></i>Asset Register</a></li>
+                                    </ul>
+                                </li>
                             <?php endif; ?>
                             <?php if (is_manage_admin($user)): ?>
                                 <?php /* Administrator + DSM Admin get access to the District PMU
