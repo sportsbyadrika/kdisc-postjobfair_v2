@@ -116,15 +116,25 @@ if ($isDashboardAdminView) {
     $dpmuSubmissionsByDistrict = [];  // [{district, submissions, assets}]
     $dpmuPhotoRows            = [];   // [{district, office_name, building_photo_path, room_photo_path}]
     try {
+        // Ensure the district_pmu_* tables exist before we query them —
+        // an admin can log in and hit the dashboard before any PMU user
+        // has visited a page that would have bootstrapped the schema,
+        // which was making every DPMU counter silently return 0.
+        require_once __DIR__ . '/includes/district_pmu_helpers.php';
+        district_pmu_bootstrap();
+
+        // District PMU + State PMU count together, since both are on the
+        // enum and reach the same district_pmu_* tables. Filtering to
+        // just district_pmu was hiding State PMU users on the card.
         $dpmuUserCount = (int) db()->query(
-            "SELECT COUNT(*) FROM users WHERE role = 'district_pmu' AND active_status = 1"
+            "SELECT COUNT(*) FROM users WHERE role IN ('district_pmu', 'state_pmu') AND active_status = 1"
         )->fetchColumn();
 
-        // Distinct districts across every active District PMU user's
+        // Distinct districts across every active PMU user's
         // assigned_districts CSV. Small enough to parse in PHP.
         $districtsSet = [];
         $ur = db()->query("SELECT assigned_districts FROM users
-            WHERE role = 'district_pmu' AND active_status = 1
+            WHERE role IN ('district_pmu', 'state_pmu') AND active_status = 1
               AND assigned_districts IS NOT NULL AND TRIM(assigned_districts) <> ''");
         foreach ($ur->fetchAll() as $row) {
             foreach (explode(',', (string) $row['assigned_districts']) as $p) {
