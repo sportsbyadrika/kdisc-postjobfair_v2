@@ -34,13 +34,20 @@ if (!in_array((string) $submission['district'], $districts, true)) {
     exit;
 }
 
+// Sort by Type then Sub type on the printed report so like items group
+// together. sort_order (admin-configured priority) wins so IT Asset lists
+// before Non-IT Asset as seeded; name breaks the tie so a subtype added
+// later with the default sort_order = 0 still lands somewhere predictable
+// instead of at the top. Row id is the final deterministic fallback.
 $asStmt = db()->prepare('SELECT a.*, t.name AS type_name, s.name AS subtype_name, auth.name AS authority_name
     FROM district_pmu_assets a
     LEFT JOIN district_pmu_asset_types t ON t.id = a.asset_type_id
     LEFT JOIN district_pmu_asset_subtypes s ON s.id = a.subtype_id
     LEFT JOIN district_pmu_owning_authorities auth ON auth.id = a.owning_authority_id
     WHERE a.submission_id = ?
-    ORDER BY t.sort_order ASC, s.sort_order ASC, a.id ASC');
+    ORDER BY t.sort_order ASC, t.name ASC,
+             s.sort_order ASC, s.name ASC,
+             a.id ASC');
 $asStmt->execute([$submissionId]);
 $assets = $asStmt->fetchAll();
 
