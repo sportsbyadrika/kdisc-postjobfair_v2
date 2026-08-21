@@ -460,10 +460,26 @@ render_header('Dashboard');
                                             ?>
                                             <span class="badge text-bg-<?= esc($tone) ?>"
                                                   title="<?= number_format($jobs) ?> job(s) &middot; <?= number_format($pos) ?> position(s)">
-                                                <?= esc($label) ?> <span class="fw-bold ms-1"><?= number_format($jobs) ?></span>
+                                                <?= esc($label) ?>
+                                                <span class="fw-bold ms-1"><?= number_format($jobs) ?></span>
+                                                <span class="fw-normal opacity-75 ms-1">&middot; <?= number_format($pos) ?> pos</span>
                                             </span>
                                         <?php endforeach; ?>
                                     </div>
+                                    <?php
+                                        // Same weighted per-status positions row summed across
+                                        // this card's bucket. Emitted only when the operator can
+                                        // reconcile against the Job Positions card — the invariant
+                                        // is: Valid + Invalid + Corrected + Not Yet Started =
+                                        // Job Positions card's chip for the same status.
+                                        $cardPosTotal = 0;
+                                        foreach ($cardBreakdown as $sb2) { $cardPosTotal += (int) $sb2['positions_sum']; }
+                                    ?>
+                                    <?php if ($cardPosTotal > 0): ?>
+                                        <div class="small text-muted mt-1">
+                                            <i class="bi bi-person-plus me-1"></i><strong><?= number_format($cardPosTotal) ?></strong> position(s) across the chips
+                                        </div>
+                                    <?php endif; ?>
                                 </div>
                             <?php endif; ?>
                         </div>
