@@ -1,0 +1,6 @@
+# Block PHP execution inside the uploads tree — a user-uploaded file
+# should never be interpretable by the web server.
+<FilesMatch "\.(php|phtml|phar|phps|cgi|pl|py|rb|sh|htaccess)$">
+    Require all denied
+</FilesMatch>
+Options -ExecCGI
