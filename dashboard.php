@@ -453,7 +453,7 @@ render_header('Dashboard');
             <div class="card card-stat accent-primary h-100">
                 <div class="card-body d-flex align-items-start justify-content-between gap-2">
                     <div class="w-100">
-                        <p class="stat-label">Jobs</p>
+                        <p class="stat-label">Job Titles</p>
                         <p class="stat-value"><?= number_format($demandJobCount) ?></p>
                         <?php
                             $netJobs = max(0, $demandJobCount - $demandStatusInvalid);
@@ -492,7 +492,7 @@ render_header('Dashboard');
             <div class="card card-stat accent-success h-100">
                 <div class="card-body d-flex align-items-start justify-content-between gap-2">
                     <div class="w-100">
-                        <p class="stat-label">Job Positions</p>
+                        <p class="stat-label">Job Vacancies</p>
                         <p class="stat-value"><?= number_format($demandOpenPositions) ?></p>
                         <?php
                             $netPositions = max(0, $demandOpenPositions - $demandStatusInvalidPositions);
@@ -549,9 +549,13 @@ render_header('Dashboard');
                         <div class="w-100">
                             <p class="stat-label"><?= esc($card['label']) ?></p>
                             <p class="stat-value"><?= number_format((int) $card['value']) ?></p>
-                            <?php if ($card['positions'] !== null): ?>
-                                <div class="small text-muted mb-1"><i class="bi bi-person-plus me-1"></i><strong><?= number_format((int) $card['positions']) ?></strong> <?= esc((string) $card['positions_label']) ?></div>
-                            <?php endif; ?>
+                            <?php /* The former "N verified/affected open positions"
+                                     line was removed — it summed open_positions for
+                                     three cards but corrected_open_position on the
+                                     Corrected card, so the number didn't match the
+                                     chip totals below. The single "N position(s)
+                                     across the chips" line is now the authoritative
+                                     positions figure per card. */ ?>
                             <a class="stat-link" href="/demand_side_stats.php">View statistics <i class="bi bi-arrow-right-short"></i></a>
                             <?php if ($cardBreakdown !== []): ?>
                                 <div class="mt-2">
