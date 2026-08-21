@@ -108,6 +108,7 @@ if ($isAdmin) {
     $dpmuTypeBreakdown        = [];   // [{name, count}]
     $dpmuDistrictProfiles     = [];   // [district => bool]
     $dpmuSubmissionsByDistrict = [];  // [{district, submissions, assets}]
+    $dpmuPhotoRows            = [];   // [{district, office_name, building_photo_path, room_photo_path}]
     try {
         $dpmuUserCount = (int) db()->query(
             "SELECT COUNT(*) FROM users WHERE role = 'district_pmu' AND active_status = 1"
@@ -164,6 +165,14 @@ if ($isAdmin) {
             FROM district_pmu_asset_submissions
             GROUP BY district
             ORDER BY submissions DESC, district ASC")->fetchAll();
+
+        // Per-district photo gallery — every profile row that has at least
+        // one of the two photos on disk. Ordered so districts still missing
+        // both photos surface FIRST (the admin sees the gaps at a glance).
+        $dpmuPhotoRows = db()->query("SELECT district, office_name, building_photo_path, room_photo_path, updated_at
+            FROM district_pmu_office_profile
+            WHERE building_photo_path IS NOT NULL OR room_photo_path IS NOT NULL
+            ORDER BY district ASC")->fetchAll();
     } catch (Throwable $e) { /* district_pmu_* tables not bootstrapped yet */ }
 }
 
@@ -663,6 +672,61 @@ render_header('Dashboard');
             </div>
         </div>
     </div>
+
+    <?php if ($dpmuPhotoRows !== []): ?>
+        <div class="card mt-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-images text-primary me-1"></i>District PMU Office Photos</span>
+                <span class="status-chip status-info"><?= number_format(count($dpmuPhotoRows)) ?> district<?= count($dpmuPhotoRows) === 1 ? '' : 's' ?> with photos</span>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <?php foreach ($dpmuPhotoRows as $pr): ?>
+                        <div class="col-12 col-md-6 col-xl-4">
+                            <div class="border rounded p-2 h-100">
+                                <div class="d-flex justify-content-between align-items-baseline mb-2">
+                                    <div>
+                                        <div class="fw-semibold"><?= esc((string) $pr['district']) ?></div>
+                                        <?php if (trim((string) ($pr['office_name'] ?? '')) !== ''): ?>
+                                            <div class="small text-muted"><?= esc((string) $pr['office_name']) ?></div>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="small text-muted"><?= esc(substr((string) ($pr['updated_at'] ?? ''), 0, 10)) ?></div>
+                                </div>
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <div class="small text-muted mb-1"><i class="bi bi-building me-1"></i>Building</div>
+                                        <?php if (!empty($pr['building_photo_path'])): ?>
+                                            <a href="<?= esc((string) $pr['building_photo_path']) ?>" target="_blank" rel="noopener">
+                                                <img src="<?= esc((string) $pr['building_photo_path']) ?>" alt="Building photo · <?= esc((string) $pr['district']) ?>"
+                                                     style="width:100%; aspect-ratio: 4/3; object-fit: cover; border-radius:.25rem; border:1px solid var(--bs-border-color);">
+                                            </a>
+                                        <?php else: ?>
+                                            <div class="d-flex align-items-center justify-content-center text-muted small border rounded"
+                                                 style="width:100%; aspect-ratio: 4/3; background: var(--bs-secondary-bg);">Not uploaded</div>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="small text-muted mb-1"><i class="bi bi-door-open me-1"></i>Room</div>
+                                        <?php if (!empty($pr['room_photo_path'])): ?>
+                                            <a href="<?= esc((string) $pr['room_photo_path']) ?>" target="_blank" rel="noopener">
+                                                <img src="<?= esc((string) $pr['room_photo_path']) ?>" alt="Room photo · <?= esc((string) $pr['district']) ?>"
+                                                     style="width:100%; aspect-ratio: 4/3; object-fit: cover; border-radius:.25rem; border:1px solid var(--bs-border-color);">
+                                            </a>
+                                        <?php else: ?>
+                                            <div class="d-flex align-items-center justify-content-center text-muted small border rounded"
+                                                 style="width:100%; aspect-ratio: 4/3; background: var(--bs-secondary-bg);">Not uploaded</div>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <div class="card-footer small text-muted"><i class="bi bi-info-circle me-1"></i>Click a thumbnail to open the full-size photo in a new tab.</div>
+        </div>
+    <?php endif; ?>
 <?php endif; ?>
 
 <h2 class="h6 text-muted text-uppercase mb-2 <?= $isAdmin ? 'mt-4' : '' ?>"><i class="bi bi-clipboard2-data me-1"></i>Post Job Fair Status</h2>
