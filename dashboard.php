@@ -92,6 +92,79 @@ if ($isAdmin) {
             ];
         }
     } catch (Throwable $e) { /* demand-side tables not yet available */ }
+
+    /* -------------------------------------------------------------------- *
+     * District PMU snapshot — office-profile coverage + asset register
+     * activity. Wrapped in try/catch so a fresh install where the tables
+     * haven't been bootstrapped yet still renders the rest of the page.
+     * -------------------------------------------------------------------- */
+    $dpmuUserCount            = 0;
+    $dpmuDistrictsCoveredCount = 0;
+    $dpmuProfilesFilledCount  = 0;
+    $dpmuAssetsTotal          = 0;
+    $dpmuAssetsPending        = 0;
+    $dpmuAssetsSubmitted      = 0;
+    $dpmuSubmissionsCount     = 0;
+    $dpmuTypeBreakdown        = [];   // [{name, count}]
+    $dpmuDistrictProfiles     = [];   // [district => bool]
+    $dpmuSubmissionsByDistrict = [];  // [{district, submissions, assets}]
+    try {
+        $dpmuUserCount = (int) db()->query(
+            "SELECT COUNT(*) FROM users WHERE role = 'district_pmu' AND active_status = 1"
+        )->fetchColumn();
+
+        // Distinct districts across every active District PMU user's
+        // assigned_districts CSV. Small enough to parse in PHP.
+        $districtsSet = [];
+        $ur = db()->query("SELECT assigned_districts FROM users
+            WHERE role = 'district_pmu' AND active_status = 1
+              AND assigned_districts IS NOT NULL AND TRIM(assigned_districts) <> ''");
+        foreach ($ur->fetchAll() as $row) {
+            foreach (explode(',', (string) $row['assigned_districts']) as $p) {
+                $p = trim($p);
+                if ($p !== '') $districtsSet[$p] = true;
+            }
+        }
+        $dpmuDistrictsCoveredCount = count($districtsSet);
+        foreach ($districtsSet as $d => $_) { $dpmuDistrictProfiles[$d] = false; }
+
+        // Which of those districts have a profile row.
+        if ($dpmuDistrictProfiles !== []) {
+            $ph = implode(',', array_fill(0, count($dpmuDistrictProfiles), '?'));
+            $ps = db()->prepare("SELECT district FROM district_pmu_office_profile
+                WHERE district IN ($ph)");
+            $ps->execute(array_keys($dpmuDistrictProfiles));
+            foreach ($ps->fetchAll() as $row) {
+                if (isset($dpmuDistrictProfiles[(string) $row['district']])) {
+                    $dpmuDistrictProfiles[(string) $row['district']] = true;
+                    $dpmuProfilesFilledCount++;
+                }
+            }
+        }
+
+        // Asset totals + pending / submitted split, plus type-wise chips.
+        $aRow = db()->query("SELECT COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN submission_id IS NULL     THEN 1 ELSE 0 END), 0) AS pending,
+                COALESCE(SUM(CASE WHEN submission_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS submitted
+            FROM district_pmu_assets")->fetch() ?: [];
+        $dpmuAssetsTotal     = (int) ($aRow['total']     ?? 0);
+        $dpmuAssetsPending   = (int) ($aRow['pending']   ?? 0);
+        $dpmuAssetsSubmitted = (int) ($aRow['submitted'] ?? 0);
+
+        $dpmuTypeBreakdown = db()->query("SELECT COALESCE(t.name, '(Unknown)') AS name, COUNT(*) AS c
+            FROM district_pmu_assets a
+            LEFT JOIN district_pmu_asset_types t ON t.id = a.asset_type_id
+            GROUP BY COALESCE(t.name, '(Unknown)')
+            ORDER BY c DESC")->fetchAll();
+
+        // Submissions total + per-district counts.
+        $dpmuSubmissionsCount = (int) db()->query('SELECT COUNT(*) FROM district_pmu_asset_submissions')->fetchColumn();
+        $dpmuSubmissionsByDistrict = db()->query("SELECT district, COUNT(*) AS submissions,
+                COALESCE(SUM(asset_count), 0) AS assets
+            FROM district_pmu_asset_submissions
+            GROUP BY district
+            ORDER BY submissions DESC, district ASC")->fetchAll();
+    } catch (Throwable $e) { /* district_pmu_* tables not bootstrapped yet */ }
 }
 
 /* Semantic tone for each source-status label — same buckets the Job Status
@@ -500,6 +573,98 @@ render_header('Dashboard');
 </div>
 <?php endif; ?>
 
+<?php if ($isAdmin): ?>
+    <?php
+        $dpmuProfilePct  = $dpmuDistrictsCoveredCount > 0
+            ? (int) round(($dpmuProfilesFilledCount / $dpmuDistrictsCoveredCount) * 100)
+            : 0;
+        $dpmuProfileTone = $dpmuProfilePct >= 90 ? 'success' : ($dpmuProfilePct >= 50 ? 'warning' : 'danger');
+        $dpmuAssetPendPct = $dpmuAssetsTotal > 0 ? (int) round(($dpmuAssetsSubmitted / $dpmuAssetsTotal) * 100) : 0;
+    ?>
+    <h2 class="h6 text-muted text-uppercase mb-2 mt-4"><i class="bi bi-building-check me-1"></i>District PMU Snapshot</h2>
+    <div class="row g-3 mb-1">
+        <div class="col-6 col-md-3">
+            <div class="card card-stat accent-info h-100">
+                <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                    <div class="w-100">
+                        <p class="stat-label">District PMU Users</p>
+                        <p class="stat-value"><?= number_format($dpmuUserCount) ?></p>
+                        <div class="small text-muted mb-1"><i class="bi bi-geo-alt me-1"></i><strong><?= number_format($dpmuDistrictsCoveredCount) ?></strong> distinct district(s) covered</div>
+                        <a class="stat-link" href="/users.php?role=district_pmu">Manage users <i class="bi bi-arrow-right-short"></i></a>
+                    </div>
+                    <span class="stat-icon-box tone-info"><i class="bi bi-people-fill"></i></span>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card card-stat accent-<?= esc($dpmuProfileTone) ?> h-100">
+                <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                    <div class="w-100">
+                        <p class="stat-label">Office Profiles Set Up</p>
+                        <p class="stat-value"><?= number_format($dpmuProfilesFilledCount) ?> / <?= number_format($dpmuDistrictsCoveredCount) ?></p>
+                        <div class="progress mb-1" style="height:8px; max-width:180px;">
+                            <div class="progress-bar bg-<?= esc($dpmuProfileTone) ?>" role="progressbar" style="width: <?= (int) $dpmuProfilePct ?>%;"></div>
+                        </div>
+                        <div class="small text-muted mb-1"><strong><?= $dpmuProfilePct ?>%</strong> coverage</div>
+                        <?php $missing = array_keys(array_filter($dpmuDistrictProfiles, static fn(bool $set): bool => !$set)); ?>
+                        <?php if ($missing !== []): ?>
+                            <div class="small text-muted"><i class="bi bi-exclamation-circle me-1"></i>Missing: <?= esc(implode(', ', array_slice($missing, 0, 3))) ?><?= count($missing) > 3 ? ' +' . (count($missing) - 3) . ' more' : '' ?></div>
+                        <?php endif; ?>
+                    </div>
+                    <span class="stat-icon-box tone-<?= esc($dpmuProfileTone) ?>"><i class="bi bi-building-check"></i></span>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card card-stat accent-primary h-100">
+                <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                    <div class="w-100">
+                        <p class="stat-label">Asset Register Entries</p>
+                        <p class="stat-value"><?= number_format($dpmuAssetsTotal) ?></p>
+                        <div class="d-flex flex-wrap gap-1 mb-1">
+                            <span class="badge text-bg-success" title="Locked behind a submission"><i class="bi bi-lock-fill me-1"></i><?= number_format($dpmuAssetsSubmitted) ?> submitted</span>
+                            <span class="badge text-bg-warning" title="Not yet part of any submission"><i class="bi bi-hourglass-split me-1"></i><?= number_format($dpmuAssetsPending) ?> pending</span>
+                        </div>
+                        <?php if ($dpmuTypeBreakdown !== []): ?>
+                            <div class="d-flex flex-wrap gap-1">
+                                <?php foreach ($dpmuTypeBreakdown as $tb): ?>
+                                    <?php $isNonIt = str_contains(strtolower((string) $tb['name']), 'non'); ?>
+                                    <span class="badge text-bg-<?= $isNonIt ? 'secondary' : 'info' ?>"><?= esc((string) $tb['name']) ?> <span class="fw-bold ms-1"><?= number_format((int) $tb['c']) ?></span></span>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                    <span class="stat-icon-box tone-primary"><i class="bi bi-box-seam"></i></span>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card card-stat accent-success h-100">
+                <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                    <div class="w-100">
+                        <p class="stat-label">Asset Submissions</p>
+                        <p class="stat-value"><?= number_format($dpmuSubmissionsCount) ?></p>
+                        <div class="small text-muted mb-1"><strong><?= number_format($dpmuAssetsSubmitted) ?></strong> asset row(s) locked · <?= $dpmuAssetPendPct ?>% of all entries</div>
+                        <?php if ($dpmuSubmissionsByDistrict !== []): ?>
+                            <div class="d-flex flex-wrap gap-1">
+                                <?php foreach (array_slice($dpmuSubmissionsByDistrict, 0, 6) as $sb): ?>
+                                    <span class="badge text-bg-success" title="<?= number_format((int) $sb['assets']) ?> asset row(s) across these submissions">
+                                        <?= esc((string) $sb['district']) ?> <span class="fw-bold ms-1"><?= number_format((int) $sb['submissions']) ?></span>
+                                    </span>
+                                <?php endforeach; ?>
+                                <?php if (count($dpmuSubmissionsByDistrict) > 6): ?>
+                                    <span class="badge text-bg-light border">+<?= count($dpmuSubmissionsByDistrict) - 6 ?> more</span>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                    <span class="stat-icon-box tone-success"><i class="bi bi-check2-square"></i></span>
+                </div>
+            </div>
+        </div>
+    </div>
+<?php endif; ?>
+
 <h2 class="h6 text-muted text-uppercase mb-2 <?= $isAdmin ? 'mt-4' : '' ?>"><i class="bi bi-clipboard2-data me-1"></i>Post Job Fair Status</h2>
 <div class="row g-3 mb-1">
     <?php foreach ($kpiKeys as $kpiKey): ?>
@@ -523,6 +688,7 @@ render_header('Dashboard');
     <?php endforeach; ?>
 </div>
 
+<?php if (!$isAdmin): ?>
 <div class="card mt-3">
     <div class="card-body">
         <h2 class="h5 mb-3"><i class="bi bi-lightning-charge-fill text-primary me-1"></i>Quick Actions</h2>
@@ -535,6 +701,7 @@ render_header('Dashboard');
         </div>
     </div>
 </div>
+<?php endif; ?>
 
 <?php if (!$isAdmin): ?>
 <div class="card table-card mt-3">
@@ -646,6 +813,7 @@ render_header('Dashboard');
 </div>
 <?php endif; ?>
 
+<?php if (!$isAdmin): ?>
 <div class="card table-card mt-3">
     <div class="card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-calendar-event text-primary me-1"></i>Job Fair wise Status</span>
@@ -785,5 +953,6 @@ render_header('Dashboard');
         </div>
     </div>
 </div>
+<?php endif; /* !$isAdmin — hides Job Fair wise Status + District wise Record Count */ ?>
 
 <?php render_footer(); ?>
