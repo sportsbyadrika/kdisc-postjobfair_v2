@@ -301,6 +301,67 @@ if ($download === 'jobs_status') {
     }
     fclose($out); exit;
 }
+if ($download === 'open_jobs') {
+    // Snapshot export scoped to jobs whose DWMS source posting status is
+    // currently "open" — matches Open / Active / Live / Valid (case-
+    // insensitive, trimmed) to catch every DWMS spelling. Respects the
+    // Category filter (from/to date filters aren't relevant here — those
+    // scope the edit log, not the current per-job status).
+    @set_time_limit(0);
+    ignore_user_abort(true);
+    $conds  = ["LOWER(TRIM(j.job_status_data)) IN ('open','active','live','valid')"];
+    $params = [];
+    if ($categoryEmployerIds !== null) {
+        if ($categoryEmployerIds === []) {
+            $conds[] = '1=0';
+        } else {
+            $eidList = implode(',', array_map('intval', $categoryEmployerIds));
+            $conds[] = "e.employer_id IN ($eidList)";
+        }
+    }
+    $sql = "SELECT e.employer_id, e.employer_name,
+                j.job_id, j.jobtitle, j.open_positions,
+                j.job_status_data, j.status,
+                j.location, j.salary_type, j.salary_slab
+            FROM demand_employer_jobs j
+            INNER JOIN demand_employers e ON e.employer_id = j.emp_id
+            WHERE " . implode(' AND ', $conds) . "
+            ORDER BY e.employer_id ASC, j.job_id ASC";
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+
+    $filename = 'demand_stats_open_jobs_' . date('Ymd_His') . '.csv';
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    $out = fopen('php://output', 'w'); fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['Employer ID', 'Employer Name', 'Job ID', 'Job Title',
+        'Positions', 'Status', 'Verification Status', 'Job Location', 'Salary Range']);
+    while ($r = $stmt->fetch()) {
+        // Verification status renders NULL / blank as "Not Yet Started"
+        // so every row is meaningful, matching the on-page labelling.
+        $ver = trim((string) ($r['status'] ?? ''));
+        if ($ver === '') { $ver = 'Not Yet Started'; }
+        // Combine salary_type + salary_slab into a single "Range" column
+        // — either alone if the other is blank, joined with a middle-dot
+        // when both are present.
+        $st = trim((string) ($r['salary_type'] ?? ''));
+        $ss = trim((string) ($r['salary_slab'] ?? ''));
+        $salary = $st !== '' && $ss !== '' ? "$st · $ss" : ($st !== '' ? $st : $ss);
+        fputcsv($out, [
+            (string) ($r['employer_id'] ?? ''),
+            (string) ($r['employer_name'] ?? ''),
+            (string) ($r['job_id'] ?? ''),
+            (string) ($r['jobtitle'] ?? ''),
+            (string) ($r['open_positions'] ?? ''),
+            (string) ($r['job_status_data'] ?? ''),
+            $ver,
+            (string) ($r['location'] ?? ''),
+            $salary,
+        ]);
+    }
+    fclose($out); exit;
+}
 if ($download === 'edits' && $editDetailTotal > 0 && isset($detailBaseSql, $detailParams)) {
     // Run the SAME filtered query as the on-page table, but without the
     // LIMIT so the export always returns every matching row.
@@ -335,10 +396,15 @@ $jobsStatusCsvUrl = '/demand_side_stats.php?' . http_build_query(array_filter([
     'category' => $categoryFilter,
     'download' => 'jobs_status',
 ], static fn($v): bool => $v !== '' && $v !== null));
+$openJobsCsvUrl = '/demand_side_stats.php?' . http_build_query(array_filter([
+    'category' => $categoryFilter,
+    'download' => 'open_jobs',
+], static fn($v): bool => $v !== '' && $v !== null));
 render_page_header('Demand Side · Data Modification Statistics', [
     'icon' => 'bi-bar-chart-line',
     'subtitle' => 'Date-wise employer_jobs status change counts (Valid / Invalid / Corrected). Click a date row for user-wise breakdown across employers and jobs.',
     'actions' => '<a class="btn btn-light me-1" href="' . esc($jobsStatusCsvUrl) . '" title="Download every job with its current Valid / Invalid / Corrected / Pending status"><i class="bi bi-download me-1"></i>Download Jobs Status CSV</a>'
+        . '<a class="btn btn-light me-1" href="' . esc($openJobsCsvUrl) . '" title="Download every job whose Job Posting Status is Open / Active / Live / Valid, with verification status, location and salary"><i class="bi bi-download me-1"></i>Download Open Jobs CSV</a>'
         . '<a class="btn btn-light" href="/demand_side_employers.php"><i class="bi bi-arrow-left me-1"></i>Back to Employers</a>',
 ]);
 ?>
