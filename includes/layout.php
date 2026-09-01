@@ -203,10 +203,12 @@ function render_header(string $title, array $options = []): void
                                     </ul>
                                 </li>
                             <?php endif; ?>
-                            <?php if ($isEdms): ?>
-                                <?php /* The generic Dashboard link on line 73 is emitted
-                                         for every logged-in user, so we DON'T repeat it
-                                         here — otherwise EDMS sees two Dashboard tabs. */ ?>
+                            <?php if ($isEdms || is_admin($user)): ?>
+                                <?php /* PMU Assets dropdown is available to EDMS (approval
+                                         authority) and to every admin-group role for
+                                         read-only oversight. Admins land on the same detail
+                                         pages but the approve/reject/return action form is
+                                         hidden on their view. */ ?>
                                 <li class="nav-item dropdown">
                                     <a class="nav-link dropdown-toggle<?= $isActive(['edms_profiles.php', 'edms_profile_detail.php', 'edms_submissions.php', 'edms_submission_detail.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-collection me-1"></i>PMU Assets</a>
                                     <ul class="dropdown-menu">
