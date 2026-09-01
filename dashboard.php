@@ -603,7 +603,19 @@ render_header('Dashboard');
                                 </div>
                             <?php endif; ?>
                         </div>
-                        <span class="stat-icon-box tone-<?= esc($card['tone']) ?>"><i class="bi <?= esc($card['icon']) ?>"></i></span>
+                        <?php if ($card['label'] === 'Not Yet Started'): ?>
+                            <button type="button"
+                                    class="stat-icon-box tone-<?= esc($card['tone']) ?> border-0 bg-transparent p-0 js-verification-jobs-btn"
+                                    data-bs-toggle="modal" data-bs-target="#verificationJobsModal"
+                                    data-verification="NotYetStarted"
+                                    data-label="Not Yet Started"
+                                    title="Show the jobs in this bucket"
+                                    style="cursor:pointer;">
+                                <i class="bi <?= esc($card['icon']) ?>"></i>
+                            </button>
+                        <?php else: ?>
+                            <span class="stat-icon-box tone-<?= esc($card['tone']) ?>"><i class="bi <?= esc($card['icon']) ?>"></i></span>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
@@ -1048,5 +1060,54 @@ render_header('Dashboard');
     </div>
 </div>
 <?php endif; /* !$isDashboardAdminView — hides Job Fair wise Status + District wise Record Count */ ?>
+
+<?php if ($isDashboardAdminView): ?>
+<!-- Verification bucket jobs modal — populated on click of a
+     Verification Status card's icon (currently only wired for the
+     Not Yet Started card). Body is fetched from a small AJAX endpoint
+     so we don't emit a 5000-row DOM tree that isn't needed until the
+     admin actually opens the modal. -->
+<div class="modal fade" id="verificationJobsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="verificationJobsTitle"><i class="bi bi-hourglass-split me-1"></i>Jobs</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="verificationJobsBody">
+                <div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Loading&hellip;</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    const modalEl = document.getElementById('verificationJobsModal');
+    if (!modalEl) return;
+    modalEl.addEventListener('show.bs.modal', (ev) => {
+        const trigger = ev.relatedTarget;
+        if (!trigger) return;
+        const verification = trigger.getAttribute('data-verification') || '';
+        const label        = trigger.getAttribute('data-label') || 'Jobs';
+        const title = document.getElementById('verificationJobsTitle');
+        const body  = document.getElementById('verificationJobsBody');
+        if (title) title.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>' + label + ' &mdash; jobs list';
+        if (body)  body.innerHTML  = '<div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Loading&hellip;</div>';
+        fetch('/demand_side_ajax_jobs_by_status.php?verification=' + encodeURIComponent(verification), {
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        })
+        .then((r) => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
+        .then((html) => { if (body) body.innerHTML = html; })
+        .catch((err) => {
+            if (body) body.innerHTML = '<div class="alert alert-danger m-0">Could not load: ' + String(err).replace(/</g, '&lt;') + '</div>';
+        });
+    });
+})();
+</script>
+<?php endif; ?>
 
 <?php render_footer(); ?>
