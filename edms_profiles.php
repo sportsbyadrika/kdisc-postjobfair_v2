@@ -2,7 +2,15 @@
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/district_pmu_helpers.php';
-require_edms();
+require_auth();
+$viewer = current_user() ?? [];
+// EDMS is the approval authority; admin-group roles get the same
+// read-only view of the profile list.
+if (!is_edms($viewer) && !is_admin($viewer)) {
+    http_response_code(403);
+    echo 'Access denied — EDMS or admin role required.';
+    exit;
+}
 district_pmu_bootstrap();
 
 $rows = db()->query("SELECT p.*, u.name AS updated_by_name

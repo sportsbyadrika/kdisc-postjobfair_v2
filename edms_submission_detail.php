@@ -2,11 +2,21 @@
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/district_pmu_helpers.php';
-require_edms();
+require_auth();
+$viewer = current_user() ?? [];
+if (!is_edms($viewer) && !is_admin($viewer)) {
+    http_response_code(403);
+    echo 'Access denied — EDMS or admin role required.';
+    exit;
+}
 district_pmu_bootstrap();
 
-$edms = current_user();
-$edmsId = (int) $edms['id'];
+$edms   = $viewer;
+$edmsId = (int) ($viewer['id'] ?? 0);
+// Only EDMS can approve / reject / return. Admin viewers get the same
+// detail page but the action form is hidden and any tampered POST is
+// silently rejected by this flag.
+$canReview = is_edms($viewer);
 
 $submissionId = (int) ($_GET['submission'] ?? $_POST['submission'] ?? 0);
 if ($submissionId <= 0) {
@@ -31,7 +41,7 @@ $flashType    = 'success';
  *               new submission. The original submission row is kept
  *               with reviewer, timestamp and remarks for audit.
  * -------------------------------------------------------------------- */
-if (is_post()) {
+if (is_post() && $canReview) {
     $action  = (string) ($_POST['action']  ?? '');
     $remarks = trim((string) ($_POST['remarks'] ?? ''));
     if (!in_array($action, ['approve', 'reject', 'return'], true)) {
@@ -206,9 +216,19 @@ render_page_header('Submission · ' . esc((string) $submission['submission_numbe
 
     <div class="col-lg-4">
         <div class="card">
-            <div class="card-header"><i class="bi bi-shield-check text-primary me-1"></i>Approval action</div>
+            <div class="card-header"><i class="bi bi-shield-check text-primary me-1"></i><?= $canReview ? 'Approval action' : 'Approval status' ?></div>
             <div class="card-body">
-                <?php if ($status !== 'pending'): ?>
+                <?php if (!$canReview): ?>
+                    <?php /* Admin-group viewers get read-only access — the
+                             approve/reject/return controls are EDMS-only. */ ?>
+                    <div class="alert alert-<?= esc($statusTone) ?> mb-2">
+                        Current status: <strong class="text-uppercase"><?= esc($status) ?></strong>
+                        <?php if (!empty($submission['reviewed_by_name'])): ?>
+                            <div class="small mt-1">Reviewed by <?= esc((string) $submission['reviewed_by_name']) ?><?= !empty($submission['reviewed_at']) ? ' on ' . esc((string) $submission['reviewed_at']) : '' ?>.</div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="small text-muted"><i class="bi bi-eye me-1"></i>Read-only view. Only EDMS can approve, reject or return a submission.</div>
+                <?php elseif ($status !== 'pending'): ?>
                     <div class="alert alert-<?= esc($statusTone) ?>">
                         This submission was already <strong><?= esc($status) ?></strong>
                         <?php if (!empty($submission['reviewed_by_name'])): ?>
@@ -245,11 +265,13 @@ render_page_header('Submission · ' . esc((string) $submission['submission_numbe
                     </form>
                 <?php endif; ?>
             </div>
-            <div class="card-footer small text-muted">
-                <strong>Approve</strong> — assets stay locked, submission final. <br>
-                <strong>Return</strong> — assets UNLOCK; the district user revises and re-submits as a new submission. Remarks are visible to them. <br>
-                <strong>Reject</strong> — assets stay locked. Remarks are visible for audit.
-            </div>
+            <?php if ($canReview): ?>
+                <div class="card-footer small text-muted">
+                    <strong>Approve</strong> — assets stay locked, submission final. <br>
+                    <strong>Return</strong> — assets UNLOCK; the district user revises and re-submits as a new submission. Remarks are visible to them. <br>
+                    <strong>Reject</strong> — assets stay locked. Remarks are visible for audit.
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
