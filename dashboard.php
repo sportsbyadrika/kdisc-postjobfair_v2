@@ -716,55 +716,59 @@ render_header('Dashboard');
     </div>
 
     <?php if ($dpmuPhotoRows !== []): ?>
+        <?php
+            require_once __DIR__ . '/includes/dashboard_pmu_photo_tile.php';
+            $initialTileCount = 3;   // one 3-column row across xl viewports
+            $totalTiles       = count($dpmuPhotoRows);
+            $remainingTiles   = max(0, $totalTiles - $initialTileCount);
+        ?>
         <div class="card mt-3">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span><i class="bi bi-images text-primary me-1"></i>District PMU Office Photos</span>
-                <span class="status-chip status-info"><?= number_format(count($dpmuPhotoRows)) ?> district<?= count($dpmuPhotoRows) === 1 ? '' : 's' ?> with photos</span>
+                <span class="status-chip status-info"><?= number_format($totalTiles) ?> district<?= $totalTiles === 1 ? '' : 's' ?> with photos</span>
             </div>
             <div class="card-body">
-                <div class="row g-3">
-                    <?php foreach ($dpmuPhotoRows as $pr): ?>
-                        <div class="col-12 col-md-6 col-xl-4">
-                            <div class="border rounded p-2 h-100">
-                                <div class="d-flex justify-content-between align-items-baseline mb-2">
-                                    <div>
-                                        <div class="fw-semibold"><?= esc((string) $pr['district']) ?></div>
-                                        <?php if (trim((string) ($pr['office_name'] ?? '')) !== ''): ?>
-                                            <div class="small text-muted"><?= esc((string) $pr['office_name']) ?></div>
-                                        <?php endif; ?>
-                                    </div>
-                                    <div class="small text-muted"><?= esc(substr((string) ($pr['updated_at'] ?? ''), 0, 10)) ?></div>
-                                </div>
-                                <div class="row g-2">
-                                    <div class="col-6">
-                                        <div class="small text-muted mb-1"><i class="bi bi-building me-1"></i>Building</div>
-                                        <?php if (!empty($pr['building_photo_path'])): ?>
-                                            <a href="<?= esc((string) $pr['building_photo_path']) ?>" target="_blank" rel="noopener">
-                                                <img src="<?= esc((string) $pr['building_photo_path']) ?>" alt="Building photo · <?= esc((string) $pr['district']) ?>"
-                                                     style="width:100%; aspect-ratio: 4/3; object-fit: cover; border-radius:.25rem; border:1px solid var(--bs-border-color);">
-                                            </a>
-                                        <?php else: ?>
-                                            <div class="d-flex align-items-center justify-content-center text-muted small border rounded"
-                                                 style="width:100%; aspect-ratio: 4/3; background: var(--bs-secondary-bg);">Not uploaded</div>
-                                        <?php endif; ?>
-                                    </div>
-                                    <div class="col-6">
-                                        <div class="small text-muted mb-1"><i class="bi bi-door-open me-1"></i>Room</div>
-                                        <?php if (!empty($pr['room_photo_path'])): ?>
-                                            <a href="<?= esc((string) $pr['room_photo_path']) ?>" target="_blank" rel="noopener">
-                                                <img src="<?= esc((string) $pr['room_photo_path']) ?>" alt="Room photo · <?= esc((string) $pr['district']) ?>"
-                                                     style="width:100%; aspect-ratio: 4/3; object-fit: cover; border-radius:.25rem; border:1px solid var(--bs-border-color);">
-                                            </a>
-                                        <?php else: ?>
-                                            <div class="d-flex align-items-center justify-content-center text-muted small border rounded"
-                                                 style="width:100%; aspect-ratio: 4/3; background: var(--bs-secondary-bg);">Not uploaded</div>
-                                        <?php endif; ?>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                <div class="row g-3" id="dpmuPhotosRow">
+                    <?php foreach (array_slice($dpmuPhotoRows, 0, $initialTileCount) as $pr): ?>
+                        <?php render_dpmu_photo_tile($pr); ?>
                     <?php endforeach; ?>
                 </div>
+                <?php if ($remainingTiles > 0): ?>
+                    <div class="text-center mt-3" id="dpmuPhotosShowMoreWrap">
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="dpmuPhotosShowMore"
+                                data-offset="<?= (int) $initialTileCount ?>"
+                                data-total="<?= (int) $totalTiles ?>">
+                            <i class="bi bi-chevron-down me-1"></i>Show <?= number_format($remainingTiles) ?> more office<?= $remainingTiles === 1 ? '' : 's' ?>
+                        </button>
+                        <div class="small text-muted mt-2"><i class="bi bi-lightning-charge me-1"></i>Photos load only when you click, keeping the dashboard light.</div>
+                    </div>
+                    <script>
+                    (function () {
+                        const btn = document.getElementById('dpmuPhotosShowMore');
+                        const row = document.getElementById('dpmuPhotosRow');
+                        const wrap = document.getElementById('dpmuPhotosShowMoreWrap');
+                        if (!btn || !row) return;
+                        btn.addEventListener('click', async () => {
+                            const offset = parseInt(btn.getAttribute('data-offset'), 10) || 0;
+                            btn.disabled = true;
+                            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading&hellip;';
+                            try {
+                                const res = await fetch('/dashboard_ajax_pmu_photos.php?offset=' + offset, {
+                                    credentials: 'same-origin',
+                                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                                });
+                                if (!res.ok) throw new Error('HTTP ' + res.status);
+                                const html = await res.text();
+                                row.insertAdjacentHTML('beforeend', html);
+                                if (wrap) wrap.remove();
+                            } catch (err) {
+                                btn.disabled = false;
+                                btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Retry — ' + String(err);
+                            }
+                        });
+                    })();
+                    </script>
+                <?php endif; ?>
             </div>
             <div class="card-footer small text-muted"><i class="bi bi-info-circle me-1"></i>Click a thumbnail to open the full-size photo in a new tab.</div>
         </div>
