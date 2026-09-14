@@ -36,8 +36,9 @@ if ($history === []) {
                 <th>Sl No</th>
                 <th>Officer</th>
                 <th>Designation</th>
-                <th>Assigned</th>
-                <th>Unassigned</th>
+                <th>Charge</th>
+                <th>From</th>
+                <th>To / Ended</th>
                 <th>Notes</th>
             </tr>
         </thead>
@@ -52,12 +53,28 @@ if ($history === []) {
                     </td>
                     <td><?= $esc((string) ($h['designation'] ?? '')) ?></td>
                     <td class="small">
-                        <?= $esc((string) $h['assigned_at']) ?>
+                        <?php if ((int) ($h['is_additional_charge'] ?? 0) === 1): ?>
+                            <span class="badge text-bg-warning">Additional charge</span>
+                        <?php else: ?>
+                            <span class="text-muted">Regular</span>
+                        <?php endif; ?>
+                    </td>
+                    <td class="small">
+                        <?= $esc(substr((string) ($h['from_date'] ?? $h['assigned_at']), 0, 10)) ?>
                         <?php if (!empty($h['assigned_by_name'])): ?><div class="small text-muted">by <?= $esc((string) $h['assigned_by_name']) ?></div><?php endif; ?>
                     </td>
                     <td class="small">
-                        <?= $current ? '<span class="text-muted">—</span>' : $esc((string) $h['unassigned_at']) ?>
-                        <?php if (!$current && !empty($h['unassigned_by_name'])): ?><div class="small text-muted">by <?= $esc((string) $h['unassigned_by_name']) ?></div><?php endif; ?>
+                        <?php if ($current): ?>
+                            <?php if (!empty($h['to_date'])): ?>
+                                <?= $esc(substr((string) $h['to_date'], 0, 10)) ?>
+                                <div class="small text-muted">planned end</div>
+                            <?php else: ?>
+                                <span class="text-muted">—</span>
+                            <?php endif; ?>
+                        <?php else: ?>
+                            <?= $esc(substr((string) ($h['to_date'] ?? $h['unassigned_at']), 0, 10)) ?>
+                            <?php if (!empty($h['unassigned_by_name'])): ?><div class="small text-muted">by <?= $esc((string) $h['unassigned_by_name']) ?></div><?php endif; ?>
+                        <?php endif; ?>
                     </td>
                     <td class="small text-muted">
                         <?php if (!empty($h['assign_reason'])): ?><div><em>Assign:</em> <?= $esc((string) $h['assign_reason']) ?></div><?php endif; ?>

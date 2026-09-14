@@ -2,6 +2,7 @@
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/office_hierarchy_helpers.php';
+require_once __DIR__ . '/includes/task_tracker_helpers.php';
 require_auth();
 
 $viewer = current_user() ?? [];
@@ -14,6 +15,9 @@ if (!is_manage_admin($viewer)) {
     exit;
 }
 office_hierarchy_bootstrap();
+// Task Tracker bootstrap adds the responsibility_level column on
+// office_hierarchy_nodes + assignment-history extensions. Idempotent.
+task_tracker_bootstrap();
 
 $viewerId = (int) $viewer['id'];
 
@@ -54,6 +58,12 @@ if (is_post() && $action === 'save') {
     $location     = trim((string) ($_POST['location'] ?? ''));
     $seatNumber   = trim((string) ($_POST['seat_number'] ?? ''));
     $sortOrder    = (int) ($_POST['sort_order'] ?? 0);
+    // Task Tracker addition — responsibility_level applies only to
+    // seats; anything else silently clears the value so a stale POST
+    // can't stamp a level onto a division.
+    $respLevelRaw  = trim((string) ($_POST['responsibility_level'] ?? ''));
+    $allowedLevels = ['staff', 'section_head', 'division_head', 'office_head'];
+    $respLevel     = ($levelType === 'seat' && in_array($respLevelRaw, $allowedLevels, true)) ? $respLevelRaw : null;
 
     if (!in_array($levelType, ['office', 'division', 'section', 'seat'], true)) {
         $flashMessage = 'Invalid level type.';
@@ -66,11 +76,13 @@ if (is_post() && $action === 'save') {
             if ($editId > 0) {
                 $u = db()->prepare('UPDATE office_hierarchy_nodes
                     SET name = ?, details = ?, location = ?, seat_number = ?,
+                        responsibility_level = ?,
                         sort_order = ?, updated_at = NOW(), updated_by = ?
                     WHERE id = ?');
                 $u->execute([
                     $name, $details === '' ? null : $details, $location === '' ? null : $location,
                     $seatNumber === '' ? null : $seatNumber,
+                    $respLevel,
                     $sortOrder, $viewerId, $editId,
                 ]);
                 $sendFlashAndRedirect(
@@ -80,14 +92,16 @@ if (is_post() && $action === 'save') {
             } else {
                 $ins = db()->prepare('INSERT INTO office_hierarchy_nodes
                     (parent_id, level_type, name, details, location, seat_number,
+                     responsibility_level,
                      sort_order, active_status, created_at, updated_at, created_by, updated_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)');
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)');
                 $ins->execute([
                     $parentId > 0 ? $parentId : null,
                     $levelType, $name,
                     $details === '' ? null : $details,
                     $location === '' ? null : $location,
                     $seatNumber === '' ? null : $seatNumber,
+                    $respLevel,
                     $sortOrder, $viewerId, $viewerId,
                 ]);
                 $newId = (int) db()->lastInsertId();
@@ -128,6 +142,15 @@ if (is_post() && $action === 'save') {
     $officerId      = (int) ($_POST['officer_id'] ?? 0);
     $newDesignation = trim((string) ($_POST['designation'] ?? ''));
     $reason         = trim((string) ($_POST['reason'] ?? ''));
+    // Task Tracker additions: explicit from / to dates + additional-
+    // charge flag. `from_date` defaults to today when the operator
+    // leaves it blank so the row is always dated. `to_date` stays NULL
+    // until the officer is unassigned (or the operator sets an end).
+    $fromDateRaw    = trim((string) ($_POST['from_date'] ?? ''));
+    $toDateRaw      = trim((string) ($_POST['to_date']   ?? ''));
+    $fromDate       = $fromDateRaw !== '' ? $fromDateRaw : date('Y-m-d');
+    $toDate         = $toDateRaw !== '' ? $toDateRaw : null;
+    $isAdditional   = isset($_POST['is_additional_charge']) ? 1 : 0;
     if ($tid <= 0 || $officerId <= 0) {
         $flashMessage = 'Pick an officer before saving.';
         $flashType = 'danger';
@@ -139,14 +162,18 @@ if (is_post() && $action === 'save') {
             $u->execute([$officerId]);
             $officerName = (string) ($u->fetchColumn() ?: '');
             db()->prepare('UPDATE office_hierarchy_officer_history
-                SET unassigned_at = NOW(), unassigned_by = ?, unassign_reason = ?
+                SET unassigned_at = NOW(), unassigned_by = ?, unassign_reason = ?,
+                    to_date = COALESCE(to_date, ?)
                 WHERE node_id = ? AND unassigned_at IS NULL')
-                ->execute([$viewerId, 'Replaced by new officer', $tid]);
+                ->execute([$viewerId, 'Replaced by new officer', $fromDate, $tid]);
             db()->prepare('INSERT INTO office_hierarchy_officer_history
-                (node_id, officer_id, officer_name_snapshot, designation, assigned_at, assigned_by, assign_reason)
-                VALUES (?, ?, ?, ?, NOW(), ?, ?)')
+                (node_id, officer_id, officer_name_snapshot, designation, is_additional_charge,
+                 assigned_at, from_date, to_date, assigned_by, assign_reason)
+                VALUES (?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?)')
                 ->execute([$tid, $officerId, $officerName,
                     $newDesignation === '' ? null : $newDesignation,
+                    $isAdditional,
+                    $fromDate, $toDate,
                     $viewerId, $reason === '' ? null : $reason]);
             db()->prepare('UPDATE office_hierarchy_nodes
                 SET responsible_officer_id = ?, designation = ?, updated_at = NOW(), updated_by = ?
@@ -216,6 +243,7 @@ $rowPayload = static function (array $r): string {
         'location'               => (string) ($r['location'] ?? ''),
         'seat_number'            => (string) ($r['seat_number'] ?? ''),
         'designation'            => (string) ($r['designation'] ?? ''),
+        'responsibility_level'   => (string) ($r['responsibility_level'] ?? ''),
         'responsible_officer_id' => (int) ($r['responsible_officer_id'] ?? 0),
         'officer_name'           => (string) ($r['officer_name'] ?? ''),
         'active_status'          => (int) $r['active_status'],
@@ -478,6 +506,17 @@ render_page_header('Administration · Office Hierarchy', [
                             <label class="form-label" for="editModalSeatNumber">Seat number / label</label>
                             <input type="text" class="form-control" id="editModalSeatNumber" name="seat_number" maxlength="120">
                         </div>
+                        <div class="col-md-6" id="editModalRespLevelWrap" style="display:none;">
+                            <label class="form-label" for="editModalRespLevel">Responsibility level <span class="small text-muted">(Task Tracker)</span></label>
+                            <select class="form-select" id="editModalRespLevel" name="responsibility_level">
+                                <option value="">— none —</option>
+                                <option value="staff">Staff</option>
+                                <option value="section_head">Section head</option>
+                                <option value="division_head">Division head</option>
+                                <option value="office_head">Office head</option>
+                            </select>
+                            <div class="small text-muted mt-1">Drives what a user holding this seat can view / edit in Task Tracker. Only meaningful for seats.</div>
+                        </div>
                         <div class="col-12">
                             <label class="form-label" for="editModalDetails">Details</label>
                             <textarea class="form-control" id="editModalDetails" name="details" rows="3"></textarea>
@@ -521,6 +560,23 @@ render_page_header('Administration · Office Hierarchy', [
                         <div class="col-md-6">
                             <label class="form-label">Designation</label>
                             <input type="text" class="form-control" name="designation" id="assignOfficerDesignation" maxlength="255">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="assignFromDate">From date</label>
+                            <input type="date" class="form-control" name="from_date" id="assignFromDate">
+                            <div class="small text-muted mt-1">Defaults to today.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="assignToDate">To date <span class="small text-muted">(optional)</span></label>
+                            <input type="date" class="form-control" name="to_date" id="assignToDate">
+                            <div class="small text-muted mt-1">Leave blank if the officer holds this seat until further notice.</div>
+                        </div>
+                        <div class="col-md-4 d-flex align-items-end">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="is_additional_charge" id="assignAdditionalCharge" value="1">
+                                <label class="form-check-label" for="assignAdditionalCharge">Additional charge</label>
+                                <div class="small text-muted">Officer already holds another seat.</div>
+                            </div>
                         </div>
                         <div class="col-12">
                             <label class="form-label">Reason / note</label>
@@ -594,10 +650,20 @@ render_page_header('Administration · Office Hierarchy', [
     const editLocation  = document.getElementById('editModalLocation');
     const editSeatWrap  = document.getElementById('editModalSeatWrap');
     const editSeatNo    = document.getElementById('editModalSeatNumber');
+    const editRespWrap  = document.getElementById('editModalRespLevelWrap');
+    const editRespLevel = document.getElementById('editModalRespLevel');
     const editDetails   = document.getElementById('editModalDetails');
 
     const showSeatField = (level) => {
-        editSeatWrap.style.display = (level === 'seat') ? '' : 'none';
+        const isSeat = (level === 'seat');
+        editSeatWrap.style.display = isSeat ? '' : 'none';
+        editRespWrap.style.display = isSeat ? '' : 'none';
+        // Reset non-seat fields on switch away so a stale value from a
+        // prior open doesn't sneak into the save.
+        if (!isSeat) {
+            editSeatNo.value    = '';
+            editRespLevel.value = '';
+        }
     };
 
     editModalEl?.addEventListener('show.bs.modal', (ev) => {
@@ -618,6 +684,7 @@ render_page_header('Administration · Office Hierarchy', [
             editSortOrder.value = '0';
             editLocation.value  = '';
             editSeatNo.value    = '';
+            editRespLevel.value = '';
             editDetails.value   = '';
             showSeatField(childLvl);
         } else if (trigger.classList.contains('js-edit-node')) {
@@ -633,6 +700,7 @@ render_page_header('Administration · Office Hierarchy', [
             editSortOrder.value = data.sort_order || 0;
             editLocation.value  = data.location || '';
             editSeatNo.value    = data.seat_number || '';
+            editRespLevel.value = data.responsibility_level || '';
             editDetails.value   = data.details || '';
             showSeatField(data.level_type);
         }
@@ -697,6 +765,15 @@ render_page_header('Administration · Office Hierarchy', [
         document.getElementById('assignOfficerName').value      = currentViewData.officer_name || '';
         document.getElementById('assignOfficerDesignation').value = currentViewData.designation || '';
         document.getElementById('assignOfficerReason').value    = '';
+        // Default the "From" date to today (server does the same on
+        // blank submit — this just makes the picker look sane).
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        document.getElementById('assignFromDate').value = `${yyyy}-${mm}-${dd}`;
+        document.getElementById('assignToDate').value   = '';
+        document.getElementById('assignAdditionalCharge').checked = false;
         document.getElementById('assignOfficerTitle').innerHTML = '<i class="bi bi-person-check me-1"></i>Assign officer for ' + esc(currentViewData.name || '');
         // Close view modal, open assign modal.
         bootstrap.Modal.getInstance(viewModalEl)?.hide();
