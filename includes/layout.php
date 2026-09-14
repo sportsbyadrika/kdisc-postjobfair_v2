@@ -186,6 +186,7 @@ function render_header(string $title, array $options = []): void
                                             <li><a class="dropdown-item" href="/users.php"><i class="bi bi-people me-2"></i>Users</a></li>
                                             <li><a class="dropdown-item" href="/office_hierarchy.php"><i class="bi bi-diagram-3 me-2"></i>Office Hierarchy</a></li>
                                             <li><a class="dropdown-item" href="/task_tracker_status.php"><i class="bi bi-columns-gap me-2"></i>Task Tracker · Status master</a></li>
+                                            <li><a class="dropdown-item" href="/task_tracker_projects.php"><i class="bi bi-kanban me-2"></i>Task Tracker · Projects</a></li>
                                             <li><a class="dropdown-item" href="/reports.php"><i class="bi bi-clock-history me-2"></i>Login Reports</a></li>
                                         </ul>
                                     </li>
