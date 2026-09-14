@@ -29,8 +29,30 @@ if ($nodeId > 0 && $node === null) {
 
 /* -------------------------------------------------------------------- *
  * POST handlers
+ *
+ * Every successful mutation redirects (Post-Redirect-Get) so the URL
+ * carries the clean state (no ?form=add stuck on the URL) and a browser
+ * refresh doesn't re-submit the form. The redirect target is the newly-
+ * created / edited node so the operator lands on their record.
+ *
+ * The flash message survives the redirect via the session.
  * -------------------------------------------------------------------- */
 $action = (string) ($_POST['action'] ?? '');
+
+$sendFlashAndRedirect = static function (string $url, string $msg, string $type = 'success'): void {
+    if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+    $_SESSION['office_hierarchy_flash'] = ['msg' => $msg, 'type' => $type];
+    header('Location: ' . $url);
+    exit;
+};
+
+// Pick up a flash left by a previous PRG cycle.
+if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+if (!empty($_SESSION['office_hierarchy_flash']) && is_array($_SESSION['office_hierarchy_flash'])) {
+    $flashMessage = (string) ($_SESSION['office_hierarchy_flash']['msg']  ?? '');
+    $flashType    = (string) ($_SESSION['office_hierarchy_flash']['type'] ?? 'success');
+    unset($_SESSION['office_hierarchy_flash']);
+}
 
 if (is_post() && $action === 'save') {
     // Save (INSERT or UPDATE) a node. Parent is implied by the current
@@ -65,9 +87,10 @@ if (is_post() && $action === 'save') {
                     $seatNumber === '' ? null : $seatNumber, $designation === '' ? null : $designation,
                     $sortOrder, $viewerId, $editId,
                 ]);
-                $flashMessage = office_hierarchy_level_label($levelType) . ' updated.';
-                $nodeId = $editId;
-                $node   = office_hierarchy_get_node($nodeId);
+                $sendFlashAndRedirect(
+                    '/office_hierarchy.php?node=' . $editId,
+                    office_hierarchy_level_label($levelType) . ' updated.'
+                );
             } else {
                 $ins = db()->prepare('INSERT INTO office_hierarchy_nodes
                     (parent_id, level_type, name, details, location, seat_number, designation,
@@ -83,13 +106,16 @@ if (is_post() && $action === 'save') {
                     $sortOrder, $viewerId, $viewerId,
                 ]);
                 $newId = (int) db()->lastInsertId();
-                $flashMessage = office_hierarchy_level_label($levelType) . ' added.';
-                // Land the user on the newly-created node so they can
-                // continue building underneath it.
-                $nodeId = $newId;
-                $node   = office_hierarchy_get_node($nodeId);
+                $sendFlashAndRedirect(
+                    '/office_hierarchy.php?node=' . $newId,
+                    office_hierarchy_level_label($levelType) . ' added.'
+                );
             }
         } catch (Throwable $e) {
+            // Surface the actual DB error to the operator instead of
+            // silently landing on an empty form — the previous version's
+            // catch swallowed the message and the user thought "nothing
+            // saved".
             $flashMessage = 'Save failed: ' . $e->getMessage();
             $flashType = 'danger';
         }
@@ -97,10 +123,15 @@ if (is_post() && $action === 'save') {
 } elseif (is_post() && $action === 'toggle_active') {
     $tid = (int) ($_POST['id'] ?? 0);
     if ($tid > 0) {
-        db()->prepare('UPDATE office_hierarchy_nodes
-            SET active_status = 1 - active_status, updated_at = NOW(), updated_by = ?
-            WHERE id = ?')->execute([$viewerId, $tid]);
-        $flashMessage = 'Status toggled.';
+        try {
+            db()->prepare('UPDATE office_hierarchy_nodes
+                SET active_status = 1 - active_status, updated_at = NOW(), updated_by = ?
+                WHERE id = ?')->execute([$viewerId, $tid]);
+            $sendFlashAndRedirect('/office_hierarchy.php?node=' . $tid, 'Status toggled.');
+        } catch (Throwable $e) {
+            $flashMessage = 'Toggle failed: ' . $e->getMessage();
+            $flashType = 'danger';
+        }
     }
 } elseif (is_post() && $action === 'assign_officer') {
     // Assign a responsible officer. If the node already has one, we log
@@ -153,8 +184,7 @@ if (is_post() && $action === 'save') {
             $flashType = 'danger';
         }
         if ($ok) {
-            $flashMessage = 'Officer assigned.';
-            $node = office_hierarchy_get_node($tid);
+            $sendFlashAndRedirect('/office_hierarchy.php?node=' . $tid, 'Officer assigned.');
         }
     }
 } elseif (is_post() && $action === 'unassign_officer') {
@@ -175,8 +205,7 @@ if (is_post() && $action === 'save') {
                 WHERE id = ?')
                 ->execute([$viewerId, $tid]);
             db()->query('COMMIT');
-            $flashMessage = 'Officer removed. The transfer is logged in the history.';
-            $node = office_hierarchy_get_node($tid);
+            $sendFlashAndRedirect('/office_hierarchy.php?node=' . $tid, 'Officer removed. The transfer is logged in the history.');
         } catch (Throwable $e) {
             db()->query('ROLLBACK');
             $flashMessage = 'Unassign failed: ' . $e->getMessage();
