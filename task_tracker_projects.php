@@ -159,8 +159,16 @@ render_page_header('Task Tracker · Projects', [
                     ?>
                     <tr class="<?= $active ? '' : 'text-muted' ?>">
                         <td><?= $i++ ?></td>
-                        <td><span class="badge text-bg-light border font-monospace"><?= esc((string) $p['code']) ?></span></td>
-                        <td class="fw-semibold"><?= esc((string) $p['name']) ?></td>
+                        <td>
+                            <a href="/task_tracker_project_view.php?id=<?= (int) $p['id'] ?>" class="text-decoration-none">
+                                <span class="badge text-bg-light border font-monospace"><?= esc((string) $p['code']) ?></span>
+                            </a>
+                        </td>
+                        <td class="fw-semibold">
+                            <a href="/task_tracker_project_view.php?id=<?= (int) $p['id'] ?>" class="text-decoration-none text-body">
+                                <?= esc((string) $p['name']) ?>
+                            </a>
+                        </td>
                         <td class="small"><?= esc((string) ($p['financial_year'] ?? '—')) ?: '—' ?></td>
                         <td class="small text-muted">
                             <?php
@@ -172,7 +180,9 @@ render_page_header('Task Tracker · Projects', [
                                 else echo 'to ' . esc(date('d/m/Y', strtotime($e)));
                             ?>
                         </td>
-                        <td class="text-end fw-bold"><?= number_format((int) $p['task_count']) ?></td>
+                        <td class="text-end fw-bold">
+                            <a href="/task_tracker_project_view.php?id=<?= (int) $p['id'] ?>" class="text-decoration-none text-body"><?= number_format((int) $p['task_count']) ?></a>
+                        </td>
                         <td class="text-end small text-muted"><?= (int) $p['next_task_number'] ?></td>
                         <td>
                             <?php if ($active): ?><span class="badge text-bg-success">Active</span>
