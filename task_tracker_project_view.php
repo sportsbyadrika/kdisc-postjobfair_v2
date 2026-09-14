@@ -223,7 +223,7 @@ render_page_header('Project · ' . $project['name'], [
                                         </span>
                                     <?php endif; ?>
                                 </div>
-                                <a class="stretched-link" href="/task_tracker_task.php?id=<?= (int) $t['id'] ?>" title="Open task"></a>
+                                <a class="stretched-link" href="/task_tracker_task_view.php?id=<?= (int) $t['id'] ?>" title="Open task"></a>
                             </div>
                         <?php endforeach; ?>
                         <?php if ($columnTasks === []): ?>

@@ -348,6 +348,14 @@ function task_tracker__seat_name(array $seats, int $seatId): string
     return '#' . $seatId;
 }
 
+// When called with ?parent=<tid>, preselect Sub-activity + that parent.
+$parentHint = (int) ($_GET['parent'] ?? 0);
+if ($parentHint > 0 && $existing === null) {
+    $ok = false;
+    foreach ($activities as $a) { if ((int) $a['id'] === $parentHint) { $ok = true; break; } }
+    if (!$ok) $parentHint = 0;
+}
+
 $editing = $existing !== null;
 $formValues = $existing !== null ? [
     'type'          => $existing['parent_id'] === null ? 'activity' : 'sub',
@@ -364,8 +372,8 @@ $formValues = $existing !== null ? [
     'primary_division_id' => (int) $existingAssignmentPayload['primary_division_id'],
     'secondary_seat_ids'  => $existingAssignmentPayload['secondary_seat_ids'],
 ] : [
-    'type'          => 'activity',
-    'parent_id'     => 0,
+    'type'          => $parentHint > 0 ? 'sub' : 'activity',
+    'parent_id'     => $parentHint,
     'title'         => '',
     'description'   => '',
     'target'        => '',
