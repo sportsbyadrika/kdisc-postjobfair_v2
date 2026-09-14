@@ -181,10 +181,11 @@ function render_header(string $title, array $options = []): void
                                 </li>
                                 <?php if (is_manage_admin($user)): ?>
                                     <li class="nav-item dropdown">
-                                        <a class="nav-link dropdown-toggle<?= $isActive(['users.php', 'reports.php', 'office_hierarchy.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
+                                        <a class="nav-link dropdown-toggle<?= $isActive(['users.php', 'reports.php', 'office_hierarchy.php', 'task_tracker_status.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
                                         <ul class="dropdown-menu">
                                             <li><a class="dropdown-item" href="/users.php"><i class="bi bi-people me-2"></i>Users</a></li>
                                             <li><a class="dropdown-item" href="/office_hierarchy.php"><i class="bi bi-diagram-3 me-2"></i>Office Hierarchy</a></li>
+                                            <li><a class="dropdown-item" href="/task_tracker_status.php"><i class="bi bi-columns-gap me-2"></i>Task Tracker · Status master</a></li>
                                             <li><a class="dropdown-item" href="/reports.php"><i class="bi bi-clock-history me-2"></i>Login Reports</a></li>
                                         </ul>
                                     </li>
