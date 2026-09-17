@@ -48,9 +48,16 @@ class DatabaseStatement
     {
         if ($params !== []) {
             $types = str_repeat('s', count($params));
-            $values = array_map(static function ($param) {
-                return is_bool($param) ? (int) $param : (string) $param;
-            }, $params);
+            // Preserve null so mysqli sends SQL NULL (not empty string,
+            // which MariaDB then coerces to 0 for INT NULL columns —
+            // a real bug that made root offices show parent_id = 0
+            // instead of NULL, hiding them from tree queries).
+            $values = [];
+            foreach ($params as $param) {
+                if ($param === null) $values[] = null;
+                elseif (is_bool($param)) $values[] = (int) $param;
+                else $values[] = (string) $param;
+            }
             $this->statement->bind_param($types, ...$values);
         }
 

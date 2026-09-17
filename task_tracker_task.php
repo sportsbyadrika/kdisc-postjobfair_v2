@@ -119,7 +119,7 @@ foreach ($statuses as $s) { if ((string) $s['category'] === 'todo' && (int) $s['
 if ($defaultStatusId === 0 && $statuses !== []) $defaultStatusId = (int) $statuses[0]['id'];
 
 $activitiesStmt = db()->prepare('SELECT id, task_number, title FROM task
-    WHERE project_id = ? AND parent_id IS NULL AND is_active = 1
+    WHERE project_id = ? AND (parent_id IS NULL OR parent_id = 0) AND is_active = 1
       AND id <> ?
     ORDER BY task_number ASC');
 $activitiesStmt->execute([$projectId, $taskId]);
