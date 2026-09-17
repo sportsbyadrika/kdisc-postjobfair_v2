@@ -231,7 +231,7 @@ render_page_header('Project · ' . $project['name'], [
                                         </span>
                                     <?php endif; ?>
                                 </div>
-                                <a class="stretched-link" href="/task_tracker_task_view.php?id=<?= (int) $t['id'] ?>" title="Open task"></a>
+                                <a class="stretched-link" href="/task_tracker_task_view.php?id=<?= (int) $t['id'] ?>" title="Open task" draggable="false"></a>
                             </div>
                         <?php endforeach; ?>
                         <?php if ($columnTasks === []): ?>
@@ -274,7 +274,8 @@ render_page_header('Project · ' . $project['name'], [
 .tt-column { flex: 0 0 300px; background: #f4f6fa; border-radius: 10px; display: flex; flex-direction: column; max-height: 76vh; }
 .tt-column-header { padding: 10px 12px; border-radius: 10px 10px 0 0; }
 .tt-column-body { padding: 10px; flex: 1; overflow-y: auto; min-height: 60px; display: flex; flex-direction: column; gap: 8px; }
-.tt-card { position: relative; background: #fff; border: 1px solid #e3e6ee; border-radius: 8px; padding: 10px 12px; cursor: grab; box-shadow: 0 1px 2px rgba(30,42,66,.04); transition: box-shadow .15s ease, transform .05s ease; }
+.tt-card { position: relative; background: #fff; border: 1px solid #e3e6ee; border-radius: 8px; padding: 10px 12px; cursor: grab; box-shadow: 0 1px 2px rgba(30,42,66,.04); transition: box-shadow .15s ease, transform .05s ease; -webkit-user-drag: none; user-select: none; }
+.tt-card a { -webkit-user-drag: none; }
 .tt-card:hover { box-shadow: 0 2px 6px rgba(30,42,66,.08); }
 .tt-card:active { cursor: grabbing; }
 .tt-card-title { font-weight: 600; line-height: 1.3; }
@@ -286,7 +287,6 @@ render_page_header('Project · ' . $project['name'], [
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"
-    integrity="sha512-Eezs+g9Lq4TCCq0wae01s9PuNWzHYoCMkE97e2qdkYthpI0pzC3UGB03lgEHn2XM85hDOUF6qgqqszs+iXU4UA=="
     crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
 (function () {
@@ -294,6 +294,10 @@ render_page_header('Project · ' . $project['name'], [
     const moveUrl   = '/task_tracker_ajax_move.php';
     const board = document.getElementById('ttBoard');
     if (!board) return;
+    if (typeof Sortable === 'undefined') {
+        console.error('Task Tracker: SortableJS failed to load — drag-and-drop disabled. Check network access to cdnjs.cloudflare.com.');
+        return;
+    }
 
     const modalEl = document.getElementById('terminalModal');
     const modal   = modalEl ? new bootstrap.Modal(modalEl) : null;
