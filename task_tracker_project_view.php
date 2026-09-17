@@ -115,39 +115,47 @@ render_page_header('Project · ' . $project['name'], [
 <?php endif; ?>
 
 <div class="row g-3">
-    <div class="col-md-3">
-        <div class="card card-stat accent-primary">
-            <div class="stat-icon-box"><i class="bi bi-hash"></i></div>
-            <div>
-                <div class="stat-value font-monospace"><?= esc((string) $project['code']) ?></div>
-                <div class="stat-label">Code</div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-primary h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100">
+                    <p class="stat-label">Code</p>
+                    <p class="stat-value font-monospace"><?= esc((string) $project['code']) ?></p>
+                </div>
+                <span class="stat-icon-box tone-primary"><i class="bi bi-hash"></i></span>
             </div>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="card card-stat accent-info">
-            <div class="stat-icon-box"><i class="bi bi-calendar3"></i></div>
-            <div>
-                <div class="stat-value"><?= esc((string) ($project['financial_year'] ?? '—')) ?: '—' ?></div>
-                <div class="stat-label">Financial year</div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-info h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100">
+                    <p class="stat-label">Financial year</p>
+                    <p class="stat-value"><?= esc((string) ($project['financial_year'] ?? '—')) ?: '—' ?></p>
+                </div>
+                <span class="stat-icon-box tone-info"><i class="bi bi-calendar3"></i></span>
             </div>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="card card-stat accent-success">
-            <div class="stat-icon-box"><i class="bi bi-list-check"></i></div>
-            <div>
-                <div class="stat-value"><?= number_format(count($tasks)) ?></div>
-                <div class="stat-label">Active task<?= count($tasks) === 1 ? '' : 's' ?></div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-success h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100">
+                    <p class="stat-label">Active task<?= count($tasks) === 1 ? '' : 's' ?></p>
+                    <p class="stat-value"><?= number_format(count($tasks)) ?></p>
+                </div>
+                <span class="stat-icon-box tone-success"><i class="bi bi-list-check"></i></span>
             </div>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="card card-stat accent-neutral">
-            <div class="stat-icon-box"><i class="bi bi-123"></i></div>
-            <div>
-                <div class="stat-value"><?= (int) $project['next_task_number'] ?></div>
-                <div class="stat-label">Next task #</div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-slate h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100">
+                    <p class="stat-label">Next task #</p>
+                    <p class="stat-value"><?= (int) $project['next_task_number'] ?></p>
+                </div>
+                <span class="stat-icon-box tone-slate"><i class="bi bi-123"></i></span>
             </div>
         </div>
     </div>
