@@ -287,7 +287,16 @@ render_page_header('Project · ' . $project['name'], [
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"
     crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
-(function () {
+// Bootstrap's bundle is loaded at the very end of the page by
+// render_footer(), so this init has to wait for DOMContentLoaded —
+// running inline it fires before the bundle is on the window.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ttInitBoard);
+} else {
+    ttInitBoard();
+}
+
+function ttInitBoard () {
     const csrfToken = <?= json_encode(csrf_token()) ?>;
     const moveUrl   = '/task_tracker_ajax_move.php';
     const board = document.getElementById('ttBoard');
@@ -488,7 +497,7 @@ render_page_header('Project · ' . $project['name'], [
         const url = card.getAttribute('data-open-url');
         if (url) window.location.href = url;
     });
-})();
+}
 </script>
 
 <?php render_footer(); ?>
