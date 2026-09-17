@@ -39,7 +39,7 @@ $projects = db()->query('SELECT id, code, name FROM project
 $statuses = db()->query('SELECT id, name FROM task_status WHERE is_active = 1 ORDER BY sort_order ASC')->fetchAll();
 $officers = db()->query("SELECT DISTINCT u.id, u.name FROM users u
     INNER JOIN office_hierarchy_officer_history h ON h.officer_id = u.id AND h.unassigned_at IS NULL
-    WHERE u.is_active = 1
+    WHERE u.active_status = 1
     ORDER BY u.name ASC")->fetchAll();
 
 $filterProject = (int) ($_GET['project_id'] ?? 0);
