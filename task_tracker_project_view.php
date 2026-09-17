@@ -196,7 +196,7 @@ render_page_header('Project · ' . $project['name'], [
                             $officerColour = (string) ($t['primary_officer_colour'] ?? 'secondary');
                             if ($officerColour === 'neutral') $officerColour = 'secondary';
                         ?>
-                            <div class="tt-card" data-task-id="<?= (int) $t['id'] ?>" data-status-id="<?= $sid ?>">
+                            <div class="tt-card" data-task-id="<?= (int) $t['id'] ?>" data-status-id="<?= $sid ?>" data-open-url="/task_tracker_task_view.php?id=<?= (int) $t['id'] ?>" title="Open task">
                                 <div class="d-flex justify-content-between align-items-start gap-2">
                                     <span class="badge text-bg-light border font-monospace small">
                                         <?= esc((string) $project['code']) ?>-<?= (int) $t['task_number'] ?>
@@ -231,7 +231,6 @@ render_page_header('Project · ' . $project['name'], [
                                         </span>
                                     <?php endif; ?>
                                 </div>
-                                <a class="stretched-link" href="/task_tracker_task_view.php?id=<?= (int) $t['id'] ?>" title="Open task" draggable="false"></a>
                             </div>
                         <?php endforeach; ?>
                         <?php if ($columnTasks === []): ?>
@@ -385,6 +384,13 @@ render_page_header('Project · ' . $project['name'], [
             ghostClass: 'tt-ghost',
             chosenClass: 'tt-drag',
             forceFallback: false,
+            // Only real cards are draggable — the "Drop tasks here"
+            // placeholder is also a direct child of the sortable
+            // container and would otherwise be treated as a movable
+            // item, blocking cross-column drops.
+            draggable: '.tt-card',
+            filter:    '.tt-empty',
+            preventOnFilter: false,
             onStart: (evt) => {
                 // Remove any "drop tasks here" placeholder in the source col.
                 const empties = evt.from.querySelectorAll('.tt-empty');
@@ -396,6 +402,11 @@ render_page_header('Project · ' . $project['name'], [
                 empties.forEach(e => e.remove());
             },
             onEnd: (evt) => {
+                // Suppress the click that fires the moment the drop
+                // finishes — otherwise every drop would also navigate
+                // to the dropped card's detail page.
+                window.__ttJustDragged = true;
+                setTimeout(() => { window.__ttJustDragged = false; }, 300);
                 const card = evt.item;
                 const newCol = evt.to;
                 const oldCol = evt.from;
@@ -438,18 +449,16 @@ render_page_header('Project · ' . $project['name'], [
         });
     });
 
-    // Suppress the click that browsers synthesise at the end of a drag —
-    // without this the stretched-link on the card fires navigation as the
-    // user lets go, taking them away from the board.
-    let justDragged = false;
+    // Card click → open the task detail page. Suppress if a drag just
+    // ended so the mouseup at the end of a drop does not double as a
+    // navigation click.
     board.addEventListener('click', (ev) => {
-        if (justDragged) ev.preventDefault();
-    }, true);
-    board.addEventListener('mouseup', () => {
-        if (!pendingMove) return;
-        justDragged = true;
-        setTimeout(() => { justDragged = false; }, 250);
-    }, true);
+        if (window.__ttJustDragged) return;
+        const card = ev.target.closest('.tt-card');
+        if (!card) return;
+        const url = card.getAttribute('data-open-url');
+        if (url) window.location.href = url;
+    });
 })();
 </script>
 
