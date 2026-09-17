@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
+require_once __DIR__ . '/includes/task_tracker_helpers.php';
 require_admin();
 
 // One-time self-migration: add assigned_districts column to users table if missing.
@@ -9,6 +10,11 @@ $hasAssignedDistrictsCol = db()->query("SHOW COLUMNS FROM users LIKE 'assigned_d
 if (!$hasAssignedDistrictsCol) {
     db()->query("ALTER TABLE users ADD COLUMN assigned_districts TEXT NULL AFTER address");
 }
+
+// Task Tracker bootstrap runs the users.avatar_colour ALTER (among
+// others). Safe to call on every request — every ALTER is guarded by
+// SHOW COLUMNS.
+task_tracker_bootstrap();
 
 $user = current_user();
 $flash = null;
@@ -38,19 +44,27 @@ if (is_post()) {
         $address = trim($_POST['address'] ?? '');
         $active = isset($_POST['active_status']) ? 1 : 0;
         $assignedDistricts = parse_assigned_districts();
+        $avatarColour = trim((string) ($_POST['avatar_colour'] ?? ''));
+        // Auto-assign a stable colour when the operator leaves it
+        // blank — the initials avatar the Task Tracker draws needs
+        // one to render.
+        if ($avatarColour === '') {
+            require_once __DIR__ . '/includes/task_tracker_helpers.php';
+            $avatarColour = task_tracker_default_avatar_colour($mobile ?: $name);
+        }
 
         if ($action === 'add') {
             $password = $_POST['password'] ?? '';
-            $stmt = db()->prepare('INSERT INTO users (name, role, mobile_number, email, address, assigned_districts, password_hash, active_status, created_at, updated_at, modified_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)');
-            $stmt->execute([$name, $role, $mobile, $email, $address, $assignedDistricts, password_hash($password, PASSWORD_DEFAULT), $active, $user['id']]);
+            $stmt = db()->prepare('INSERT INTO users (name, role, mobile_number, email, address, assigned_districts, avatar_colour, password_hash, active_status, created_at, updated_at, modified_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)');
+            $stmt->execute([$name, $role, $mobile, $email, $address, $assignedDistricts, $avatarColour, password_hash($password, PASSWORD_DEFAULT), $active, $user['id']]);
             $flash = 'User added.';
         } else {
             if (!empty($_POST['password'])) {
-                $stmt = db()->prepare('UPDATE users SET name=?, role=?, mobile_number=?, email=?, address=?, assigned_districts=?, active_status=?, password_hash=?, updated_at=NOW(), modified_by=? WHERE id=?');
-                $params = [$name, $role, $mobile, $email, $address, $assignedDistricts, $active, password_hash($_POST['password'], PASSWORD_DEFAULT), $user['id'], $id];
+                $stmt = db()->prepare('UPDATE users SET name=?, role=?, mobile_number=?, email=?, address=?, assigned_districts=?, avatar_colour=?, active_status=?, password_hash=?, updated_at=NOW(), modified_by=? WHERE id=?');
+                $params = [$name, $role, $mobile, $email, $address, $assignedDistricts, $avatarColour, $active, password_hash($_POST['password'], PASSWORD_DEFAULT), $user['id'], $id];
             } else {
-                $stmt = db()->prepare('UPDATE users SET name=?, role=?, mobile_number=?, email=?, address=?, assigned_districts=?, active_status=?, updated_at=NOW(), modified_by=? WHERE id=?');
-                $params = [$name, $role, $mobile, $email, $address, $assignedDistricts, $active, $user['id'], $id];
+                $stmt = db()->prepare('UPDATE users SET name=?, role=?, mobile_number=?, email=?, address=?, assigned_districts=?, avatar_colour=?, active_status=?, updated_at=NOW(), modified_by=? WHERE id=?');
+                $params = [$name, $role, $mobile, $email, $address, $assignedDistricts, $avatarColour, $active, $user['id'], $id];
             }
             $stmt->execute($params);
             $flash = 'User updated.';
@@ -69,7 +83,7 @@ $filterRole = $_GET['role'] ?? '';
 $filterStatus = $_GET['active_status'] ?? '';
 $filterName = trim((string) ($_GET['name'] ?? ''));
 $filterMobile = trim((string) ($_GET['mobile_number'] ?? ''));
-$sql = 'SELECT id, name, role, mobile_number, email, address, assigned_districts, active_status FROM users WHERE 1=1';
+$sql = 'SELECT id, name, role, mobile_number, email, address, assigned_districts, avatar_colour, active_status FROM users WHERE 1=1';
 $params = [];
 if ($filterRole !== '') {
     $sql .= ' AND role = ?';
@@ -151,7 +165,20 @@ render_page_header('User Management', [
             $assignedList = $assigned === '' ? [] : array_values(array_filter(array_map('trim', explode(',', $assigned))));
         ?>
         <tr>
-            <td class="fw-semibold"><?= esc($u['name']) ?></td>
+            <td class="fw-semibold">
+                <?php
+                    $av = (string) ($u['avatar_colour'] ?? '');
+                    if ($av === '') $av = task_tracker_default_avatar_colour((string) ($u['mobile_number'] ?? $u['name']));
+                    $parts = preg_split('/\s+/', trim((string) $u['name'])) ?: [];
+                    $initials = strtoupper(mb_substr((string) ($parts[0] ?? 'U'), 0, 1) . (count($parts) > 1 ? mb_substr((string) end($parts), 0, 1) : ''));
+                ?>
+                <span class="d-inline-flex align-items-center gap-2">
+                    <span class="badge rounded-circle text-bg-<?= esc($av) ?>" style="width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; font-weight:600;">
+                        <?= esc($initials) ?>
+                    </span>
+                    <span><?= esc($u['name']) ?></span>
+                </span>
+            </td>
             <td><span class="status-chip status-neutral"><?= esc(role_label($u['role'])) ?></span></td>
             <td><?= esc($u['mobile_number']) ?></td><td><?= esc($u['email']) ?></td>
             <td>
@@ -211,6 +238,18 @@ render_page_header('User Management', [
                 </div>
                 <div class="col-md-6"><label class="form-label">Password</label><input class="form-control" type="password" name="password" id="password"></div>
                 <div class="col-md-6 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="active_status" id="active" checked><label class="form-check-label" for="active">Active</label></div></div>
+                <div class="col-md-12">
+                    <label class="form-label">Avatar colour <span class="small text-muted">(auto-assigned when left blank)</span></label>
+                    <div class="d-flex flex-wrap gap-2" id="avatarColourPicker">
+                        <?php foreach (TASK_TRACKER_AVATAR_COLOURS as $tone): ?>
+                            <label class="d-inline-flex align-items-center gap-1">
+                                <input class="form-check-input js-avatar-radio" type="radio" name="avatar_colour" value="<?= esc($tone) ?>">
+                                <span class="badge rounded-circle text-bg-<?= esc($tone) ?>" style="width:28px; height:28px; display:inline-flex; align-items:center; justify-content:center;">&nbsp;</span>
+                                <span class="small text-muted"><?= esc($tone) ?></span>
+                            </label>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal" type="button">Cancel</button><button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Save</button></div>
@@ -251,6 +290,16 @@ function openEditModal(user) {
     document.getElementById('address').value = user.address;
     document.getElementById('password').value = '';
     document.getElementById('active').checked = user.active_status == 1;
+
+    // Avatar colour radios — clear any previous selection then tick
+    // the matching tone (or leave all clear so the server picks the
+    // deterministic default on save).
+    const avatarRadios = document.querySelectorAll('.js-avatar-radio');
+    avatarRadios.forEach((r) => { r.checked = false; });
+    if (user.avatar_colour) {
+        const match = document.querySelector('.js-avatar-radio[value="' + user.avatar_colour + '"]');
+        if (match) match.checked = true;
+    }
 
     const select = document.getElementById('assigned_districts');
     const allCb = document.getElementById('all_districts');

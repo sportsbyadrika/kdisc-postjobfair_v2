@@ -160,6 +160,13 @@ function render_header(string $title, array $options = []): void
                                     <li><a class="dropdown-item" href="/district_discrepancy_report.php"><i class="bi bi-exclamation-diamond me-2"></i>Discrepancy Report</a></li>
                                 </ul>
                             </li>
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle<?= $isActive(['task_tracker_my_work.php', 'task_tracker_projects.php', 'task_tracker_project_view.php', 'task_tracker_task.php', 'task_tracker_task_view.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-kanban me-1"></i>Task Tracker</a>
+                                <ul class="dropdown-menu">
+                                    <li><a class="dropdown-item" href="/task_tracker_my_work.php"><i class="bi bi-person-workspace me-2"></i>My Work</a></li>
+                                    <li><a class="dropdown-item" href="/task_tracker_projects.php"><i class="bi bi-briefcase me-2"></i>Projects</a></li>
+                                </ul>
+                            </li>
                             <?php endif; /* !$isDemandOnly — end of Job Fair/Masters/Reports block */ ?>
                             <?php if (is_admin($user)): ?>
                                 <li class="nav-item dropdown">
@@ -181,10 +188,13 @@ function render_header(string $title, array $options = []): void
                                 </li>
                                 <?php if (is_manage_admin($user)): ?>
                                     <li class="nav-item dropdown">
-                                        <a class="nav-link dropdown-toggle<?= $isActive(['users.php', 'reports.php', 'office_hierarchy.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
+                                        <a class="nav-link dropdown-toggle<?= $isActive(['users.php', 'reports.php', 'office_hierarchy.php', 'task_tracker_status.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
                                         <ul class="dropdown-menu">
                                             <li><a class="dropdown-item" href="/users.php"><i class="bi bi-people me-2"></i>Users</a></li>
                                             <li><a class="dropdown-item" href="/office_hierarchy.php"><i class="bi bi-diagram-3 me-2"></i>Office Hierarchy</a></li>
+                                            <li><a class="dropdown-item" href="/task_tracker_status.php"><i class="bi bi-columns-gap me-2"></i>Task Tracker · Status master</a></li>
+                                            <li><a class="dropdown-item" href="/task_tracker_projects.php"><i class="bi bi-kanban me-2"></i>Task Tracker · Projects</a></li>
+                                            <li><a class="dropdown-item" href="/task_tracker_import.php"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Task Tracker · Bulk import</a></li>
                                             <li><a class="dropdown-item" href="/reports.php"><i class="bi bi-clock-history me-2"></i>Login Reports</a></li>
                                         </ul>
                                     </li>
