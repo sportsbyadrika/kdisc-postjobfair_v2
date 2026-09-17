@@ -73,37 +73,69 @@ if (is_post() && $action === 'save') {
         $flashType = 'danger';
     } else {
         try {
+            // If the Task Tracker migration hasn't yet added the
+            // responsibility_level column (DB user lacks ALTER
+            // privilege, for example), skip it in the write — the
+            // whole page still functions without it.
+            $hasRespLevel = task_tracker_column_exists('office_hierarchy_nodes', 'responsibility_level');
             if ($editId > 0) {
-                $u = db()->prepare('UPDATE office_hierarchy_nodes
-                    SET name = ?, details = ?, location = ?, seat_number = ?,
-                        responsibility_level = ?,
-                        sort_order = ?, updated_at = NOW(), updated_by = ?
-                    WHERE id = ?');
-                $u->execute([
-                    $name, $details === '' ? null : $details, $location === '' ? null : $location,
-                    $seatNumber === '' ? null : $seatNumber,
-                    $respLevel,
-                    $sortOrder, $viewerId, $editId,
-                ]);
+                if ($hasRespLevel) {
+                    $u = db()->prepare('UPDATE office_hierarchy_nodes
+                        SET name = ?, details = ?, location = ?, seat_number = ?,
+                            responsibility_level = ?,
+                            sort_order = ?, updated_at = NOW(), updated_by = ?
+                        WHERE id = ?');
+                    $u->execute([
+                        $name, $details === '' ? null : $details, $location === '' ? null : $location,
+                        $seatNumber === '' ? null : $seatNumber,
+                        $respLevel,
+                        $sortOrder, $viewerId, $editId,
+                    ]);
+                } else {
+                    $u = db()->prepare('UPDATE office_hierarchy_nodes
+                        SET name = ?, details = ?, location = ?, seat_number = ?,
+                            sort_order = ?, updated_at = NOW(), updated_by = ?
+                        WHERE id = ?');
+                    $u->execute([
+                        $name, $details === '' ? null : $details, $location === '' ? null : $location,
+                        $seatNumber === '' ? null : $seatNumber,
+                        $sortOrder, $viewerId, $editId,
+                    ]);
+                }
                 $sendFlashAndRedirect(
                     '/office_hierarchy.php?node=' . $editId,
                     office_hierarchy_level_label($levelType) . ' updated.'
                 );
             } else {
-                $ins = db()->prepare('INSERT INTO office_hierarchy_nodes
-                    (parent_id, level_type, name, details, location, seat_number,
-                     responsibility_level,
-                     sort_order, active_status, created_at, updated_at, created_by, updated_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)');
-                $ins->execute([
-                    $parentId > 0 ? $parentId : null,
-                    $levelType, $name,
-                    $details === '' ? null : $details,
-                    $location === '' ? null : $location,
-                    $seatNumber === '' ? null : $seatNumber,
-                    $respLevel,
-                    $sortOrder, $viewerId, $viewerId,
-                ]);
+                if ($hasRespLevel) {
+                    $ins = db()->prepare('INSERT INTO office_hierarchy_nodes
+                        (parent_id, level_type, name, details, location, seat_number,
+                         responsibility_level,
+                         sort_order, active_status, created_at, updated_at, created_by, updated_by)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)');
+                    $ins->execute([
+                        $parentId > 0 ? $parentId : null,
+                        $levelType, $name,
+                        $details === '' ? null : $details,
+                        $location === '' ? null : $location,
+                        $seatNumber === '' ? null : $seatNumber,
+                        $respLevel,
+                        $sortOrder, $viewerId, $viewerId,
+                    ]);
+                } else {
+                    $ins = db()->prepare('INSERT INTO office_hierarchy_nodes
+                        (parent_id, level_type, name, details, location, seat_number,
+                         sort_order, active_status, created_at, updated_at, created_by, updated_by)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)');
+                    $ins->execute([
+                        $parentId > 0 ? $parentId : null,
+                        $levelType, $name,
+                        $details === '' ? null : $details,
+                        $location === '' ? null : $location,
+                        $seatNumber === '' ? null : $seatNumber,
+                        $sortOrder, $viewerId, $viewerId,
+                    ]);
+                }
                 $newId = (int) db()->lastInsertId();
                 // For a root Office we redirect to root (no node param) so
                 // the operator sees the office in the tree AND the offices
@@ -161,20 +193,42 @@ if (is_post() && $action === 'save') {
             $u = db()->prepare('SELECT name FROM users WHERE id = ?');
             $u->execute([$officerId]);
             $officerName = (string) ($u->fetchColumn() ?: '');
-            db()->prepare('UPDATE office_hierarchy_officer_history
-                SET unassigned_at = NOW(), unassigned_by = ?, unassign_reason = ?,
-                    to_date = COALESCE(to_date, ?)
-                WHERE node_id = ? AND unassigned_at IS NULL')
-                ->execute([$viewerId, 'Replaced by new officer', $fromDate, $tid]);
-            db()->prepare('INSERT INTO office_hierarchy_officer_history
-                (node_id, officer_id, officer_name_snapshot, designation, is_additional_charge,
-                 assigned_at, from_date, to_date, assigned_by, assign_reason)
-                VALUES (?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?)')
-                ->execute([$tid, $officerId, $officerName,
-                    $newDesignation === '' ? null : $newDesignation,
-                    $isAdditional,
-                    $fromDate, $toDate,
-                    $viewerId, $reason === '' ? null : $reason]);
+
+            // Guard every Task-Tracker-added column separately so an
+            // install that only got some of them still works.
+            $hasFromDate  = task_tracker_column_exists('office_hierarchy_officer_history', 'from_date');
+            $hasToDate    = task_tracker_column_exists('office_hierarchy_officer_history', 'to_date');
+            $hasAddCharge = task_tracker_column_exists('office_hierarchy_officer_history', 'is_additional_charge');
+
+            // Close the currently-active row on this node.
+            if ($hasToDate) {
+                db()->prepare('UPDATE office_hierarchy_officer_history
+                    SET unassigned_at = NOW(), unassigned_by = ?, unassign_reason = ?,
+                        to_date = COALESCE(to_date, ?)
+                    WHERE node_id = ? AND unassigned_at IS NULL')
+                    ->execute([$viewerId, 'Replaced by new officer', $fromDate, $tid]);
+            } else {
+                db()->prepare('UPDATE office_hierarchy_officer_history
+                    SET unassigned_at = NOW(), unassigned_by = ?, unassign_reason = ?
+                    WHERE node_id = ? AND unassigned_at IS NULL')
+                    ->execute([$viewerId, 'Replaced by new officer', $tid]);
+            }
+
+            // Build the INSERT column list dynamically from what the
+            // schema actually offers.
+            $cols   = ['node_id', 'officer_id', 'officer_name_snapshot', 'designation'];
+            $vals   = ['?', '?', '?', '?'];
+            $params = [$tid, $officerId, $officerName, $newDesignation === '' ? null : $newDesignation];
+            if ($hasAddCharge) { $cols[] = 'is_additional_charge'; $vals[] = '?'; $params[] = $isAdditional; }
+            $cols[] = 'assigned_at'; $vals[] = 'NOW()';
+            if ($hasFromDate) { $cols[] = 'from_date'; $vals[] = '?'; $params[] = $fromDate; }
+            if ($hasToDate)   { $cols[] = 'to_date';   $vals[] = '?'; $params[] = $toDate; }
+            $cols[] = 'assigned_by'; $vals[] = '?'; $params[] = $viewerId;
+            $cols[] = 'assign_reason'; $vals[] = '?'; $params[] = $reason === '' ? null : $reason;
+
+            $sql = 'INSERT INTO office_hierarchy_officer_history (' . implode(', ', $cols) . ')
+                    VALUES (' . implode(', ', $vals) . ')';
+            db()->prepare($sql)->execute($params);
             db()->prepare('UPDATE office_hierarchy_nodes
                 SET responsible_officer_id = ?, designation = ?, updated_at = NOW(), updated_by = ?
                 WHERE id = ?')
@@ -288,6 +342,41 @@ render_page_header('Administration · Office Hierarchy', [
 
 <?php if ($flashMessage !== null): ?>
     <div class="alert alert-<?= esc($flashType) ?>"><?= esc($flashMessage) ?></div>
+<?php endif; ?>
+
+<?php
+    // If the Task Tracker's schema bootstrap couldn't add its columns
+    // (typically because the DB user lacks ALTER privilege), tell the
+    // admin how to add them manually. Saves still work — Responsibility
+    // level and the officer-history extras are just skipped.
+    $missing = [];
+    if (!task_tracker_column_exists('office_hierarchy_nodes', 'responsibility_level')) $missing[] = 'office_hierarchy_nodes.responsibility_level';
+    foreach (['is_additional_charge', 'from_date', 'to_date'] as $c) {
+        if (!task_tracker_column_exists('office_hierarchy_officer_history', $c)) $missing[] = 'office_hierarchy_officer_history.' . $c;
+    }
+?>
+<?php if ($missing !== []): ?>
+    <div class="alert alert-warning">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <strong><i class="bi bi-exclamation-triangle me-1"></i>Task Tracker columns are missing.</strong>
+                Your database user probably cannot run <code>ALTER TABLE</code>, so the auto-migration skipped these columns:
+                <code><?= esc(implode(', ', $missing)) ?></code>.
+                Adding offices / seats still works, but Responsibility level and the officer-history extras are not persisted.
+            </div>
+            <button class="btn btn-sm btn-warning" type="button" data-bs-toggle="collapse" data-bs-target="#missingColSql">Show SQL to run</button>
+        </div>
+        <div class="collapse mt-2" id="missingColSql">
+            <pre class="bg-light p-2 border rounded mb-0"><code>ALTER TABLE office_hierarchy_nodes
+    ADD COLUMN responsibility_level ENUM('staff','section_head','division_head','office_head') NULL AFTER designation;
+
+ALTER TABLE office_hierarchy_officer_history
+    ADD COLUMN is_additional_charge TINYINT(1) NOT NULL DEFAULT 0 AFTER designation,
+    ADD COLUMN from_date DATE NULL AFTER assigned_at,
+    ADD COLUMN to_date   DATE NULL AFTER unassigned_at;</code></pre>
+            <div class="small text-muted mt-1">Run these against the app's database as a user with <code>ALTER</code> privilege. Refresh this page after — the banner disappears once the columns exist.</div>
+        </div>
+    </div>
 <?php endif; ?>
 
 <div class="row g-3">
@@ -506,6 +595,7 @@ render_page_header('Administration · Office Hierarchy', [
                             <label class="form-label" for="editModalSeatNumber">Seat number / label</label>
                             <input type="text" class="form-control" id="editModalSeatNumber" name="seat_number" maxlength="120">
                         </div>
+                        <?php if (task_tracker_column_exists('office_hierarchy_nodes', 'responsibility_level')): ?>
                         <div class="col-md-6" id="editModalRespLevelWrap" style="display:none;">
                             <label class="form-label" for="editModalRespLevel">Responsibility level <span class="small text-muted">(Task Tracker)</span></label>
                             <select class="form-select" id="editModalRespLevel" name="responsibility_level">
@@ -517,6 +607,7 @@ render_page_header('Administration · Office Hierarchy', [
                             </select>
                             <div class="small text-muted mt-1">Drives what a user holding this seat can view / edit in Task Tracker. Only meaningful for seats.</div>
                         </div>
+                        <?php endif; ?>
                         <div class="col-12">
                             <label class="form-label" for="editModalDetails">Details</label>
                             <textarea class="form-control" id="editModalDetails" name="details" rows="3"></textarea>
@@ -657,12 +748,12 @@ render_page_header('Administration · Office Hierarchy', [
     const showSeatField = (level) => {
         const isSeat = (level === 'seat');
         editSeatWrap.style.display = isSeat ? '' : 'none';
-        editRespWrap.style.display = isSeat ? '' : 'none';
+        if (editRespWrap) editRespWrap.style.display = isSeat ? '' : 'none';
         // Reset non-seat fields on switch away so a stale value from a
         // prior open doesn't sneak into the save.
         if (!isSeat) {
             editSeatNo.value    = '';
-            editRespLevel.value = '';
+            if (editRespLevel) editRespLevel.value = '';
         }
     };
 
@@ -684,7 +775,7 @@ render_page_header('Administration · Office Hierarchy', [
             editSortOrder.value = '0';
             editLocation.value  = '';
             editSeatNo.value    = '';
-            editRespLevel.value = '';
+            if (editRespLevel) editRespLevel.value = '';
             editDetails.value   = '';
             showSeatField(childLvl);
         } else if (trigger.classList.contains('js-edit-node')) {
@@ -700,7 +791,7 @@ render_page_header('Administration · Office Hierarchy', [
             editSortOrder.value = data.sort_order || 0;
             editLocation.value  = data.location || '';
             editSeatNo.value    = data.seat_number || '';
-            editRespLevel.value = data.responsibility_level || '';
+            if (editRespLevel) editRespLevel.value = data.responsibility_level || '';
             editDetails.value   = data.details || '';
             showSeatField(data.level_type);
         }

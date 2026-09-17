@@ -237,21 +237,60 @@ function task_tracker_bootstrap(): void
 /**
  * SHOW COLUMNS-guarded ALTER helper. Wraps every ALTER in a try so an
  * install that already has the column (or is racing another request)
- * doesn't 500.
+ * doesn't 500. If the ALTER fails (typically because the DB user lacks
+ * the ALTER privilege), the failure is remembered — task_tracker_missing_columns()
+ * reports it so pages that need the column can degrade gracefully
+ * instead of crashing on an INSERT that references it.
  */
 function task_tracker__add_column_if_missing(Database $db, string $table, string $column, string $alterSql): void
 {
+    static $checked = [];
+    $key = strtolower($table . '.' . $column);
+    if (isset($checked[$key])) return;
     try {
         $cols = [];
         foreach ($db->query('SHOW COLUMNS FROM ' . $table)->fetchAll() as $c) {
             $cols[strtolower((string) $c['Field'])] = true;
         }
-        if (!isset($cols[strtolower($column)])) {
-            $db->query($alterSql);
+        if (isset($cols[strtolower($column)])) {
+            $checked[$key] = true;
+            $GLOBALS['task_tracker_column_cache'][$key] = true;
+            return;
         }
+        $db->query($alterSql);
+        $checked[$key] = true;
+        $GLOBALS['task_tracker_column_cache'][$key] = true;
     } catch (Throwable $e) {
-        // Table doesn't exist yet or ALTER failed on a race — ignore.
+        // Table doesn't exist yet, or the ALTER failed (DB user lacks
+        // ALTER privilege, is racing another request, etc.). Remember
+        // so the page can adapt without repeating the error.
+        $GLOBALS['task_tracker_column_cache'][$key] = false;
     }
+}
+
+/**
+ * True when the column exists on the table, false otherwise. Uses the
+ * cache task_tracker__add_column_if_missing populates. Callers can
+ * check this before adding a column reference to an INSERT / UPDATE
+ * that would otherwise fail on an environment where the bootstrap
+ * ALTER did not apply.
+ */
+function task_tracker_column_exists(string $table, string $column): bool
+{
+    $key = strtolower($table . '.' . $column);
+    if (isset($GLOBALS['task_tracker_column_cache'][$key])) {
+        return (bool) $GLOBALS['task_tracker_column_cache'][$key];
+    }
+    // Not yet checked (bootstrap for that column didn't run this request).
+    // Consult SHOW COLUMNS directly and cache the answer.
+    try {
+        foreach (db()->query('SHOW COLUMNS FROM ' . $table)->fetchAll() as $c) {
+            if (strtolower((string) $c['Field']) === strtolower($column)) {
+                return $GLOBALS['task_tracker_column_cache'][$key] = true;
+            }
+        }
+    } catch (Throwable $e) { /* fall through to false */ }
+    return $GLOBALS['task_tracker_column_cache'][$key] = false;
 }
 
 /**
