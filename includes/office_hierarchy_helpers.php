@@ -129,10 +129,13 @@ function office_hierarchy_get_ancestors(int $nodeId): array
  */
 function office_hierarchy_get_children(?int $parentId, bool $activeOnly = false): array
 {
+    // We match BOTH IS NULL and = 0 for root-level lookups because our
+    // Database wrapper stringifies null on bind, which MariaDB coerces
+    // to 0 for INT NULL columns. Existing rows may be either.
     $sql = 'SELECT n.*, u.name AS officer_name
         FROM office_hierarchy_nodes n
         LEFT JOIN users u ON u.id = n.responsible_officer_id
-        WHERE ' . ($parentId === null ? 'n.parent_id IS NULL' : 'n.parent_id = ?')
+        WHERE ' . ($parentId === null ? '(n.parent_id IS NULL OR n.parent_id = 0)' : 'n.parent_id = ?')
         . ($activeOnly ? ' AND n.active_status = 1' : '')
         . ' ORDER BY n.sort_order ASC, n.name ASC';
     $stmt = db()->prepare($sql);
