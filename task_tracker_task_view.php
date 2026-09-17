@@ -51,14 +51,16 @@ if ($task === false) {
 
 $projectId = (int) $task['project_id'];
 
+// NOTE: `div` is a reserved word in MariaDB (integer-division
+// operator), so we use `divn` as the alias.
 $astmt = db()->prepare("SELECT ta.role, ta.seat_id, n.name AS seat_name, n.seat_number,
         n.parent_id AS section_id, sec.name AS section_name,
-        sec.parent_id AS division_id, div.name AS division_name,
+        sec.parent_id AS division_id, divn.name AS division_name,
         u.id AS officer_id, u.name AS officer_name, u.avatar_colour
     FROM task_assignment ta
-    INNER JOIN office_hierarchy_nodes n   ON n.id   = ta.seat_id
-    LEFT JOIN office_hierarchy_nodes sec  ON sec.id = n.parent_id
-    LEFT JOIN office_hierarchy_nodes div  ON div.id = sec.parent_id
+    INNER JOIN office_hierarchy_nodes n    ON n.id    = ta.seat_id
+    LEFT JOIN office_hierarchy_nodes sec   ON sec.id  = n.parent_id
+    LEFT JOIN office_hierarchy_nodes divn  ON divn.id = sec.parent_id
     LEFT JOIN office_hierarchy_officer_history h ON h.node_id = n.id AND h.unassigned_at IS NULL
     LEFT JOIN users u ON u.id = h.officer_id
     WHERE ta.task_id = ?
