@@ -273,8 +273,7 @@ render_page_header('Project · ' . $project['name'], [
 .tt-column { flex: 0 0 300px; background: #f4f6fa; border-radius: 10px; display: flex; flex-direction: column; max-height: 76vh; }
 .tt-column-header { padding: 10px 12px; border-radius: 10px 10px 0 0; }
 .tt-column-body { padding: 10px; flex: 1; overflow-y: auto; min-height: 60px; display: flex; flex-direction: column; gap: 8px; }
-.tt-card { position: relative; background: #fff; border: 1px solid #e3e6ee; border-radius: 8px; padding: 10px 12px; cursor: grab; box-shadow: 0 1px 2px rgba(30,42,66,.04); transition: box-shadow .15s ease, transform .05s ease; -webkit-user-drag: none; user-select: none; }
-.tt-card a { -webkit-user-drag: none; }
+.tt-card { position: relative; background: #fff; border: 1px solid #e3e6ee; border-radius: 8px; padding: 10px 12px; cursor: grab; box-shadow: 0 1px 2px rgba(30,42,66,.04); transition: box-shadow .15s ease, transform .05s ease; user-select: none; touch-action: none; }
 .tt-card:hover { box-shadow: 0 2px 6px rgba(30,42,66,.08); }
 .tt-card:active { cursor: grabbing; }
 .tt-card-title { font-weight: 600; line-height: 1.3; }
@@ -293,8 +292,24 @@ render_page_header('Project · ' . $project['name'], [
     const moveUrl   = '/task_tracker_ajax_move.php';
     const board = document.getElementById('ttBoard');
     if (!board) return;
+
+    const showBoardError = (msg) => {
+        const parent = board.parentElement;
+        if (!parent) return;
+        const banner = document.createElement('div');
+        banner.className = 'alert alert-danger';
+        banner.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>' + msg;
+        parent.insertBefore(banner, board);
+    };
+
     if (typeof Sortable === 'undefined') {
-        console.error('Task Tracker: SortableJS failed to load — drag-and-drop disabled. Check network access to cdnjs.cloudflare.com.');
+        showBoardError('Drag-and-drop is unavailable — the SortableJS library did not load. Check that <code>cdnjs.cloudflare.com</code> is reachable from this browser (corporate proxy, ad-blocker, or CSP could be blocking it). Reload after fixing.');
+        console.error('Task Tracker: SortableJS failed to load.');
+        return;
+    }
+    if (typeof bootstrap === 'undefined' || !bootstrap.Modal) {
+        showBoardError('Bootstrap JS did not load — the terminal-status prompt would not appear. Reload the page.');
+        console.error('Task Tracker: Bootstrap JS not loaded.');
         return;
     }
 
@@ -377,13 +392,27 @@ render_page_header('Project · ' . $project['name'], [
         });
     });
 
-    document.querySelectorAll('.tt-column-body').forEach(col => {
+    const cols = document.querySelectorAll('.tt-column-body');
+    console.info('Task Tracker: Sortable loaded, initialising on ' + cols.length + ' columns.');
+    if (cols.length === 0) {
+        console.error('Task Tracker: no .tt-column-body elements found on the page.');
+        return;
+    }
+
+    cols.forEach(col => {
         new Sortable(col, {
             group: 'tt-tasks',
             animation: 150,
             ghostClass: 'tt-ghost',
             chosenClass: 'tt-drag',
-            forceFallback: false,
+            // forceFallback uses SortableJS's JS-based drag rather
+            // than native HTML5 drag events. Native drag interacts
+            // badly with several things (text-selection, links inside
+            // the card, Bootstrap card styles) and can silently fail
+            // to start a drag. Fallback mode reads mousemove /
+            // mouseup directly and Just Works.
+            forceFallback: true,
+            fallbackTolerance: 3,
             // Only real cards are draggable — the "Drop tasks here"
             // placeholder is also a direct child of the sortable
             // container and would otherwise be treated as a movable
