@@ -369,7 +369,9 @@ document.addEventListener('click', (ev) => {
         <?php if ($ganttData === []): ?>
             <div class="empty-state"><i class="bi bi-bar-chart"></i>No tasks with planned dates in this project. Add planned start / planned end to see them here.</div>
         <?php else: ?>
-            <svg id="ganttChart" style="width:100%;"></svg>
+            <div class="tt-gantt-scroll">
+                <svg id="ganttChart"></svg>
+            </div>
         <?php endif; ?>
     </div>
     <div class="card-footer small text-muted">
@@ -403,6 +405,29 @@ document.addEventListener('DOMContentLoaded', function () {
 .tt-row-activity   td { background: #ffffff; }
 .tt-row-sub        td { background: #fbfcfe; }
 .tt-status-tree .tt-toggle { line-height: 1; }
+
+/* Persistent horizontal scrollbar under the Gantt chart, matching the
+   marked spot in the screenshot. overflow-x:scroll (not auto) forces
+   the track to stay visible even on macOS where auto scrollbars hide
+   until hover — otherwise the chart's overflowing right edge would be
+   invisible to the operator. */
+.tt-gantt-scroll {
+    overflow-x: scroll;
+    overflow-y: hidden;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+}
+.tt-gantt-scroll::-webkit-scrollbar { height: 12px; }
+.tt-gantt-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1; border-radius: 6px;
+}
+.tt-gantt-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+.tt-gantt-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 6px; }
+/* Let the SVG take its natural width so it can actually overflow the
+   scroll container — Frappe-Gantt sets an explicit width attribute
+   based on the timeline length. */
+.tt-gantt-scroll > svg { display: block; }
 </style>
 
 <?php render_footer(); ?>
