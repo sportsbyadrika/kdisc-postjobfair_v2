@@ -78,20 +78,16 @@ if ($project === false) {
     exit;
 }
 
+// Load bare seat ids + role; section / division ancestors are derived
+// AFTER the $seats array is built (below), because that array walks
+// the parent chain and transparently handles sub_section-in-between.
 $existingAssignmentPayload = ['primary_seat_id' => 0, 'primary_section_id' => 0, 'primary_division_id' => 0, 'secondary_seat_ids' => []];
 if ($existing !== null) {
-    $astmt = db()->prepare("SELECT ta.role, ta.seat_id, n.parent_id AS section_id,
-            s.parent_id AS division_id
-        FROM task_assignment ta
-        INNER JOIN office_hierarchy_nodes n ON n.id = ta.seat_id
-        LEFT JOIN office_hierarchy_nodes s ON s.id = n.parent_id
-        WHERE ta.task_id = ?");
+    $astmt = db()->prepare('SELECT role, seat_id FROM task_assignment WHERE task_id = ?');
     $astmt->execute([$taskId]);
     foreach ($astmt->fetchAll() as $a) {
         if ($a['role'] === 'primary') {
-            $existingAssignmentPayload['primary_seat_id']     = (int) $a['seat_id'];
-            $existingAssignmentPayload['primary_section_id']  = (int) ($a['section_id'] ?? 0);
-            $existingAssignmentPayload['primary_division_id'] = (int) ($a['division_id'] ?? 0);
+            $existingAssignmentPayload['primary_seat_id'] = (int) $a['seat_id'];
         } else {
             $existingAssignmentPayload['secondary_seat_ids'][] = (int) $a['seat_id'];
         }
@@ -127,11 +123,28 @@ $activities = $activitiesStmt->fetchAll();
 
 $treeRows = db()->query("SELECT id, parent_id, level_type, name, seat_number, active_status
     FROM office_hierarchy_nodes
-    WHERE active_status = 1 AND level_type IN ('office','division','section','seat')
+    WHERE active_status = 1 AND level_type IN ('office','division','section','sub_section','seat')
     ORDER BY level_type, sort_order ASC, name ASC")->fetchAll();
 
 $byId = [];
 foreach ($treeRows as $n) $byId[(int) $n['id']] = $n;
+
+// Walk up ancestors so a seat under a Sub Section still resolves to
+// its enclosing Section (and Division). The cascading picker stays
+// three-level for the operator — Division → Section → Seat — with
+// Sub Sections transparently flattened underneath.
+$ancestorOfType = static function (array $node, string $wantedType) use ($byId): ?array {
+    $cursor = $node;
+    for ($guard = 0; $guard < 10; $guard++) {
+        $pid = (int) ($cursor['parent_id'] ?? 0);
+        if ($pid <= 0) return null;
+        $parent = $byId[$pid] ?? null;
+        if ($parent === null) return null;
+        if ((string) $parent['level_type'] === $wantedType) return $parent;
+        $cursor = $parent;
+    }
+    return null;
+};
 
 $divisions = []; $sections = []; $seats = [];
 foreach ($treeRows as $n) {
@@ -140,15 +153,27 @@ foreach ($treeRows as $n) {
     } elseif ($n['level_type'] === 'section') {
         $sections[] = ['id' => (int) $n['id'], 'name' => (string) $n['name'], 'division_id' => (int) $n['parent_id']];
     } elseif ($n['level_type'] === 'seat') {
-        $sectionRow = $byId[(int) $n['parent_id']] ?? null;
-        $divisionId = $sectionRow ? (int) $sectionRow['parent_id'] : 0;
+        $section  = $ancestorOfType($n, 'section');
+        $division = $section ? ($byId[(int) $section['parent_id']] ?? null) : null;
         $seats[] = [
             'id'          => (int) $n['id'],
             'name'        => (string) $n['name'],
             'seat_number' => (string) ($n['seat_number'] ?? ''),
-            'section_id'  => (int) $n['parent_id'],
-            'division_id' => $divisionId,
+            'section_id'  => $section  ? (int) $section['id']  : 0,
+            'division_id' => $division ? (int) $division['id'] : 0,
         ];
+    }
+}
+
+// With $seats built, fill in section/division for the primary seat so
+// the cascading picker preselects the right chain when editing.
+if ($existingAssignmentPayload['primary_seat_id'] > 0) {
+    foreach ($seats as $sInfo) {
+        if ($sInfo['id'] === $existingAssignmentPayload['primary_seat_id']) {
+            $existingAssignmentPayload['primary_section_id']  = $sInfo['section_id'];
+            $existingAssignmentPayload['primary_division_id'] = $sInfo['division_id'];
+            break;
+        }
     }
 }
 

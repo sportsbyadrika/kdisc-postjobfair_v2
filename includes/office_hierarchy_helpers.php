@@ -17,7 +17,7 @@ function office_hierarchy_bootstrap(): void
     $db->query("CREATE TABLE IF NOT EXISTS office_hierarchy_nodes (
         id INT AUTO_INCREMENT PRIMARY KEY,
         parent_id INT NULL,
-        level_type ENUM('office', 'division', 'section', 'seat') NOT NULL,
+        level_type ENUM('office', 'division', 'section', 'sub_section', 'seat') NOT NULL,
         name VARCHAR(255) NOT NULL,
         details TEXT NULL,
         location VARCHAR(500) NULL,
@@ -35,6 +35,15 @@ function office_hierarchy_bootstrap(): void
         KEY idx_officer (responsible_officer_id),
         KEY idx_active (active_status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // Idempotent ENUM extension so pre-existing installs that never
+    // saw 'sub_section' get the new value silently added. If it's
+    // already there, MODIFY COLUMN is a no-op; try/catch guards
+    // hosting where the DB user lacks ALTER privilege.
+    try {
+        $db->query("ALTER TABLE office_hierarchy_nodes
+            MODIFY COLUMN level_type ENUM('office','division','section','sub_section','seat') NOT NULL");
+    } catch (Throwable $e) { /* ignore — page still works without sub_section */ }
 
     $db->query("CREATE TABLE IF NOT EXISTS office_hierarchy_officer_history (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -54,16 +63,39 @@ function office_hierarchy_bootstrap(): void
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 
-/** Returns the child level for a given parent level, or null if there
- *  isn't one (a Seat has no children). */
+/**
+ * Default child level for a given parent — used when only one child
+ * kind is valid. Section still defaults to Seat so existing three-
+ * level hierarchies (Office → Division → Section → Seat) keep the
+ * same one-click flow; Sub Section is an OPTIONAL insertion offered
+ * as a second button on Section rows. See office_hierarchy_allowed_children().
+ */
 function office_hierarchy_child_level(?string $parentLevel): ?string
 {
     return match ($parentLevel) {
-        null       => 'office',   // root → offices
-        'office'   => 'division',
-        'division' => 'section',
-        'section'  => 'seat',
-        default    => null,
+        null          => 'office',
+        'office'      => 'division',
+        'division'    => 'section',
+        'section'     => 'seat',
+        'sub_section' => 'seat',
+        default       => null,
+    };
+}
+
+/**
+ * Every level that can validly sit under this parent, in the order
+ * they should appear as buttons on the UI. Section allows both seats
+ * (the historical default) and an optional intermediate Sub Section.
+ */
+function office_hierarchy_allowed_children(?string $parentLevel): array
+{
+    return match ($parentLevel) {
+        null          => ['office'],
+        'office'      => ['division'],
+        'division'    => ['section'],
+        'section'     => ['seat', 'sub_section'],
+        'sub_section' => ['seat'],
+        default       => [],
     };
 }
 
@@ -71,11 +103,12 @@ function office_hierarchy_child_level(?string $parentLevel): ?string
 function office_hierarchy_level_label(string $level): string
 {
     return match ($level) {
-        'office'   => 'Office',
-        'division' => 'Division',
-        'section'  => 'Section',
-        'seat'     => 'Seat',
-        default    => ucfirst($level),
+        'office'      => 'Office',
+        'division'    => 'Division',
+        'section'     => 'Section',
+        'sub_section' => 'Sub Section',
+        'seat'        => 'Seat',
+        default       => ucfirst($level),
     };
 }
 
@@ -83,11 +116,12 @@ function office_hierarchy_level_label(string $level): string
 function office_hierarchy_level_icon(string $level): string
 {
     return match ($level) {
-        'office'   => 'bi-building',
-        'division' => 'bi-diagram-3',
-        'section'  => 'bi-diagram-2',
-        'seat'     => 'bi-person-workspace',
-        default    => 'bi-dot',
+        'office'      => 'bi-building',
+        'division'    => 'bi-diagram-3',
+        'section'    => 'bi-diagram-2',
+        'sub_section' => 'bi-diagram-2-fill',
+        'seat'        => 'bi-person-workspace',
+        default       => 'bi-dot',
     };
 }
 

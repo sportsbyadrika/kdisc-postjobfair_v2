@@ -51,22 +51,48 @@ if ($task === false) {
 
 $projectId = (int) $task['project_id'];
 
-// NOTE: `div` is a reserved word in MariaDB (integer-division
-// operator), so we use `divn` as the alias.
+// Load bare assignments + the seat row's own info, then walk parents
+// in PHP to find the Section / Division. This handles the optional
+// Sub Section level between Section and Seat — an SQL join can't do
+// that because it hardcodes a fixed number of levels.
 $astmt = db()->prepare("SELECT ta.role, ta.seat_id, n.name AS seat_name, n.seat_number,
-        n.parent_id AS section_id, sec.name AS section_name,
-        sec.parent_id AS division_id, divn.name AS division_name,
+        n.parent_id AS immediate_parent_id,
         u.id AS officer_id, u.name AS officer_name, u.avatar_colour
     FROM task_assignment ta
-    INNER JOIN office_hierarchy_nodes n    ON n.id    = ta.seat_id
-    LEFT JOIN office_hierarchy_nodes sec   ON sec.id  = n.parent_id
-    LEFT JOIN office_hierarchy_nodes divn  ON divn.id = sec.parent_id
+    INNER JOIN office_hierarchy_nodes n ON n.id = ta.seat_id
     LEFT JOIN office_hierarchy_officer_history h ON h.node_id = n.id AND h.unassigned_at IS NULL
     LEFT JOIN users u ON u.id = h.officer_id
     WHERE ta.task_id = ?
     ORDER BY (ta.role = 'primary') DESC, ta.id ASC");
 $astmt->execute([$taskId]);
 $assignments = $astmt->fetchAll();
+
+$nodeCache = [];
+$fetchNode = static function (int $id) use (&$nodeCache): ?array {
+    if ($id <= 0) return null;
+    if (array_key_exists($id, $nodeCache)) return $nodeCache[$id];
+    $s = db()->prepare('SELECT id, parent_id, level_type, name FROM office_hierarchy_nodes WHERE id = ?');
+    $s->execute([$id]);
+    $r = $s->fetch();
+    return $nodeCache[$id] = ($r === false ? null : $r);
+};
+$resolveAncestors = static function (int $startParentId) use ($fetchNode): array {
+    $out = ['section_id' => 0, 'section_name' => null, 'division_id' => 0, 'division_name' => null];
+    $cursor = $startParentId;
+    for ($g = 0; $g < 10 && $cursor > 0; $g++) {
+        $n = $fetchNode($cursor);
+        if ($n === null) break;
+        $type = (string) $n['level_type'];
+        if ($type === 'section'  && $out['section_id']  === 0) { $out['section_id']  = (int) $n['id']; $out['section_name']  = (string) $n['name']; }
+        if ($type === 'division' && $out['division_id'] === 0) { $out['division_id'] = (int) $n['id']; $out['division_name'] = (string) $n['name']; }
+        $cursor = (int) ($n['parent_id'] ?? 0);
+    }
+    return $out;
+};
+foreach ($assignments as $i => $a) {
+    $ancestors = $resolveAncestors((int) ($a['immediate_parent_id'] ?? 0));
+    $assignments[$i] = array_merge($a, $ancestors);
+}
 $primary = null; $secondaries = [];
 foreach ($assignments as $a) {
     if ($a['role'] === 'primary') $primary = $a;

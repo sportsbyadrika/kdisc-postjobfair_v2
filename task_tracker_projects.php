@@ -97,6 +97,11 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     }
 }
 
+// Financial-year dropdown options. Include the currently-selected
+// value on an existing project even when the row is now inactive, so
+// editing a historical project doesn't silently lose the FY.
+$fyRows = db()->query('SELECT id, code, label, is_active FROM financial_year ORDER BY sort_order ASC, code ASC')->fetchAll();
+
 // task_count is every active task under the project; completed_count is
 // the subset whose status is on a terminal-category row (Completed /
 // Dropped seeded by task_tracker_bootstrap — driven by the flag on
@@ -271,7 +276,16 @@ render_page_header('Task Tracker · Projects', [
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="projectModalFY">Financial year</label>
-                            <input type="text" class="form-control" id="projectModalFY" name="financial_year" placeholder="e.g. 2024-25" maxlength="20">
+                            <select class="form-select" id="projectModalFY" name="financial_year">
+                                <option value="">— None —</option>
+                                <?php foreach ($fyRows as $fy): ?>
+                                    <option value="<?= esc((string) $fy['code']) ?>" data-active="<?= (int) $fy['is_active'] ?>"
+                                        <?= ((int) $fy['is_active']) === 0 ? 'class="text-muted"' : '' ?>>
+                                        <?= esc((string) $fy['code']) ?><?= !empty($fy['label']) ? ' · ' . esc((string) $fy['label']) : '' ?><?= ((int) $fy['is_active']) === 0 ? ' (inactive)' : '' ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <div class="small text-muted mt-1">Manage this list under Administration → Task Tracker · Financial Year master.</div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="projectModalStart">Start date</label>
@@ -323,7 +337,18 @@ render_page_header('Task Tracker · Projects', [
             title.innerHTML = '<i class="bi bi-pencil-square me-1"></i>Edit project';
             setV('projectModalId', d.id);
             setV('projectModalName', d.name || ''); setV('projectModalCode', d.code || '');
-            setV('projectModalFY', d.financial_year || '');
+            // If the stored FY code is no longer in the master (someone
+            // deleted the row after the project was created), inject a
+            // synthetic option so the value round-trips instead of
+            // silently getting cleared to blank on save.
+            const fySel = document.getElementById('projectModalFY');
+            const fyVal = d.financial_year || '';
+            if (fySel && fyVal && !Array.from(fySel.options).some(o => o.value === fyVal)) {
+                const opt = document.createElement('option');
+                opt.value = fyVal; opt.textContent = fyVal + ' (not in master)';
+                fySel.appendChild(opt);
+            }
+            setV('projectModalFY', fyVal);
             setV('projectModalStart', d.start_date || ''); setV('projectModalEnd', d.end_date || '');
             setV('projectModalDesc', d.description || '');
             setC('projectModalActive', d.is_active === 1);

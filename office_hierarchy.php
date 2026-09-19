@@ -65,7 +65,7 @@ if (is_post() && $action === 'save') {
     $allowedLevels = ['staff', 'section_head', 'division_head', 'office_head'];
     $respLevel     = ($levelType === 'seat' && in_array($respLevelRaw, $allowedLevels, true)) ? $respLevelRaw : null;
 
-    if (!in_array($levelType, ['office', 'division', 'section', 'seat'], true)) {
+    if (!in_array($levelType, ['office', 'division', 'section', 'sub_section', 'seat'], true)) {
         $flashMessage = 'Invalid level type.';
         $flashType = 'danger';
     } elseif ($name === '') {
@@ -278,9 +278,13 @@ $rootNodes  = office_hierarchy_get_children(null);
 $ancestors  = $node ? office_hierarchy_get_ancestors((int) $node['id']) : [];
 $children   = $node ? office_hierarchy_get_children((int) $node['id']) : $rootNodes;
 
-// Level of the record we'd create from a "New" button click.
+// Level(s) a "New" button on this row would create. Most parents only
+// allow one child kind, but Section allows two — Seat (the historical
+// default) and an optional intermediate Sub Section — so this is an
+// array and the UI renders one button per entry.
 $parentLevelForNew = $node ? (string) $node['level_type'] : null;
-$newLevel = office_hierarchy_child_level($parentLevelForNew);
+$newLevels = office_hierarchy_allowed_children($parentLevelForNew);
+$newLevel  = $newLevels[0] ?? null; // primary/default level, kept for empty-state copy
 
 /* -------------------------------------------------------------------- *
  * Encode every node into a JSON blob the modal JS can hydrate from —
@@ -335,7 +339,7 @@ $renderTree = function (array $nodes, ?int $selectedId) use (&$renderTree): void
 render_header('Administration · Office Hierarchy', ['main_container_class' => 'container-fluid']);
 render_page_header('Administration · Office Hierarchy', [
     'icon'     => 'bi-diagram-3',
-    'subtitle' => 'Office → Division → Section → Seat structure with a responsible officer and full transfer history on every node.',
+    'subtitle' => 'Office → Division → Section → (optional Sub Section) → Seat structure with a responsible officer and full transfer history on every node.',
     'actions'  => '<a class="btn btn-light" href="/dashboard.php"><i class="bi bi-arrow-left me-1"></i>Back to Dashboard</a>',
 ]);
 ?>
@@ -423,15 +427,15 @@ ALTER TABLE office_hierarchy_officer_history
                         <i class="bi bi-list-ul text-primary me-1"></i>All Offices
                     <?php endif; ?>
                 </span>
-                <?php if ($newLevel !== null): ?>
-                    <button type="button" class="btn btn-sm btn-primary js-new-node"
+                <?php foreach ($newLevels as $lvl): ?>
+                    <button type="button" class="btn btn-sm <?= $lvl === $newLevels[0] ? 'btn-primary' : 'btn-outline-primary ms-1' ?> js-new-node"
                             data-parent-id="<?= (int) $nodeId ?>"
                             data-parent-name="<?= esc($node ? (string) $node['name'] : '') ?>"
-                            data-child-level="<?= esc($newLevel) ?>"
+                            data-child-level="<?= esc($lvl) ?>"
                             data-bs-toggle="modal" data-bs-target="#editModal">
-                        <i class="bi bi-plus-lg me-1"></i>New <?= esc(office_hierarchy_level_label($newLevel)) ?>
+                        <i class="bi bi-plus-lg me-1"></i>New <?= esc(office_hierarchy_level_label($lvl)) ?>
                     </button>
-                <?php endif; ?>
+                <?php endforeach; ?>
             </div>
             <?php if ($node !== null && $ancestors !== []): ?>
                 <div class="card-body py-2 border-bottom">
@@ -725,7 +729,7 @@ ALTER TABLE office_hierarchy_officer_history
 
 <script>
 (function () {
-    const levelLabel = (l) => ({office: 'Office', division: 'Division', section: 'Section', seat: 'Seat'})[l] || l;
+    const levelLabel = (l) => ({office: 'Office', division: 'Division', section: 'Section', sub_section: 'Sub Section', seat: 'Seat'})[l] || l;
     const childLevel = (l) => ({office: 'division', division: 'section', section: 'seat', seat: null})[l ?? null] ?? 'office';
 
     // -------------------- New / Edit modal --------------------
