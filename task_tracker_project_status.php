@@ -25,6 +25,7 @@
 
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
+require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/task_tracker_helpers.php';
 require_task_tracker_access();
 task_tracker_bootstrap();
@@ -139,7 +140,7 @@ render_page_header('Task Tracker · Project Status', [
                 <tr class="table-light">
                     <th style="min-width:280px;">Project · Activity · Sub-activity</th>
                     <th>Status</th>
-                    <th class="text-end">Share (₹)</th>
+                    <th class="text-end">Allotted (₹)</th>
                     <th class="text-end">Projected (₹)</th>
                     <th class="text-end">Target (₹)</th>
                     <th class="text-end">Actual (₹)</th>
@@ -333,11 +334,18 @@ document.addEventListener('click', (ev) => {
                 <?php endforeach; ?>
             </select>
         </form>
-        <div class="btn-group btn-group-sm" role="group" aria-label="Gantt mode">
-            <button type="button" class="btn btn-outline-secondary active" data-gantt-mode="Day">Day</button>
-            <button type="button" class="btn btn-outline-secondary"       data-gantt-mode="Week">Week</button>
-            <button type="button" class="btn btn-outline-secondary"       data-gantt-mode="Month">Month</button>
-            <button type="button" class="btn btn-outline-secondary"       data-gantt-mode="Quarter Day">Quarter Day</button>
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-success d-none" id="ganttSaveBtn"
+                title="Save the date ranges you dragged on the Gantt back to the tasks.">
+                <i class="bi bi-check2-circle me-1"></i>Update dates
+                <span class="badge text-bg-light border ms-1" id="ganttPendingCount">0</span>
+            </button>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Gantt mode">
+                <button type="button" class="btn btn-outline-secondary active" data-gantt-mode="Day">Day</button>
+                <button type="button" class="btn btn-outline-secondary"       data-gantt-mode="Week">Week</button>
+                <button type="button" class="btn btn-outline-secondary"       data-gantt-mode="Month">Month</button>
+                <button type="button" class="btn btn-outline-secondary"       data-gantt-mode="Quarter Day">Quarter Day</button>
+            </div>
         </div>
     </div>
     <div class="card-body">
@@ -369,7 +377,9 @@ document.addEventListener('click', (ev) => {
         <?php if ($ganttData === []): ?>
             <div class="empty-state"><i class="bi bi-bar-chart"></i>No tasks with planned dates in this project. Add planned start / planned end to see them here.</div>
         <?php else: ?>
-            <svg id="ganttChart" style="width:100%;"></svg>
+            <div class="tt-gantt-scroll">
+                <svg id="ganttChart"></svg>
+            </div>
         <?php endif; ?>
     </div>
     <div class="card-footer small text-muted">
@@ -385,13 +395,78 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!svg || typeof Gantt === 'undefined') return;
     const tasks = <?= json_encode($ganttData, JSON_UNESCAPED_UNICODE) ?>;
     if (tasks.length === 0) return;
-    const gantt = new Gantt(svg, tasks, { view_mode: 'Day', bar_height: 20, padding: 18 });
+
+    // Pending drag edits accumulate here until the user hits Update.
+    // Keyed by numeric task_id (SO strip the 't' prefix Frappe wraps
+    // around it) to naturally coalesce multiple drags on the same bar.
+    const csrfToken = <?= json_encode(csrf_token()) ?>;
+    const saveBtn   = document.getElementById('ganttSaveBtn');
+    const countPill = document.getElementById('ganttPendingCount');
+    const pending   = new Map();
+    const ymd = (d) => {
+        // Frappe hands us Date objects. Format YYYY-MM-DD in local time.
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${dd}`;
+    };
+    const refreshBadge = () => {
+        countPill.textContent = String(pending.size);
+        if (pending.size > 0) saveBtn.classList.remove('d-none');
+        else                  saveBtn.classList.add('d-none');
+    };
+
+    const gantt = new Gantt(svg, tasks, {
+        view_mode: 'Day', bar_height: 20, padding: 18,
+        // Frappe fires this both on drag AND on resize. `start` is
+        // the new left edge, `end` is the new right edge (exclusive,
+        // per Frappe convention — subtract a day for the closed
+        // interval the server stores).
+        on_date_change: function (task, start, end) {
+            const inclEnd = new Date(end.getTime() - 24 * 3600 * 1000);
+            const id = String(task.id || '').replace(/^t/, '');
+            const numId = parseInt(id, 10);
+            if (!Number.isFinite(numId) || numId <= 0) return;
+            pending.set(numId, { task_id: numId, planned_start: ymd(start), planned_end: ymd(inclEnd) });
+            refreshBadge();
+        },
+    });
+
     document.querySelectorAll('[data-gantt-mode]').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('[data-gantt-mode]').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             gantt.change_view_mode(btn.getAttribute('data-gantt-mode'));
         });
+    });
+
+    saveBtn.addEventListener('click', async () => {
+        if (pending.size === 0) return;
+        const body = new URLSearchParams();
+        body.set('csrf_token', csrfToken);
+        let i = 0;
+        pending.forEach(row => {
+            body.set(`updates[${i}][task_id]`,       String(row.task_id));
+            body.set(`updates[${i}][planned_start]`, row.planned_start);
+            body.set(`updates[${i}][planned_end]`,   row.planned_end);
+            i++;
+        });
+        saveBtn.disabled = true;
+        try {
+            const res  = await fetch('/task_tracker_ajax_dates.php', { method: 'POST', body });
+            const json = await res.json();
+            if (!json.ok) throw new Error(json.error || 'Update failed.');
+            const parts = [`Saved ${json.updated} task${json.updated === 1 ? '' : 's'}`];
+            if (json.skipped) parts.push(`${json.skipped} skipped`);
+            if (Array.isArray(json.errors) && json.errors.length) parts.push('with warnings:\n' + json.errors.join('\n'));
+            alert(parts.join(' · '));
+            pending.clear();
+            refreshBadge();
+        } catch (e) {
+            alert('Save failed: ' + (e.message || e));
+        } finally {
+            saveBtn.disabled = false;
+        }
     });
 });
 </script>
@@ -403,6 +478,29 @@ document.addEventListener('DOMContentLoaded', function () {
 .tt-row-activity   td { background: #ffffff; }
 .tt-row-sub        td { background: #fbfcfe; }
 .tt-status-tree .tt-toggle { line-height: 1; }
+
+/* Persistent horizontal scrollbar under the Gantt chart, matching the
+   marked spot in the screenshot. overflow-x:scroll (not auto) forces
+   the track to stay visible even on macOS where auto scrollbars hide
+   until hover — otherwise the chart's overflowing right edge would be
+   invisible to the operator. */
+.tt-gantt-scroll {
+    overflow-x: scroll;
+    overflow-y: hidden;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+}
+.tt-gantt-scroll::-webkit-scrollbar { height: 12px; }
+.tt-gantt-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1; border-radius: 6px;
+}
+.tt-gantt-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+.tt-gantt-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 6px; }
+/* Let the SVG take its natural width so it can actually overflow the
+   scroll container — Frappe-Gantt sets an explicit width attribute
+   based on the timeline length. */
+.tt-gantt-scroll > svg { display: block; }
 </style>
 
 <?php render_footer(); ?>
