@@ -98,147 +98,170 @@ function render_header(string $title, array $options = []): void
                             </li>
                         <?php else: ?>
                             <?php
-                                // State DSM and DSM Admin see a slimmer top menu — Dashboard
-                                // and Demand Side only (DSM Admin additionally gets
-                                // Administration). Job Fair, Masters and Reports are hidden.
-                                // District PMU and State PMU share a scoped menu — Office
-                                // Profile / Asset Register / Report. EDMS is a viewer +
-                                // approval role: Dashboard, District PMU Masters, and a
-                                // PMU Assets dropdown (built in Phase 4B).
+                                // Legacy role predicates — kept for finer decisions inside
+                                // each module dropdown (some items still key off legacy role
+                                // during the transition to full module-role control).
                                 $role = (string) ($user['role'] ?? '');
                                 $isDemandOnly = ($role === 'state_dsm' || $role === 'dsm_admin');
                                 $isDistrictPmu = ($role === 'district_pmu');
                                 $isStatePmu = ($role === 'state_pmu');
                                 $isPmuUser  = ($isDistrictPmu || $isStatePmu);
                                 $isEdms = ($role === 'edms');
-                                // Aliased for backwards-compat with other blocks in this file.
                                 $isStateDsm = ($role === 'state_dsm');
+
+                                // New module-gate helpers. Every module dropdown below is
+                                // primarily gated by user_can_access_module(...); legacy
+                                // predicates stay as an OR fallback so existing role
+                                // holders keep seeing the same menus without any admin
+                                // having to touch their grants.
+                                $uid = (int) ($user['id'] ?? 0);
+                                if (function_exists('rbac_bootstrap')) rbac_bootstrap();
+                                $canJobFair    = function_exists('user_can_access_module') && user_can_access_module($uid, 'job_fair');
+                                $canProjMgmt   = function_exists('user_can_access_module') && user_can_access_module($uid, 'project_management');
+                                $canDemand     = function_exists('user_can_access_module') && user_can_access_module($uid, 'demand_side');
+                                $canPmu        = function_exists('user_can_access_module') && user_can_access_module($uid, 'pmu_assets');
+                                $canAdminMod   = function_exists('user_can_access_module') && user_can_access_module($uid, 'administration');
+                                $isJobFairAdmin  = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'job_fair');
+                                $isProjMgmtAdmin = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'project_management');
+                                $isDemandAdmin   = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'demand_side');
+                                $isPmuAdmin      = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'pmu_assets');
+                                $isAdminAdmin    = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'administration');
                             ?>
-                            <?php if (!$isDemandOnly && !$isPmuUser && !$isEdms): ?>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php', 'notifications.php', 'job_fair_result_upload.php', 'job_fair_result_full_upload.php', 'aggregator_offer_letter_upload.php', 'job_fair_results_export.php', 'job_fair_conversion_data_export.php', 'manage_candidate.php', 'crm_process.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair</a>
-                                <ul class="dropdown-menu">
-                                    <li><a class="dropdown-item" href="/job_fair_results.php"><i class="bi bi-table me-2"></i>Job Fair Result Data</a></li>
-                                    <?php if (is_admin($user)): ?>
-                                        <li><a class="dropdown-item" href="/crm_process.php"><i class="bi bi-kanban me-2"></i>CRM Process (Employer)</a></li>
-                                    <?php endif; ?>
-                                    <li><a class="dropdown-item" href="/notifications.php"><i class="bi bi-bell me-2"></i>Notifications</a></li>
-                                    <?php if (is_admin($user)): ?>
-                                        <li><hr class="dropdown-divider"></li>
-                                        <li><h6 class="dropdown-header">Data Management</h6></li>
-                                        <li><a class="dropdown-item" href="/job_fair_result_upload.php"><i class="bi bi-upload me-2"></i>Upload Job Fair Result CSV</a></li>
-                                        <li><a class="dropdown-item" href="/aggregator_offer_letter_upload.php"><i class="bi bi-upload me-2"></i>Upload Aggregator Data CSV</a></li>
-                                        <li><a class="dropdown-item" href="/job_fair_results_export.php"><i class="bi bi-download me-2"></i>Download Job Fair Result CSV</a></li>
-                                        <li><a class="dropdown-item" href="/job_fair_conversion_data_export.php"><i class="bi bi-download me-2"></i>Download Conversion Data CSV</a></li>
-                                    <?php endif; ?>
-                                </ul>
-                            </li>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['phone_directory.php', 'job_fair_masters.php', 'job_fair_job_titles.php', 'job_fair_sdpk_centers.php', 'job_fair_job_stations.php', 'candidates_master.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-sliders me-1"></i>Masters</a>
-                                <ul class="dropdown-menu">
-                                    <li><a class="dropdown-item" href="/phone_directory.php"><i class="bi bi-person-rolodex me-2"></i>Phone Directory</a></li>
-                                    <li><a class="dropdown-item" href="/job_fair_masters.php"><i class="bi bi-diagram-3 me-2"></i>Employer and SPOC Mapping</a></li>
-                                    <?php if (is_admin($user)): ?>
-                                        <li><a class="dropdown-item" href="/job_fair_job_titles.php"><i class="bi bi-diagram-2 me-2"></i>Job Titles</a></li>
-                                        <li><a class="dropdown-item" href="/job_fair_sdpk_centers.php"><i class="bi bi-buildings me-2"></i>SDPK Centers</a></li>
-                                        <li><a class="dropdown-item" href="/job_fair_job_stations.php"><i class="bi bi-geo-alt-fill me-2"></i>Job Stations</a></li>
-                                        <li><a class="dropdown-item" href="/candidates_master.php"><i class="bi bi-people me-2"></i>Candidates Master</a></li>
-                                    <?php endif; ?>
-                                </ul>
-                            </li>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_reports.php', 'call_history_report.php', 'consolidated_report.php', 'consolidated_report_candidates.php', 'job_fair_exception_report.php', 'job_fair_exception_candidates.php', 'job_station_consolidated_report.php', 'joined_candidates_report.php', 'district_discrepancy_report.php', 'district_candidate_joined_status_report.php', 'district_future_date_joined_status_report.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-graph-up me-1"></i>Reports</a>
-                                <ul class="dropdown-menu">
-                                    <li><a class="dropdown-item" href="/job_fair_reports.php"><i class="bi bi-clipboard2-pulse me-2"></i>Over all Report</a></li>
-                                    <li><a class="dropdown-item" href="/call_history_report.php"><i class="bi bi-telephone me-2"></i>Call History Report</a></li>
-                                    <li><a class="dropdown-item" href="/consolidated_report.php"><i class="bi bi-clipboard-data me-2"></i>Consolidated Report</a></li>
-                                    <li><a class="dropdown-item" href="/job_fair_exception_report.php"><i class="bi bi-exclamation-triangle me-2"></i>Exception Report</a></li>
-                                    <li><a class="dropdown-item" href="/job_station_consolidated_report.php"><i class="bi bi-buildings me-2"></i>Job Station Consolidated Report</a></li>
-                                    <li><a class="dropdown-item" href="/joined_candidates_report.php"><i class="bi bi-door-open-fill me-2"></i>Joined Candidates</a></li>
-                                    <li><a class="dropdown-item" href="/district_candidate_joined_status_report.php"><i class="bi bi-geo-alt me-2"></i>District wise Candidate joined status</a></li>
-                                    <li><a class="dropdown-item ps-4" href="/district_future_date_joined_status_report.php"><i class="bi bi-calendar-event me-2"></i>District wise Future date join status</a></li>
-                                    <li><a class="dropdown-item" href="/district_discrepancy_report.php"><i class="bi bi-exclamation-diamond me-2"></i>Discrepancy Report</a></li>
-                                </ul>
-                            </li>
-                            <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['task_tracker_my_work.php', 'task_tracker_projects.php', 'task_tracker_project_view.php', 'task_tracker_task.php', 'task_tracker_task_view.php', 'task_tracker_reports.php', 'task_tracker_project_status.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-kanban me-1"></i>Task Tracker</a>
-                                <ul class="dropdown-menu">
-                                    <li><a class="dropdown-item" href="/task_tracker_my_work.php"><i class="bi bi-person-workspace me-2"></i>My Work</a></li>
-                                    <li><a class="dropdown-item" href="/task_tracker_projects.php"><i class="bi bi-briefcase me-2"></i>Projects</a></li>
-                                    <li><a class="dropdown-item" href="/task_tracker_project_status.php"><i class="bi bi-diagram-2 me-2"></i>Project Status (tree &amp; Gantt)</a></li>
-                                    <li><a class="dropdown-item" href="/task_tracker_reports.php"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Reports (.xlsx)</a></li>
-                                </ul>
-                            </li>
-                            <?php endif; /* !$isDemandOnly — end of Job Fair/Masters/Reports block */ ?>
-                            <?php if (is_admin($user)): ?>
+                            <?php /* ============ Module: Job Fair Result ============ */ ?>
+                            <?php if ($canJobFair || (!$isDemandOnly && !$isPmuUser && !$isEdms)): ?>
                                 <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['demand_side_employers.php', 'demand_side_employer_edit.php', 'demand_side_upload.php', 'demand_side_stats.php', 'demand_side_assignments.php', 'demand_side_assignment_distribution.php', 'demand_side_assignment_report.php', 'demand_side_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-building me-1"></i>Demand Side</a>
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php','notifications.php','job_fair_result_upload.php','job_fair_result_full_upload.php','aggregator_offer_letter_upload.php','job_fair_results_export.php','job_fair_conversion_data_export.php','manage_candidate.php','crm_process.php','phone_directory.php','job_fair_masters.php','job_fair_job_titles.php','job_fair_sdpk_centers.php','job_fair_job_stations.php','candidates_master.php','job_fair_reports.php','call_history_report.php','consolidated_report.php','consolidated_report_candidates.php','job_fair_exception_report.php','job_fair_exception_candidates.php','job_station_consolidated_report.php','joined_candidates_report.php','district_discrepancy_report.php','district_candidate_joined_status_report.php','district_future_date_joined_status_report.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair Result</a>
                                     <ul class="dropdown-menu">
-                                        <li><a class="dropdown-item" href="/demand_side_employers.php"><i class="bi bi-building me-2"></i>Employer</a></li>
-                                        <?php if (is_manage_admin($user)): ?>
-                                            <li><a class="dropdown-item ps-4" href="/demand_side_assignments.php"><i class="bi bi-people-arrows me-2"></i>Assign Employers to Users</a></li>
+                                        <li><h6 class="dropdown-header">Transactions</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/job_fair_results.php"><i class="bi bi-table me-2"></i>Job Fair Result Data</a></li>
+                                        <?php if ($isJobFairAdmin || is_admin($user)): ?>
+                                            <li><a class="dropdown-item ps-4" href="/crm_process.php"><i class="bi bi-kanban me-2"></i>CRM Process (Employer)</a></li>
                                         <?php endif; ?>
-                                        <?php if (($user['role'] ?? '') === 'administrator'): ?>
-                                            <li><a class="dropdown-item" href="/demand_side_upload.php"><i class="bi bi-upload me-2"></i>Upload Data</a></li>
-                                        <?php endif; ?>
-                                        <li><a class="dropdown-item" href="/demand_side_stats.php"><i class="bi bi-bar-chart-line me-2"></i>Data Modification Statistics</a></li>
-                                        <?php if (($user['role'] ?? '') === 'administrator'): ?>
+                                        <li><a class="dropdown-item ps-4" href="/notifications.php"><i class="bi bi-bell me-2"></i>Notifications</a></li>
+                                        <?php if ($isJobFairAdmin || is_admin($user)): ?>
                                             <li><hr class="dropdown-divider"></li>
-                                            <li><a class="dropdown-item" href="/demand_side_settings.php"><i class="bi bi-gear me-2"></i>Settings</a></li>
+                                            <li><h6 class="dropdown-header">Data management</h6></li>
+                                            <li><a class="dropdown-item ps-4" href="/job_fair_result_upload.php"><i class="bi bi-upload me-2"></i>Upload Job Fair Result CSV</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/aggregator_offer_letter_upload.php"><i class="bi bi-upload me-2"></i>Upload Aggregator Data CSV</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/job_fair_results_export.php"><i class="bi bi-download me-2"></i>Download Job Fair Result CSV</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/job_fair_conversion_data_export.php"><i class="bi bi-download me-2"></i>Download Conversion Data CSV</a></li>
                                         <?php endif; ?>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><h6 class="dropdown-header">Masters</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/phone_directory.php"><i class="bi bi-person-rolodex me-2"></i>Phone Directory</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/job_fair_masters.php"><i class="bi bi-diagram-3 me-2"></i>Employer and SPOC Mapping</a></li>
+                                        <?php if ($isJobFairAdmin || is_admin($user)): ?>
+                                            <li><a class="dropdown-item ps-4" href="/job_fair_job_titles.php"><i class="bi bi-diagram-2 me-2"></i>Job Titles</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/job_fair_sdpk_centers.php"><i class="bi bi-buildings me-2"></i>SDPK Centers</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/job_fair_job_stations.php"><i class="bi bi-geo-alt-fill me-2"></i>Job Stations</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/candidates_master.php"><i class="bi bi-people me-2"></i>Candidates Master</a></li>
+                                        <?php endif; ?>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><h6 class="dropdown-header">Reports</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/job_fair_reports.php"><i class="bi bi-clipboard2-pulse me-2"></i>Over all Report</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/call_history_report.php"><i class="bi bi-telephone me-2"></i>Call History Report</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/consolidated_report.php"><i class="bi bi-clipboard-data me-2"></i>Consolidated Report</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/job_fair_exception_report.php"><i class="bi bi-exclamation-triangle me-2"></i>Exception Report</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/job_station_consolidated_report.php"><i class="bi bi-buildings me-2"></i>Job Station Consolidated Report</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/joined_candidates_report.php"><i class="bi bi-door-open-fill me-2"></i>Joined Candidates</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/district_candidate_joined_status_report.php"><i class="bi bi-geo-alt me-2"></i>District wise Candidate joined status</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/district_future_date_joined_status_report.php"><i class="bi bi-calendar-event me-2"></i>District wise Future date join status</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/district_discrepancy_report.php"><i class="bi bi-exclamation-diamond me-2"></i>Discrepancy Report</a></li>
                                     </ul>
                                 </li>
-                                <?php if (is_manage_admin($user)): ?>
-                                    <li class="nav-item dropdown">
-                                        <a class="nav-link dropdown-toggle<?= $isActive(['users.php', 'reports.php', 'office_hierarchy.php', 'task_tracker_status.php', 'task_tracker_financial_years.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
-                                        <ul class="dropdown-menu">
-                                            <li><a class="dropdown-item" href="/users.php"><i class="bi bi-people me-2"></i>Users</a></li>
-                                            <li><a class="dropdown-item" href="/office_hierarchy.php"><i class="bi bi-diagram-3 me-2"></i>Office Hierarchy</a></li>
+                            <?php endif; ?>
+
+                            <?php /* ============ Module: Project Management ============ */ ?>
+                            <?php if ($canProjMgmt || (!$isDemandOnly && !$isPmuUser && !$isEdms)): ?>
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['task_tracker_my_work.php','task_tracker_projects.php','task_tracker_project_view.php','task_tracker_task.php','task_tracker_task_view.php','task_tracker_reports.php','task_tracker_project_status.php','task_tracker_import.php','task_tracker_status.php','task_tracker_financial_years.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-kanban me-1"></i>Project Management</a>
+                                    <ul class="dropdown-menu">
+                                        <li><h6 class="dropdown-header">Transactions</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/task_tracker_my_work.php"><i class="bi bi-person-workspace me-2"></i>My Work</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/task_tracker_projects.php"><i class="bi bi-briefcase me-2"></i>Projects</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/task_tracker_project_status.php"><i class="bi bi-diagram-2 me-2"></i>Project Status (tree &amp; Gantt)</a></li>
+                                        <?php if ($isProjMgmtAdmin || is_manage_admin($user)): ?>
                                             <li><hr class="dropdown-divider"></li>
-                                            <li><h6 class="dropdown-header">Task Tracker · Settings</h6></li>
+                                            <li><h6 class="dropdown-header">Masters</h6></li>
                                             <li><a class="dropdown-item ps-4" href="/task_tracker_status.php"><i class="bi bi-columns-gap me-2"></i>Status master</a></li>
                                             <li><a class="dropdown-item ps-4" href="/task_tracker_financial_years.php"><i class="bi bi-calendar3 me-2"></i>Financial Year master</a></li>
-                                            <li><h6 class="dropdown-header">Task Tracker</h6></li>
-                                            <li><a class="dropdown-item ps-4" href="/task_tracker_projects.php"><i class="bi bi-kanban me-2"></i>Projects</a></li>
                                             <li><a class="dropdown-item ps-4" href="/task_tracker_import.php"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Bulk import</a></li>
-                                            <li><hr class="dropdown-divider"></li>
-                                            <li><a class="dropdown-item" href="/reports.php"><i class="bi bi-clock-history me-2"></i>Login Reports</a></li>
-                                        </ul>
-                                    </li>
-                                <?php endif; ?>
-                            <?php endif; ?>
-                            <?php if ($isPmuUser): ?>
-                                <li class="nav-item">
-                                    <a class="nav-link<?= $isActive(['district_pmu_office_profile.php']) ?>" href="/district_pmu_office_profile.php"><i class="bi bi-building-check me-1"></i>Office Profile</a>
-                                </li>
-                                <li class="nav-item">
-                                    <a class="nav-link<?= $isActive(['district_pmu_assets.php']) ?>" href="/district_pmu_assets.php"><i class="bi bi-box-seam me-1"></i>Asset Register</a>
-                                </li>
-                                <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['district_pmu_reports.php', 'district_pmu_report_asset.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-graph-up me-1"></i>Report</a>
-                                    <ul class="dropdown-menu">
-                                        <li><a class="dropdown-item" href="/district_pmu_reports.php?report=assets"><i class="bi bi-file-earmark-text me-2"></i>Asset Register</a></li>
+                                        <?php endif; ?>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><h6 class="dropdown-header">Reports</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/task_tracker_reports.php"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Reports (.xlsx)</a></li>
                                     </ul>
                                 </li>
                             <?php endif; ?>
-                            <?php if ($isEdms || is_admin($user)): ?>
-                                <?php /* PMU Assets dropdown is available to EDMS (approval
-                                         authority) and to every admin-group role for
-                                         read-only oversight. Admins land on the same detail
-                                         pages but the approve/reject/return action form is
-                                         hidden on their view. District PMU Masters
-                                         (asset types / subtypes / owning authorities) is
-                                         nested under the same dropdown so every asset
-                                         admin function is in one place. */ ?>
+
+                            <?php /* ============ Module: Demand Side ============ */ ?>
+                            <?php if ($canDemand || is_admin($user)): ?>
                                 <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['edms_profiles.php', 'edms_profile_detail.php', 'edms_submissions.php', 'edms_submission_detail.php', 'district_pmu_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-collection me-1"></i>PMU Assets</a>
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['demand_side_employers.php','demand_side_employer_edit.php','demand_side_upload.php','demand_side_stats.php','demand_side_assignments.php','demand_side_assignment_distribution.php','demand_side_assignment_report.php','demand_side_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-building me-1"></i>Demand Side</a>
                                     <ul class="dropdown-menu">
-                                        <li><a class="dropdown-item" href="/edms_profiles.php"><i class="bi bi-building-check me-2"></i>District Profile</a></li>
-                                        <li><a class="dropdown-item" href="/edms_submissions.php"><i class="bi bi-box-seam me-2"></i>Asset Register</a></li>
-                                        <?php if (is_manage_admin($user) || $isEdms): ?>
-                                            <li><hr class="dropdown-divider"></li>
-                                            <li><a class="dropdown-item<?= $isActive(['district_pmu_settings.php']) ?>" href="/district_pmu_settings.php" title="Manage District PMU masters (asset types, subtypes, owning authorities)"><i class="bi bi-diagram-2 me-2"></i>District PMU Masters</a></li>
+                                        <li><h6 class="dropdown-header">Transactions</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/demand_side_employers.php"><i class="bi bi-building me-2"></i>Employer</a></li>
+                                        <?php if ($isDemandAdmin || is_manage_admin($user)): ?>
+                                            <li><a class="dropdown-item ps-4" href="/demand_side_assignments.php"><i class="bi bi-people-arrows me-2"></i>Assign Employers to Users</a></li>
                                         <?php endif; ?>
+                                        <?php if ($isDemandAdmin || (($user['role'] ?? '') === 'administrator')): ?>
+                                            <li><a class="dropdown-item ps-4" href="/demand_side_upload.php"><i class="bi bi-upload me-2"></i>Upload Data</a></li>
+                                        <?php endif; ?>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><h6 class="dropdown-header">Reports</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/demand_side_stats.php"><i class="bi bi-bar-chart-line me-2"></i>Data Modification Statistics</a></li>
+                                        <?php if ($isDemandAdmin || (($user['role'] ?? '') === 'administrator')): ?>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><h6 class="dropdown-header">Settings</h6></li>
+                                            <li><a class="dropdown-item ps-4" href="/demand_side_settings.php"><i class="bi bi-gear me-2"></i>Settings</a></li>
+                                        <?php endif; ?>
+                                    </ul>
+                                </li>
+                            <?php endif; ?>
+
+                            <?php /* ============ Module: PMU Assets ============ */ ?>
+                            <?php if ($canPmu || $isPmuUser || $isEdms || is_admin($user)): ?>
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['edms_profiles.php','edms_profile_detail.php','edms_submissions.php','edms_submission_detail.php','district_pmu_settings.php','district_pmu_office_profile.php','district_pmu_assets.php','district_pmu_reports.php','district_pmu_report_asset.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-collection me-1"></i>PMU Assets</a>
+                                    <ul class="dropdown-menu">
+                                        <?php if ($isPmuUser): ?>
+                                            <li><h6 class="dropdown-header">My office</h6></li>
+                                            <li><a class="dropdown-item ps-4" href="/district_pmu_office_profile.php"><i class="bi bi-building-check me-2"></i>Office Profile</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/district_pmu_assets.php"><i class="bi bi-box-seam me-2"></i>Asset Register</a></li>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><h6 class="dropdown-header">Reports</h6></li>
+                                            <li><a class="dropdown-item ps-4" href="/district_pmu_reports.php?report=assets"><i class="bi bi-file-earmark-text me-2"></i>Asset Register</a></li>
+                                        <?php endif; ?>
+                                        <?php if ($isEdms || is_admin($user) || $canPmu): ?>
+                                            <?php if ($isPmuUser): ?><li><hr class="dropdown-divider"></li><?php endif; ?>
+                                            <li><h6 class="dropdown-header">All districts</h6></li>
+                                            <li><a class="dropdown-item ps-4" href="/edms_profiles.php"><i class="bi bi-building-check me-2"></i>District Profile</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/edms_submissions.php"><i class="bi bi-box-seam me-2"></i>Asset Register</a></li>
+                                            <?php if ($isPmuAdmin || is_manage_admin($user) || $isEdms): ?>
+                                                <li><hr class="dropdown-divider"></li>
+                                                <li><h6 class="dropdown-header">Masters</h6></li>
+                                                <li><a class="dropdown-item ps-4" href="/district_pmu_settings.php" title="Manage District PMU masters (asset types, subtypes, owning authorities)"><i class="bi bi-diagram-2 me-2"></i>District PMU Masters</a></li>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    </ul>
+                                </li>
+                            <?php endif; ?>
+
+                            <?php /* ============ Module: Administration ============ */ ?>
+                            <?php if ($canAdminMod || is_manage_admin($user)): ?>
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['users.php','role_groups.php','reports.php','office_hierarchy.php','office_hierarchy_trash.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
+                                    <ul class="dropdown-menu">
+                                        <li><h6 class="dropdown-header">Users &amp; access</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/users.php"><i class="bi bi-people me-2"></i>Users</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/role_groups.php"><i class="bi bi-collection me-2"></i>Role Groups</a></li>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><h6 class="dropdown-header">Masters</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/office_hierarchy.php"><i class="bi bi-diagram-3 me-2"></i>Office Hierarchy</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/office_hierarchy_trash.php"><i class="bi bi-trash me-2"></i>Office Hierarchy · Trash</a></li>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><h6 class="dropdown-header">Reports</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/reports.php"><i class="bi bi-clock-history me-2"></i>Login Reports</a></li>
                                     </ul>
                                 </li>
                             <?php endif; ?>

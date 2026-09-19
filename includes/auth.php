@@ -18,6 +18,15 @@ function require_auth(): void
         header('Location: /index.php');
         exit;
     }
+    // Bootstrap the module + role catalogue once per request. Safe to
+    // call every page — the static $done guard means the bootstrap
+    // body runs at most once per request, and INSERT IGNORE keeps
+    // seed / backfill idempotent.
+    if (function_exists('rbac_bootstrap')) rbac_bootstrap();
+    else {
+        $rbac = __DIR__ . '/rbac.php';
+        if (is_file($rbac)) { require_once $rbac; rbac_bootstrap(); }
+    }
 }
 
 function require_admin(): void

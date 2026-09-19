@@ -2,6 +2,7 @@
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/task_tracker_helpers.php';
+require_once __DIR__ . '/includes/rbac.php';
 require_admin();
 
 // One-time self-migration: add assigned_districts column to users table if missing.
@@ -57,6 +58,7 @@ if (is_post()) {
             $password = $_POST['password'] ?? '';
             $stmt = db()->prepare('INSERT INTO users (name, role, mobile_number, email, address, assigned_districts, avatar_colour, password_hash, active_status, created_at, updated_at, modified_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)');
             $stmt->execute([$name, $role, $mobile, $email, $address, $assignedDistricts, $avatarColour, password_hash($password, PASSWORD_DEFAULT), $active, $user['id']]);
+            $id = (int) db()->lastInsertId();
             $flash = 'User added.';
         } else {
             if (!empty($_POST['password'])) {
@@ -68,6 +70,31 @@ if (is_post()) {
             }
             $stmt->execute($params);
             $flash = 'User updated.';
+        }
+
+        // Persist module grants + role-group memberships. Both tables
+        // are rewritten wholesale for this user — the form always
+        // sends the full desired state.
+        try {
+            $modGrants = (array) ($_POST['module_grants'] ?? []); // module_id => module_role_id (0 = none)
+            $groupIds  = array_map('intval', (array) ($_POST['role_groups'] ?? []));
+            $validMod  = []; foreach (rbac_all_modules() as $m) $validMod[(int) $m['id']] = true;
+            $validRole = []; foreach (rbac_all_module_roles() as $mid => $roles) foreach ($roles as $r) $validRole[$mid][(int) $r['id']] = true;
+
+            db()->prepare('DELETE FROM user_module_role WHERE user_id = ?')->execute([$id]);
+            $insM = db()->prepare('INSERT INTO user_module_role (user_id, module_id, module_role_id, created_at, created_by) VALUES (?, ?, ?, NOW(), ?)');
+            foreach ($modGrants as $mid => $rid) {
+                $mid = (int) $mid; $rid = (int) $rid;
+                if ($mid <= 0 || $rid <= 0) continue;
+                if (!isset($validMod[$mid])) continue;
+                if (!isset($validRole[$mid][$rid])) continue;
+                $insM->execute([$id, $mid, $rid, $user['id']]);
+            }
+            db()->prepare('DELETE FROM user_role_group WHERE user_id = ?')->execute([$id]);
+            $insG = db()->prepare('INSERT INTO user_role_group (user_id, role_group_id, created_at, created_by) VALUES (?, ?, NOW(), ?)');
+            foreach (array_unique($groupIds) as $gid) if ($gid > 0) $insG->execute([$id, $gid, $user['id']]);
+        } catch (Throwable $e) {
+            $flash = 'User saved, but module grants could not be persisted: ' . $e->getMessage();
         }
     }
 
@@ -105,6 +132,25 @@ $sql .= ' ORDER BY id DESC';
 $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $users = $stmt->fetchAll();
+
+// RBAC lookup data: module list, role list per module, active role
+// groups, and every user's current direct grants + group memberships
+// so openEditModal can pre-tick the right cells without an AJAX
+// round-trip.
+$rbacModules = rbac_all_modules();
+$rbacRoles   = rbac_all_module_roles();
+$roleGroups  = [];
+try { $roleGroups = db()->query('SELECT id, name, description, is_active FROM role_group WHERE is_active = 1 ORDER BY name ASC')->fetchAll(); } catch (Throwable $e) { /* table missing */ }
+
+$grantsByUser = []; $groupsByUser = [];
+try {
+    foreach (db()->query('SELECT user_id, module_id, module_role_id FROM user_module_role')->fetchAll() as $r) {
+        $grantsByUser[(int) $r['user_id']][(int) $r['module_id']] = (int) $r['module_role_id'];
+    }
+    foreach (db()->query('SELECT user_id, role_group_id FROM user_role_group')->fetchAll() as $r) {
+        $groupsByUser[(int) $r['user_id']][] = (int) $r['role_group_id'];
+    }
+} catch (Throwable $e) { /* tables missing */ }
 
 // Distinct candidate districts to populate the multi-select. A synthetic
 // "State Level" option is prepended so State PMU users can be scoped to
@@ -195,7 +241,11 @@ render_page_header('User Management', [
             <td><span class="status-chip <?= $u['active_status']?'status-yes':'status-neutral' ?>"><?= $u['active_status']?'Active':'Inactive' ?></span></td>
             <td>
                 <div class="d-flex gap-1 justify-content-end">
-                <button class="btn btn-sm btn-outline-primary" onclick='openEditModal(<?= json_encode($u, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'><i class="bi bi-pencil"></i> Edit</button>
+                <?php $uid = (int) $u['id']; $userPayload = array_merge((array) $u, [
+                    'module_grants' => (object) ($grantsByUser[$uid] ?? []),
+                    'role_groups'   => $groupsByUser[$uid] ?? [],
+                ]); ?>
+                <button class="btn btn-sm btn-outline-primary" onclick='openEditModal(<?= json_encode($userPayload, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'><i class="bi bi-pencil"></i> Edit</button>
                 <?php if ($u['active_status']): ?>
                 <form method="post" class="d-inline"><input type="hidden" name="action" value="deactivate"><input type="hidden" name="id" value="<?= (int) $u['id'] ?>"><button class="btn btn-sm btn-outline-danger" onclick="return confirm('Deactivate this user?')"><i class="bi bi-person-x"></i> Deactivate</button></form>
                 <?php endif; ?>
@@ -250,6 +300,61 @@ render_page_header('User Management', [
                         <?php endforeach; ?>
                     </div>
                 </div>
+
+                <?php if ($rbacModules !== []): ?>
+                <div class="col-md-12 mt-3">
+                    <div class="border rounded p-2">
+                        <div class="fw-semibold mb-2"><i class="bi bi-shield-check me-1"></i>Module grants</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Module</th>
+                                        <th class="text-center">Admin</th>
+                                        <th class="text-center">Reviewer</th>
+                                        <th class="text-center">User</th>
+                                        <th class="text-center">— None —</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($rbacModules as $m):
+                                        $mid = (int) $m['id'];
+                                        $roles = $rbacRoles[$mid] ?? [];
+                                        $rid = static function (string $code) use ($roles): int {
+                                            foreach ($roles as $r) if ((string) $r['code'] === $code) return (int) $r['id'];
+                                            return 0;
+                                        };
+                                    ?>
+                                        <tr>
+                                            <td class="fw-semibold"><?= esc((string) $m['name']) ?></td>
+                                            <?php foreach (['admin','reviewer','user'] as $rc): ?>
+                                                <td class="text-center">
+                                                    <input type="radio" class="form-check-input js-mgrant" name="module_grants[<?= $mid ?>]" value="<?= $rid($rc) ?>" data-module="<?= $mid ?>">
+                                                </td>
+                                            <?php endforeach; ?>
+                                            <td class="text-center">
+                                                <input type="radio" class="form-check-input js-mgrant" name="module_grants[<?= $mid ?>]" value="0" data-module="<?= $mid ?>" checked>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <?php if ($roleGroups !== []): ?>
+                            <div class="fw-semibold mb-1 mt-3"><i class="bi bi-collection me-1"></i>Role groups</div>
+                            <div class="small text-muted mb-2">Effective role = highest of direct grants + every group the user is in.</div>
+                            <div class="d-flex flex-wrap gap-2">
+                                <?php foreach ($roleGroups as $g): ?>
+                                    <label class="form-check">
+                                        <input class="form-check-input js-rgroup" type="checkbox" name="role_groups[]" value="<?= (int) $g['id'] ?>">
+                                        <span class="form-check-label"><?= esc((string) $g['name']) ?></span>
+                                    </label>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
             </div>
         </div>
         <div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal" type="button">Cancel</button><button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Save</button></div>
@@ -269,6 +374,11 @@ function syncDistrictControls() {
 }
 document.getElementById('all_districts').addEventListener('change', syncDistrictControls);
 
+function resetModuleGrants() {
+    // Every module row: tick the "— None —" radio (value="0").
+    document.querySelectorAll('input.js-mgrant[value="0"]').forEach(r => r.checked = true);
+    document.querySelectorAll('input.js-rgroup').forEach(c => c.checked = false);
+}
 function openAddModal() {
     document.getElementById('userModalTitle').innerText = 'Add User';
     document.getElementById('formAction').value = 'add';
@@ -278,6 +388,7 @@ function openAddModal() {
     // Default to "All Districts" for a new user.
     document.getElementById('all_districts').checked = true;
     syncDistrictControls();
+    resetModuleGrants();
 }
 function openEditModal(user) {
     document.getElementById('userModalTitle').innerText = 'Edit User';
@@ -313,6 +424,20 @@ function openEditModal(user) {
         Array.from(select.options).forEach((o) => { o.selected = set.has(o.value); });
     }
     syncDistrictControls();
+
+    // Module grants: reset, then tick the stored (module_id → role_id)
+    // pairs the payload carried in.
+    resetModuleGrants();
+    const grants = user.module_grants || {};
+    Object.keys(grants).forEach(mid => {
+        const rid = String(grants[mid]);
+        const radio = document.querySelector(`input.js-mgrant[name="module_grants[${mid}]"][value="${rid}"]`);
+        if (radio) radio.checked = true;
+    });
+    (user.role_groups || []).forEach(gid => {
+        const box = document.querySelector(`input.js-rgroup[value="${gid}"]`);
+        if (box) box.checked = true;
+    });
 
     bootstrap.Modal.getOrCreateInstance(document.getElementById('userModal')).show();
 }
