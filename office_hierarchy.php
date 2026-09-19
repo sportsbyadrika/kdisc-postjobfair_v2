@@ -340,7 +340,8 @@ render_header('Administration · Office Hierarchy', ['main_container_class' => '
 render_page_header('Administration · Office Hierarchy', [
     'icon'     => 'bi-diagram-3',
     'subtitle' => 'Office → Division → Section → (optional Sub Section) → Seat structure with a responsible officer and full transfer history on every node.',
-    'actions'  => '<a class="btn btn-light" href="/dashboard.php"><i class="bi bi-arrow-left me-1"></i>Back to Dashboard</a>',
+    'actions'  => '<a class="btn btn-outline-danger" href="/office_hierarchy_trash.php"><i class="bi bi-trash me-1"></i>Trash</a>
+        <a class="btn btn-light ms-2" href="/dashboard.php"><i class="bi bi-arrow-left me-1"></i>Back to Dashboard</a>',
 ]);
 ?>
 
@@ -643,13 +644,24 @@ ALTER TABLE office_hierarchy_officer_history
                 </div>
                 <div class="modal-body">
                     <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label">Officer</label>
+                        <div class="col-12">
+                            <label class="form-label"><i class="bi bi-person-lines-fill me-1"></i>Search &amp; pick officer</label>
                             <div class="input-group">
-                                <input type="text" class="form-control" id="assignOfficerName" readonly>
-                                <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#officerPickerModal">
-                                    <i class="bi bi-search me-1"></i>Search
-                                </button>
+                                <input type="text" class="form-control" id="officerSearchInput" placeholder="Type name, email or mobile then press Enter…" autocomplete="off">
+                                <button type="button" class="btn btn-outline-primary" id="officerSearchBtn"><i class="bi bi-search"></i> Search</button>
+                            </div>
+                            <div id="officerSelectedBanner" class="alert alert-success py-2 mt-2 mb-0 d-none">
+                                <i class="bi bi-check2-circle me-1"></i>Selected officer: <strong id="assignOfficerName">—</strong>
+                            </div>
+                            <div class="border rounded mt-2" style="max-height:260px; overflow-y:auto;">
+                                <table class="table table-hover table-sm mb-0">
+                                    <thead class="table-light" style="position:sticky; top:0;">
+                                        <tr><th>Name</th><th>Role</th><th>Contact</th><th></th></tr>
+                                    </thead>
+                                    <tbody id="officerSearchBody">
+                                        <tr><td colspan="4" class="text-center text-muted py-3"><i class="bi bi-search me-1"></i>Type a name / email / mobile and press Enter (or leave blank to browse all active users).</td></tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -691,33 +703,6 @@ ALTER TABLE office_hierarchy_officer_history
 <!-- ================================================================== -->
 <!-- Modal C-4: Officer picker (nested in Assign / used by picker btn)   -->
 <!-- ================================================================== -->
-<div class="modal fade" id="officerPickerModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title"><i class="bi bi-person-lines-fill me-1"></i>Search User</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <div class="input-group mb-3">
-                    <input type="text" class="form-control" id="officerSearchInput" placeholder="Name, email or mobile…">
-                    <button class="btn btn-primary" id="officerSearchBtn" type="button"><i class="bi bi-search"></i></button>
-                </div>
-                <div class="table-responsive" style="max-height:60vh; overflow-y:auto;">
-                    <table class="table table-hover align-middle mb-0">
-                        <thead class="table-light" style="position:sticky; top:0;">
-                            <tr><th>Name</th><th>Role</th><th>Contact</th><th></th></tr>
-                        </thead>
-                        <tbody id="officerSearchBody">
-                            <tr><td colspan="4" class="text-center text-muted py-3"><i class="bi bi-search me-1"></i>Type a name or contact and press Enter.</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
 <!-- ================================================================== -->
 <!-- Unassign officer — hidden helper form fired by the View modal's     -->
 <!-- Remove-current-officer button (via JS submit).                      -->
@@ -856,8 +841,11 @@ ALTER TABLE office_hierarchy_officer_history
         if (!currentViewData || !currentViewData.id) return;
         // Prep Assign modal with current node id + designation
         document.getElementById('assignOfficerNodeId').value    = currentViewData.id;
-        document.getElementById('assignOfficerId').value        = currentViewData.responsible_officer_id || 0;
-        document.getElementById('assignOfficerName').value      = currentViewData.officer_name || '';
+        document.getElementById('assignOfficerId').value          = currentViewData.responsible_officer_id || 0;
+        // assignOfficerName is a <strong> now (was an <input>); use textContent.
+        document.getElementById('assignOfficerName').textContent  = currentViewData.officer_name || '—';
+        document.getElementById('officerSelectedBanner').classList.toggle('d-none',
+            !currentViewData.responsible_officer_id || currentViewData.responsible_officer_id === 0);
         document.getElementById('assignOfficerDesignation').value = currentViewData.designation || '';
         document.getElementById('assignOfficerReason').value    = '';
         // Default the "From" date to today (server does the same on
@@ -875,11 +863,15 @@ ALTER TABLE office_hierarchy_officer_history
         setTimeout(() => new bootstrap.Modal(document.getElementById('assignOfficerModal')).show(), 200);
     });
 
-    // -------------------- Officer picker --------------------
-    const pickerBody  = document.getElementById('officerSearchBody');
-    const pickerInput = document.getElementById('officerSearchInput');
-    const pickerBtn   = document.getElementById('officerSearchBtn');
-    const pickerEl    = document.getElementById('officerPickerModal');
+    // -------------------- Officer picker (inlined in Assign modal) --------------------
+    // Nested modals stacked oddly and swallowed keyboard focus, so the
+    // search + results table now live inside the Assign modal itself.
+    const pickerBody       = document.getElementById('officerSearchBody');
+    const pickerInput      = document.getElementById('officerSearchInput');
+    const pickerBtn        = document.getElementById('officerSearchBtn');
+    const officerBanner    = document.getElementById('officerSelectedBanner');
+    const officerNameLabel = document.getElementById('assignOfficerName');
+    const assignModalEl    = document.getElementById('assignOfficerModal');
 
     const runSearch = async () => {
         const q = pickerInput.value.trim();
@@ -893,16 +885,30 @@ ALTER TABLE office_hierarchy_officer_history
     };
     pickerBtn?.addEventListener('click', runSearch);
     pickerInput?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); runSearch(); } });
-    pickerEl?.addEventListener('shown.bs.modal', () => { pickerInput.focus(); runSearch(); });
+    // On assign modal open: focus the search input and run an initial
+    // (empty-q) fetch so the user sees the full active-user list
+    // without having to type. The Change-officer flow pre-fills the
+    // currently-assigned officer before opening the modal, so we do
+    // NOT reset the selection here.
+    assignModalEl?.addEventListener('shown.bs.modal', () => {
+        pickerInput.value = '';
+        pickerInput.focus();
+        runSearch();
+    });
 
     pickerBody?.addEventListener('click', (ev) => {
         const t = ev.target.closest('.js-pick-officer');
         if (!t) return;
         const id = t.getAttribute('data-id');
         const nm = t.getAttribute('data-name');
-        document.getElementById('assignOfficerId').value   = id;
-        document.getElementById('assignOfficerName').value = nm;
-        bootstrap.Modal.getInstance(pickerEl)?.hide();
+        document.getElementById('assignOfficerId').value = id;
+        officerNameLabel.textContent = nm;
+        officerBanner.classList.remove('d-none');
+        // Highlight the picked row so the operator can still confirm
+        // visually, but leave the list on-screen in case they want to
+        // pick someone else instead.
+        pickerBody.querySelectorAll('tr').forEach(tr => tr.classList.remove('table-primary'));
+        t.closest('tr')?.classList.add('table-primary');
     });
 })();
 </script>
