@@ -226,23 +226,20 @@ function render_header(string $title, array $options = []): void
                                          authority) and to every admin-group role for
                                          read-only oversight. Admins land on the same detail
                                          pages but the approve/reject/return action form is
-                                         hidden on their view. */ ?>
+                                         hidden on their view. District PMU Masters
+                                         (asset types / subtypes / owning authorities) is
+                                         nested under the same dropdown so every asset
+                                         admin function is in one place. */ ?>
                                 <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['edms_profiles.php', 'edms_profile_detail.php', 'edms_submissions.php', 'edms_submission_detail.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-collection me-1"></i>PMU Assets</a>
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['edms_profiles.php', 'edms_profile_detail.php', 'edms_submissions.php', 'edms_submission_detail.php', 'district_pmu_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-collection me-1"></i>PMU Assets</a>
                                     <ul class="dropdown-menu">
                                         <li><a class="dropdown-item" href="/edms_profiles.php"><i class="bi bi-building-check me-2"></i>District Profile</a></li>
                                         <li><a class="dropdown-item" href="/edms_submissions.php"><i class="bi bi-box-seam me-2"></i>Asset Register</a></li>
+                                        <?php if (is_manage_admin($user) || $isEdms): ?>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><a class="dropdown-item<?= $isActive(['district_pmu_settings.php']) ?>" href="/district_pmu_settings.php" title="Manage District PMU masters (asset types, subtypes, owning authorities)"><i class="bi bi-diagram-2 me-2"></i>District PMU Masters</a></li>
+                                        <?php endif; ?>
                                     </ul>
-                                </li>
-                            <?php endif; ?>
-                            <?php if (is_manage_admin($user) || $isEdms): ?>
-                                <?php /* Administrator + DSM Admin manage District PMU masters
-                                         (asset types / subtypes / owning authorities). EDMS
-                                         also gets the link so they can add missing subtypes
-                                         without asking IT. Rendered as a small extra link so
-                                         it doesn't clash with the Administration dropdown. */ ?>
-                                <li class="nav-item">
-                                    <a class="nav-link<?= $isActive(['district_pmu_settings.php']) ?>" href="/district_pmu_settings.php" title="Manage District PMU masters (asset types, subtypes, owning authorities)"><i class="bi bi-diagram-2 me-1"></i>District PMU Masters</a>
                                 </li>
                             <?php endif; ?>
                         <?php endif; ?>
