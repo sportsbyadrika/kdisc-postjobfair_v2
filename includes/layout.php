@@ -161,10 +161,11 @@ function render_header(string $title, array $options = []): void
                                 </ul>
                             </li>
                             <li class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle<?= $isActive(['task_tracker_my_work.php', 'task_tracker_projects.php', 'task_tracker_project_view.php', 'task_tracker_task.php', 'task_tracker_task_view.php', 'task_tracker_reports.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-kanban me-1"></i>Task Tracker</a>
+                                <a class="nav-link dropdown-toggle<?= $isActive(['task_tracker_my_work.php', 'task_tracker_projects.php', 'task_tracker_project_view.php', 'task_tracker_task.php', 'task_tracker_task_view.php', 'task_tracker_reports.php', 'task_tracker_project_status.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-kanban me-1"></i>Task Tracker</a>
                                 <ul class="dropdown-menu">
                                     <li><a class="dropdown-item" href="/task_tracker_my_work.php"><i class="bi bi-person-workspace me-2"></i>My Work</a></li>
                                     <li><a class="dropdown-item" href="/task_tracker_projects.php"><i class="bi bi-briefcase me-2"></i>Projects</a></li>
+                                    <li><a class="dropdown-item" href="/task_tracker_project_status.php"><i class="bi bi-diagram-2 me-2"></i>Project Status (tree &amp; Gantt)</a></li>
                                     <li><a class="dropdown-item" href="/task_tracker_reports.php"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Reports (.xlsx)</a></li>
                                 </ul>
                             </li>
