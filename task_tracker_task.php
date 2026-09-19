@@ -189,6 +189,19 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     $priority      = (string) ($_POST['priority'] ?? 'medium');
     $plannedStart  = trim((string) ($_POST['planned_start'] ?? ''));
     $plannedEnd    = trim((string) ($_POST['planned_end'] ?? ''));
+
+    // Financial fields (optional). Blank string -> null so the column
+    // doesn't get set to 0.00 by accident.
+    $moneyIn = static fn(string $key) => trim((string) ($_POST[$key] ?? '')) === ''
+        ? null : (float) $_POST[$key];
+    $shareAmount     = $moneyIn('share_amount');
+    $projectedAmount = $moneyIn('projected_amount');
+    $targetExp       = $moneyIn('target_expenditure');
+    $actualExp       = $moneyIn('actual_expenditure');
+    $progressIn      = trim((string) ($_POST['progress_pct'] ?? ''));
+    $progressPct     = $progressIn === '' ? null : max(0, min(100, (int) $progressIn));
+    $hasFin      = task_tracker_column_exists('task', 'share_amount');
+    $hasProgress = task_tracker_column_exists('task', 'progress_pct');
     $primarySeat   = (int) ($_POST['primary_seat_id'] ?? 0);
     $secondaryRaw  = (array) ($_POST['secondary_seat_ids'] ?? []);
     $secondarySeat = [];
@@ -261,6 +274,16 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
             ]);
             $newTaskId = $db->lastInsertId();
 
+            // Financial + progress fields — persisted via a follow-up
+            // UPDATE keyed by newTaskId so the columns are conditional
+            // (some installs may not have run the ALTER yet).
+            $extra = task_tracker__financial_sets($shareAmount, $projectedAmount, $targetExp, $actualExp, $progressPct, $hasFin, $hasProgress);
+            if ($extra['sets'] !== []) {
+                $extra['params'][] = $newTaskId;
+                $db->prepare('UPDATE task SET ' . implode(', ', $extra['sets']) . ' WHERE id = ?')
+                   ->execute($extra['params']);
+            }
+
             $db->prepare('UPDATE project SET next_task_number = next_task_number + 1, updated_at = NOW(), updated_by = ? WHERE id = ?')
                ->execute([$viewerId, $projectId]);
 
@@ -320,6 +343,42 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 $viewerId, $taskId,
             ]);
 
+            // Financial + progress fields — same conditional shape as
+            // the insert path.
+            $extra = task_tracker__financial_sets($shareAmount, $projectedAmount, $targetExp, $actualExp, $progressPct, $hasFin, $hasProgress);
+            if ($extra['sets'] !== []) {
+                $extra['params'][] = $taskId;
+                $db->prepare('UPDATE task SET ' . implode(', ', $extra['sets']) . ' WHERE id = ?')
+                   ->execute($extra['params']);
+            }
+
+            // History rows for the financial fields (only when
+            // something actually changed).
+            $moneyEq = static fn($a, $b) => (float) ($a ?? 0) === (float) ($b ?? 0);
+            $moneyLog = [
+                'share_amount'       => [(float) ($existing['share_amount'] ?? 0),       $shareAmount],
+                'projected_amount'   => [(float) ($existing['projected_amount'] ?? 0),   $projectedAmount],
+                'target_expenditure' => [(float) ($existing['target_expenditure'] ?? 0), $targetExp],
+                'actual_expenditure' => [(float) ($existing['actual_expenditure'] ?? 0), $actualExp],
+            ];
+            if ($hasFin) {
+                foreach ($moneyLog as $field => $pair) {
+                    if (!$moneyEq($pair[0], $pair[1])) {
+                        $changes[] = ['field' => $field,
+                            'old' => $pair[0] > 0 ? number_format($pair[0], 2, '.', '') : '',
+                            'new' => $pair[1] === null ? '' : number_format($pair[1], 2, '.', '')];
+                    }
+                }
+            }
+            if ($hasProgress) {
+                $oldPct = $existing['progress_pct'] === null ? null : (int) $existing['progress_pct'];
+                if ($oldPct !== $progressPct) {
+                    $changes[] = ['field' => 'progress_pct',
+                        'old' => $oldPct === null ? '' : $oldPct . '%',
+                        'new' => $progressPct === null ? '' : $progressPct . '%'];
+                }
+            }
+
             $oldPrimary   = (int) $existingAssignmentPayload['primary_seat_id'];
             $oldSecondary = $existingAssignmentPayload['secondary_seat_ids'];
             sort($oldSecondary); sort($secondarySeat);
@@ -373,6 +432,27 @@ function task_tracker__seat_name(array $seats, int $seatId): string
     return '#' . $seatId;
 }
 
+/**
+ * Build the SET fragment for the financial + progress columns as an
+ * ['sets' => [...], 'params' => [...]] pair. Returns empty sets when
+ * neither column group exists in the schema, so the caller skips the
+ * follow-up UPDATE entirely.
+ */
+function task_tracker__financial_sets(?float $share, ?float $projected, ?float $target, ?float $actual, ?int $progress, bool $hasFin, bool $hasProgress): array
+{
+    $sets = []; $params = [];
+    if ($hasFin) {
+        $sets[] = 'share_amount = ?';       $params[] = $share;
+        $sets[] = 'projected_amount = ?';   $params[] = $projected;
+        $sets[] = 'target_expenditure = ?'; $params[] = $target;
+        $sets[] = 'actual_expenditure = ?'; $params[] = $actual;
+    }
+    if ($hasProgress) {
+        $sets[] = 'progress_pct = ?'; $params[] = $progress;
+    }
+    return ['sets' => $sets, 'params' => $params];
+}
+
 // When called with ?parent=<tid>, preselect Sub-activity + that parent.
 $parentHint = (int) ($_GET['parent'] ?? 0);
 if ($parentHint > 0 && $existing === null) {
@@ -380,6 +460,9 @@ if ($parentHint > 0 && $existing === null) {
     foreach ($activities as $a) { if ((int) $a['id'] === $parentHint) { $ok = true; break; } }
     if (!$ok) $parentHint = 0;
 }
+
+$formHasFin      = task_tracker_column_exists('task', 'share_amount');
+$formHasProgress = task_tracker_column_exists('task', 'progress_pct');
 
 $editing = $existing !== null;
 $formValues = $existing !== null ? [
@@ -396,6 +479,11 @@ $formValues = $existing !== null ? [
     'primary_section_id'  => (int) $existingAssignmentPayload['primary_section_id'],
     'primary_division_id' => (int) $existingAssignmentPayload['primary_division_id'],
     'secondary_seat_ids'  => $existingAssignmentPayload['secondary_seat_ids'],
+    'share_amount'        => $existing['share_amount']       ?? null,
+    'projected_amount'    => $existing['projected_amount']   ?? null,
+    'target_expenditure'  => $existing['target_expenditure'] ?? null,
+    'actual_expenditure'  => $existing['actual_expenditure'] ?? null,
+    'progress_pct'        => $existing['progress_pct']       ?? null,
 ] : [
     'type'          => $parentHint > 0 ? 'sub' : 'activity',
     'parent_id'     => $parentHint,
@@ -410,6 +498,11 @@ $formValues = $existing !== null ? [
     'primary_section_id'  => 0,
     'primary_division_id' => 0,
     'secondary_seat_ids'  => [],
+    'share_amount'       => null,
+    'projected_amount'   => null,
+    'target_expenditure' => null,
+    'actual_expenditure' => null,
+    'progress_pct'       => null,
 ];
 
 $pageTitle = $editing
@@ -497,6 +590,45 @@ render_page_header($pageTitle, [
                 <input type="date" class="form-control" id="taskEnd" name="planned_end" value="<?= esc($formValues['planned_end']) ?>">
             </div>
         </div>
+
+        <?php if ($formHasFin || $formHasProgress): ?>
+        <hr class="my-4">
+        <h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-cash-coin me-1"></i>Budget &amp; progress</h6>
+        <div class="row g-3">
+            <?php if ($formHasFin): ?>
+                <div class="col-md-3">
+                    <label class="form-label" for="taskShare">Share amount (₹)</label>
+                    <input type="number" step="0.01" min="0" class="form-control" id="taskShare" name="share_amount"
+                        value="<?= $formValues['share_amount'] === null ? '' : esc((string) $formValues['share_amount']) ?>"
+                        placeholder="Allocated from project budget">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="taskProjected">Projected amount (₹)</label>
+                    <input type="number" step="0.01" min="0" class="form-control" id="taskProjected" name="projected_amount"
+                        value="<?= $formValues['projected_amount'] === null ? '' : esc((string) $formValues['projected_amount']) ?>">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="taskTargetExp">Target expenditure (₹)</label>
+                    <input type="number" step="0.01" min="0" class="form-control" id="taskTargetExp" name="target_expenditure"
+                        value="<?= $formValues['target_expenditure'] === null ? '' : esc((string) $formValues['target_expenditure']) ?>">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="taskActualExp">Actual expenditure (₹)</label>
+                    <input type="number" step="0.01" min="0" class="form-control" id="taskActualExp" name="actual_expenditure"
+                        value="<?= $formValues['actual_expenditure'] === null ? '' : esc((string) $formValues['actual_expenditure']) ?>">
+                    <div class="small text-muted mt-1">Balance = target − actual.</div>
+                </div>
+            <?php endif; ?>
+            <?php if ($formHasProgress): ?>
+                <div class="col-md-3">
+                    <label class="form-label" for="taskProgress">Progress (%)</label>
+                    <input type="number" min="0" max="100" class="form-control" id="taskProgress" name="progress_pct"
+                        value="<?= $formValues['progress_pct'] === null ? '' : esc((string) $formValues['progress_pct']) ?>"
+                        placeholder="0–100">
+                </div>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
 
         <hr class="my-4">
 

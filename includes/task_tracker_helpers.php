@@ -269,6 +269,23 @@ function task_tracker_bootstrap(): void
 
     task_tracker__add_column_if_missing($db, 'office_hierarchy_officer_history', 'to_date',
         "ALTER TABLE office_hierarchy_officer_history ADD COLUMN to_date DATE NULL AFTER unassigned_at");
+
+    // Financial + progress fields introduced in the Project Status
+    // phase. Idempotent so a hosting install that lacks ALTER just
+    // hides these on the forms (they read as NULL everywhere).
+    task_tracker__add_column_if_missing($db, 'project', 'budget_amount',
+        "ALTER TABLE project ADD COLUMN budget_amount DECIMAL(15,2) NULL AFTER end_date");
+
+    task_tracker__add_column_if_missing($db, 'task', 'share_amount',
+        "ALTER TABLE task ADD COLUMN share_amount DECIMAL(15,2) NULL AFTER priority");
+    task_tracker__add_column_if_missing($db, 'task', 'projected_amount',
+        "ALTER TABLE task ADD COLUMN projected_amount DECIMAL(15,2) NULL AFTER share_amount");
+    task_tracker__add_column_if_missing($db, 'task', 'target_expenditure',
+        "ALTER TABLE task ADD COLUMN target_expenditure DECIMAL(15,2) NULL AFTER projected_amount");
+    task_tracker__add_column_if_missing($db, 'task', 'actual_expenditure',
+        "ALTER TABLE task ADD COLUMN actual_expenditure DECIMAL(15,2) NULL AFTER target_expenditure");
+    task_tracker__add_column_if_missing($db, 'task', 'progress_pct',
+        "ALTER TABLE task ADD COLUMN progress_pct TINYINT UNSIGNED NULL AFTER actual_expenditure");
 }
 
 /**

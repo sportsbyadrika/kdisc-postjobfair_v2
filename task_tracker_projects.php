@@ -37,7 +37,10 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     $financialYear = trim((string) ($_POST['financial_year'] ?? ''));
     $startDate    = trim((string) ($_POST['start_date'] ?? ''));
     $endDate      = trim((string) ($_POST['end_date'] ?? ''));
+    $budgetRaw    = trim((string) ($_POST['budget_amount'] ?? ''));
+    $budgetAmount = $budgetRaw === '' ? null : (float) $budgetRaw;
     $isActive     = isset($_POST['is_active']) ? 1 : 0;
+    $hasBudgetCol = task_tracker_column_exists('project', 'budget_amount');
 
     if ($name === '') {
         $flashMessage = 'Name is required.'; $flashType = 'danger';
@@ -45,37 +48,73 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
         $flashMessage = 'Code is required and must be up to 20 uppercase letters / digits.'; $flashType = 'danger';
     } elseif ($startDate !== '' && $endDate !== '' && $startDate > $endDate) {
         $flashMessage = 'Start date must be on or before end date.'; $flashType = 'danger';
+    } elseif ($budgetAmount !== null && $budgetAmount < 0) {
+        $flashMessage = 'Budget amount cannot be negative.'; $flashType = 'danger';
     } else {
         try {
             if ($editId > 0) {
-                $u = db()->prepare('UPDATE project
-                    SET name = ?, code = ?, description = ?, financial_year = ?,
-                        start_date = ?, end_date = ?, is_active = ?,
-                        updated_at = NOW(), updated_by = ?
-                    WHERE id = ?');
-                $u->execute([
-                    $name, $code,
-                    $description === '' ? null : $description,
-                    $financialYear === '' ? null : $financialYear,
-                    $startDate === '' ? null : $startDate,
-                    $endDate === '' ? null : $endDate,
-                    $isActive, $viewerId, $editId,
-                ]);
+                if ($hasBudgetCol) {
+                    $u = db()->prepare('UPDATE project
+                        SET name = ?, code = ?, description = ?, financial_year = ?,
+                            start_date = ?, end_date = ?, budget_amount = ?, is_active = ?,
+                            updated_at = NOW(), updated_by = ?
+                        WHERE id = ?');
+                    $u->execute([
+                        $name, $code,
+                        $description === '' ? null : $description,
+                        $financialYear === '' ? null : $financialYear,
+                        $startDate === '' ? null : $startDate,
+                        $endDate === '' ? null : $endDate,
+                        $budgetAmount,
+                        $isActive, $viewerId, $editId,
+                    ]);
+                } else {
+                    $u = db()->prepare('UPDATE project
+                        SET name = ?, code = ?, description = ?, financial_year = ?,
+                            start_date = ?, end_date = ?, is_active = ?,
+                            updated_at = NOW(), updated_by = ?
+                        WHERE id = ?');
+                    $u->execute([
+                        $name, $code,
+                        $description === '' ? null : $description,
+                        $financialYear === '' ? null : $financialYear,
+                        $startDate === '' ? null : $startDate,
+                        $endDate === '' ? null : $endDate,
+                        $isActive, $viewerId, $editId,
+                    ]);
+                }
                 $flashAndRedirect('Project updated.');
             } else {
-                $ins = db()->prepare('INSERT INTO project
-                    (office_id, name, code, description, financial_year, start_date, end_date, is_active, next_task_number,
-                     created_at, updated_at, created_by, updated_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)');
-                $ins->execute([
-                    TASK_TRACKER_OFFICE_ID,
-                    $name, $code,
-                    $description === '' ? null : $description,
-                    $financialYear === '' ? null : $financialYear,
-                    $startDate === '' ? null : $startDate,
-                    $endDate === '' ? null : $endDate,
-                    $isActive, $viewerId, $viewerId,
-                ]);
+                if ($hasBudgetCol) {
+                    $ins = db()->prepare('INSERT INTO project
+                        (office_id, name, code, description, financial_year, start_date, end_date, budget_amount, is_active, next_task_number,
+                         created_at, updated_at, created_by, updated_by)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)');
+                    $ins->execute([
+                        TASK_TRACKER_OFFICE_ID,
+                        $name, $code,
+                        $description === '' ? null : $description,
+                        $financialYear === '' ? null : $financialYear,
+                        $startDate === '' ? null : $startDate,
+                        $endDate === '' ? null : $endDate,
+                        $budgetAmount,
+                        $isActive, $viewerId, $viewerId,
+                    ]);
+                } else {
+                    $ins = db()->prepare('INSERT INTO project
+                        (office_id, name, code, description, financial_year, start_date, end_date, is_active, next_task_number,
+                         created_at, updated_at, created_by, updated_by)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)');
+                    $ins->execute([
+                        TASK_TRACKER_OFFICE_ID,
+                        $name, $code,
+                        $description === '' ? null : $description,
+                        $financialYear === '' ? null : $financialYear,
+                        $startDate === '' ? null : $startDate,
+                        $endDate === '' ? null : $endDate,
+                        $isActive, $viewerId, $viewerId,
+                    ]);
+                }
                 $flashAndRedirect('Project added. Code ' . $code . ' — task keys will be formed as ' . $code . '-N.');
             }
         } catch (Throwable $e) {
@@ -107,16 +146,30 @@ $fyRows = db()->query('SELECT id, code, label, is_active FROM financial_year ORD
 // Dropped seeded by task_tracker_bootstrap — driven by the flag on
 // task_status so admins can add new terminal statuses without touching
 // this query).
-$projects = db()->query("SELECT p.*, u.name AS created_by_name,
+$hasBudgetCol   = task_tracker_column_exists('project', 'budget_amount');
+$hasActualCol   = task_tracker_column_exists('task',    'actual_expenditure');
+$budgetSelect   = $hasBudgetCol ? 'p.budget_amount' : 'NULL AS budget_amount';
+$actualSumJoin  = $hasActualCol
+    ? "(SELECT COALESCE(SUM(t.actual_expenditure), 0) FROM task t
+         WHERE t.project_id = p.id AND t.is_active = 1) AS actual_spent"
+    : "0 AS actual_spent";
+
+$projects = db()->query("SELECT p.*, $budgetSelect, u.name AS created_by_name,
         (SELECT COUNT(*) FROM task t
             WHERE t.project_id = p.id AND t.is_active = 1) AS task_count,
         (SELECT COUNT(*) FROM task t
             INNER JOIN task_status s ON s.id = t.status_id
-            WHERE t.project_id = p.id AND t.is_active = 1 AND s.is_terminal = 1) AS completed_count
+            WHERE t.project_id = p.id AND t.is_active = 1 AND s.is_terminal = 1) AS completed_count,
+        $actualSumJoin
     FROM project p
     LEFT JOIN users u ON u.id = p.created_by
     WHERE p.office_id = " . (int) TASK_TRACKER_OFFICE_ID . "
     ORDER BY p.is_active DESC, p.id DESC")->fetchAll();
+
+$fmtMoney = static function ($v): string {
+    if ($v === null || $v === '') return '—';
+    return '₹' . number_format((float) $v, 2);
+};
 
 render_header('Task Tracker · Projects', ['main_container_class' => 'container-fluid']);
 render_page_header('Task Tracker · Projects', [
@@ -150,6 +203,8 @@ render_page_header('Task Tracker · Projects', [
                     <th class="text-end">Tasks</th>
                     <th class="text-end">Completed</th>
                     <th class="text-end" style="min-width:180px;">Progress</th>
+                    <th class="text-end">Budget</th>
+                    <th class="text-end">Balance</th>
                     <th class="text-end">Next #</th>
                     <th>Status</th>
                     <?php if ($canManage): ?><th class="text-end">Action</th><?php endif; ?>
@@ -157,11 +212,14 @@ render_page_header('Task Tracker · Projects', [
             </thead>
             <tbody>
                 <?php if ($projects === []): ?>
-                    <tr><td colspan="<?= $canManage ? 11 : 10 ?>"><div class="empty-state"><i class="bi bi-inbox"></i>No projects yet<?= $canManage ? '. Click "New project" to create one.' : ' — ask an administrator to create one.' ?></div></td></tr>
+                    <tr><td colspan="<?= $canManage ? 13 : 12 ?>"><div class="empty-state"><i class="bi bi-inbox"></i>No projects yet<?= $canManage ? '. Click "New project" to create one.' : ' — ask an administrator to create one.' ?></div></td></tr>
                 <?php endif; ?>
                 <?php $i = 1; foreach ($projects as $p): ?>
                     <?php
                         $active = ((int) $p['is_active']) === 1;
+                        $budget = $p['budget_amount'] ?? null;
+                        $spent  = (float) ($p['actual_spent'] ?? 0);
+                        $balance = ($budget === null || $budget === '') ? null : ((float) $budget - $spent);
                         $payload = htmlspecialchars(json_encode([
                             'id'             => (int) $p['id'],
                             'name'           => (string) $p['name'],
@@ -170,6 +228,7 @@ render_page_header('Task Tracker · Projects', [
                             'financial_year' => (string) ($p['financial_year'] ?? ''),
                             'start_date'     => substr((string) ($p['start_date'] ?? ''), 0, 10),
                             'end_date'       => substr((string) ($p['end_date'] ?? ''), 0, 10),
+                            'budget_amount'  => $budget !== null ? (float) $budget : null,
                             'is_active'      => (int) $p['is_active'],
                         ], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES);
                     ?>
@@ -216,6 +275,13 @@ render_page_header('Task Tracker · Projects', [
                                 </div>
                                 <span class="fw-bold"><?= $total > 0 ? number_format($pct, 1) : '—' ?><?= $total > 0 ? '%' : '' ?></span>
                             </div>
+                        </td>
+                        <td class="text-end small font-monospace"><?= esc($fmtMoney($budget)) ?></td>
+                        <td class="text-end small font-monospace <?= $balance !== null && $balance < 0 ? 'text-danger fw-bold' : '' ?>">
+                            <?= esc($balance === null ? '—' : $fmtMoney($balance)) ?>
+                            <?php if ($balance !== null && $spent > 0): ?>
+                                <div class="small text-muted">spent <?= esc($fmtMoney($spent)) ?></div>
+                            <?php endif; ?>
                         </td>
                         <td class="text-end small text-muted"><?= (int) $p['next_task_number'] ?></td>
                         <td>
@@ -295,6 +361,13 @@ render_page_header('Task Tracker · Projects', [
                             <label class="form-label" for="projectModalEnd">End date</label>
                             <input type="date" class="form-control" id="projectModalEnd" name="end_date">
                         </div>
+                        <?php if ($hasBudgetCol): ?>
+                        <div class="col-md-4">
+                            <label class="form-label" for="projectModalBudget">Budget amount (₹)</label>
+                            <input type="number" step="0.01" min="0" class="form-control" id="projectModalBudget" name="budget_amount" placeholder="e.g. 100000">
+                            <div class="small text-muted mt-1">Balance = budget − sum of tasks' actual expenditure.</div>
+                        </div>
+                        <?php endif; ?>
                         <div class="col-12">
                             <label class="form-label" for="projectModalDesc">Description</label>
                             <textarea class="form-control" id="projectModalDesc" name="description" rows="3"></textarea>
@@ -330,7 +403,7 @@ render_page_header('Task Tracker · Projects', [
             setV('projectModalId', '0');
             setV('projectModalName', ''); setV('projectModalCode', '');
             setV('projectModalFY', ''); setV('projectModalStart', ''); setV('projectModalEnd', '');
-            setV('projectModalDesc', ''); setC('projectModalActive', true);
+            setV('projectModalBudget', ''); setV('projectModalDesc', ''); setC('projectModalActive', true);
         } else if (t.classList.contains('js-edit-project')) {
             let d = {};
             try { d = JSON.parse(t.getAttribute('data-payload') || '{}'); } catch (e) {}
@@ -350,6 +423,7 @@ render_page_header('Task Tracker · Projects', [
             }
             setV('projectModalFY', fyVal);
             setV('projectModalStart', d.start_date || ''); setV('projectModalEnd', d.end_date || '');
+            setV('projectModalBudget', d.budget_amount !== null && d.budget_amount !== undefined ? d.budget_amount : '');
             setV('projectModalDesc', d.description || '');
             setC('projectModalActive', d.is_active === 1);
         }
