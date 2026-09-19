@@ -1,37 +1,66 @@
 <?php
 /**
- * Task Tracker · Bulk import (CSV).
+ * Task Tracker · Bulk import (XLSX).
  *
  * Two-step flow:
- *   Step 1  (upload)  — user picks a project, uploads a CSV. The file is
- *                        parsed row-by-row into an in-memory preview.
- *                        Each row is validated: seat-name matches, status
- *                        matches, date parsing, activity/sub-activity link.
- *                        The preview is stored in $_SESSION so the user
- *                        can (optionally) resolve unmatched seats via a
+ *   Step 1  (upload)  — user picks a project, uploads an .xlsx. The
+ *                        file is parsed row-by-row into an in-memory
+ *                        preview. Each row is validated: seat-name
+ *                        matches, status matches, date parsing,
+ *                        activity/sub-activity link. The preview is
+ *                        stored in $_SESSION so the user can
+ *                        (optionally) resolve unmatched seats via a
  *                        per-row dropdown before committing.
- *   Step 2  (commit)  — the (possibly-overridden) preview is inserted in
- *                        one transaction. Rows with errors are skipped;
- *                        the commit report says how many landed.
+ *   Step 2  (commit)  — the (possibly-overridden) preview is inserted
+ *                        in one transaction. Rows with errors are
+ *                        skipped; the commit report says how many
+ *                        landed.
  *
- * CSV columns (header row required, in this exact order):
+ * XLSX columns (header row required, in this exact order):
  *   Sl.No | Activity | Sub activity | Target | Primary | Secondary
  *         | Commencement | Completion | Status
  *
- * Sub-activity rows point to an activity by title within the SAME import;
- * if the activity name has already been imported (in this file) it is
- * used as parent, otherwise the row is flagged as an error.
+ * A "Download template" button at the top of the page emits a fresh
+ * .xlsx with just the header + a single example row so the user has a
+ * known-good starting file.
+ *
+ * Sub-activity rows point to an activity by title within the SAME
+ * import; if the activity name has already been imported (in this
+ * file) it is used as parent, otherwise the row is flagged as an
+ * error.
  *
  * No spreadsheet library is bundled with this app (per CLAUDE.md: no
- * Composer). We use PHP's fgetcsv which accepts Excel-exported CSVs.
+ * Composer). The in-repo includes/xlsx_writer.php ships a minimal
+ * .xlsx reader + writer built on PHP's ZipArchive + SimpleXML.
  */
 
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/task_tracker_helpers.php';
+require_once __DIR__ . '/includes/xlsx_writer.php';
 require_task_tracker_admin();
 task_tracker_bootstrap();
+
+// Template download — a fresh workbook with the header row + one
+// example row + a couple of blank rows so operators can drop in real
+// data without re-typing the header.
+if (($_GET['template'] ?? '') === '1') {
+    $today = date('d/m/Y');
+    xlsx_send('task_tracker_import_template.xlsx', 'Tasks',
+        ['Sl.No', 'Activity', 'Sub activity', 'Target', 'Primary',
+         'Secondary', 'Commencement', 'Completion', 'Status'],
+        [
+            ['1', 'Example activity', '', 'What done looks like',
+             'Seat name as it appears in Office Hierarchy',
+             'Optional secondary seat 1; Optional secondary seat 2',
+             $today, $today, 'Not Started'],
+            ['2', 'Example activity', 'Example sub-activity', 'Sub target',
+             'Seat name', '', $today, $today, 'In Progress'],
+            ['', '', '', '', '', '', '', '', ''],
+            ['', '', '', '', '', '', '', '', ''],
+        ]);
+}
 
 $viewer   = current_user();
 $viewerId = (int) $viewer['id'];
@@ -88,21 +117,24 @@ if (is_post() && ($_POST['action'] ?? '') === 'upload') {
     $projectOk = false; foreach ($projects as $p) if ((int) $p['id'] === $projectId) { $projectOk = true; break; }
     if (!$projectOk) { $flashMessage = 'Select an active project.'; $flashType = 'danger'; }
     elseif (empty($_FILES['file']) || (int) ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-        $flashMessage = 'Please upload a CSV file exported from Excel.'; $flashType = 'danger';
+        $flashMessage = 'Please upload an .xlsx file (use the Download template button above to get a starting workbook).'; $flashType = 'danger';
     } else {
-        $fh = @fopen((string) $_FILES['file']['tmp_name'], 'r');
-        if ($fh === false) { $flashMessage = 'Could not open uploaded file.'; $flashType = 'danger'; }
-        else {
-            $header = fgetcsv($fh);
+        try {
+            $sheet = xlsx_read((string) $_FILES['file']['tmp_name']);
+        } catch (Throwable $e) {
+            $sheet = null;
+            $flashMessage = 'Could not read the uploaded file — is it a valid .xlsx? (' . $e->getMessage() . ')'; $flashType = 'danger';
+        }
+        if ($sheet !== null) {
+            $header = $sheet[0] ?? [];
             if (!is_array($header) || count($header) < 9) {
                 $flashMessage = 'Header row must have 9 columns: Sl.No, Activity, Sub activity, Target, Primary, Secondary, Commencement, Completion, Status.';
                 $flashType = 'danger';
-                fclose($fh);
             } else {
                 $preview = [];
                 $activityKeys = []; // lowercased title → temp preview index of the activity row
                 $rowNo = 1;
-                while (($cells = fgetcsv($fh)) !== false) {
+                foreach (array_slice($sheet, 1) as $cells) {
                     $rowNo++;
                     if (count(array_filter($cells, static fn($c) => trim((string) $c) !== '')) === 0) continue;
                     $cells = array_pad($cells, 9, '');
@@ -181,7 +213,6 @@ if (is_post() && ($_POST['action'] ?? '') === 'upload') {
                     $preview[] = $entry;
                     if (!$isSub) $activityKeys[strtolower($activity)] = count($preview) - 1;
                 }
-                fclose($fh);
                 $_SESSION['task_tracker_import'] = [
                     'project_id' => $projectId,
                     'preview'    => $preview,
@@ -262,7 +293,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                 }
 
                 $db->prepare('INSERT INTO task_history (task_id, field_name, old_value, new_value, changed_by, changed_at) VALUES (?, ?, NULL, ?, ?, NOW())')
-                   ->execute([$newTaskId, 'created', 'Imported from CSV row ' . $row['row_no'], $viewerId]);
+                   ->execute([$newTaskId, 'created', 'Imported from XLSX row ' . $row['row_no'], $viewerId]);
 
                 $nextNum++;
                 $inserted++;
@@ -290,8 +321,9 @@ foreach ($projects as $p) $projLookup[(int) $p['id']] = $p;
 render_header('Task Tracker · Import', ['main_container_class' => 'container-xl']);
 render_page_header('Task Tracker · Bulk import', [
     'icon' => 'bi-file-earmark-spreadsheet',
-    'subtitle' => 'Upload a CSV exported from your worksheet. The preview shows what will land, row by row.',
-    'actions' => '<a class="btn btn-light" href="/task_tracker_projects.php"><i class="bi bi-arrow-left me-1"></i>Back to Projects</a>',
+    'subtitle' => 'Upload an .xlsx workbook. The preview shows what will land, row by row.',
+    'actions' => '<a class="btn btn-success" href="/task_tracker_import.php?template=1"><i class="bi bi-file-earmark-arrow-down me-1"></i>Download template</a>
+        <a class="btn btn-light ms-2" href="/task_tracker_projects.php"><i class="bi bi-arrow-left me-1"></i>Back to Projects</a>',
 ]);
 ?>
 
@@ -317,17 +349,18 @@ render_page_header('Task Tracker · Bulk import', [
                 </select>
             </div>
             <div class="col-md-5">
-                <label class="form-label" for="importFile">CSV file</label>
-                <input type="file" class="form-control" id="importFile" name="file" accept=".csv,text/csv" required>
+                <label class="form-label" for="importFile">Excel file (.xlsx)</label>
+                <input type="file" class="form-control" id="importFile" name="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
             </div>
             <div class="col-md-2">
                 <button class="btn btn-primary w-100"><i class="bi bi-upload me-1"></i>Preview</button>
             </div>
             <div class="col-12 small text-muted">
-                Header row required, columns in this order:
+                First sheet is read. Header row required, columns in this order:
                 <code>Sl.No, Activity, Sub activity, Target, Primary, Secondary, Commencement, Completion, Status</code>.
                 Dates in <strong>DD/MM/YYYY</strong> or <strong>YYYY-MM-DD</strong>.
                 Multiple secondary seats separated by <code>,</code> or <code>;</code>.
+                Use <strong>Download template</strong> above to get a starting workbook.
             </div>
         </form>
     </div>

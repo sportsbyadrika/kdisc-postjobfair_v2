@@ -177,3 +177,116 @@ function xlsx_send(string $filename, string $sheetName, array $header, iterable 
     @unlink($tmp);
     exit;
 }
+
+/**
+ * A → 0, B → 1, …, Z → 25, AA → 26, AB → 27, … used by the reader to
+ * turn a cell reference like "AB12" into a 0-based column index.
+ */
+function xlsx__col_index(string $ref): int
+{
+    if (!preg_match('/^([A-Z]+)/', $ref, $m)) return 0;
+    $letters = $m[1];
+    $n = 0;
+    for ($i = 0, $len = strlen($letters); $i < $len; $i++) {
+        $n = $n * 26 + (ord($letters[$i]) - ord('A') + 1);
+    }
+    return $n - 1;
+}
+
+/**
+ * Read every row from the first worksheet of an .xlsx file into a
+ * plain array of arrays of strings. Empty rows are skipped. Cells
+ * with a `t="s"` type are resolved through xl/sharedStrings.xml;
+ * inline strings and raw values are copied verbatim. No date /
+ * number formatting is applied — the caller decides how to interpret
+ * numeric-looking values (the importer for this app treats them all
+ * as text, which is fine for our columns).
+ *
+ * Throws RuntimeException if the file is unreadable, is not a valid
+ * .xlsx package, or has no worksheet. The importer catches that and
+ * surfaces it as a friendly flash message.
+ */
+function xlsx_read(string $path): array
+{
+    if (!class_exists('ZipArchive')) {
+        throw new RuntimeException('ZipArchive PHP extension is required to read XLSX files.');
+    }
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) {
+        throw new RuntimeException('Could not open the uploaded file as an XLSX archive.');
+    }
+
+    // Shared strings (optional).
+    $shared = [];
+    $ssXml = $zip->getFromName('xl/sharedStrings.xml');
+    if ($ssXml !== false && $ssXml !== '') {
+        $prev = libxml_use_internal_errors(true);
+        $ss   = @simplexml_load_string($ssXml);
+        libxml_use_internal_errors($prev);
+        if ($ss !== false) {
+            foreach ($ss->si as $si) {
+                if (isset($si->t)) { $shared[] = (string) $si->t; continue; }
+                if (isset($si->r)) {
+                    $s = '';
+                    foreach ($si->r as $r) $s .= (string) $r->t;
+                    $shared[] = $s;
+                    continue;
+                }
+                $shared[] = '';
+            }
+        }
+    }
+
+    // First worksheet — usually xl/worksheets/sheet1.xml, but scan
+    // for anything that matches the shape.
+    $sheetXml = $zip->getFromName('xl/worksheets/sheet1.xml');
+    if ($sheetXml === false) {
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = $zip->getNameIndex($i);
+            if (preg_match('#^xl/worksheets/sheet\d+\.xml$#', (string) $name)) {
+                $sheetXml = $zip->getFromIndex($i);
+                break;
+            }
+        }
+    }
+    $zip->close();
+    if ($sheetXml === false || $sheetXml === '') {
+        throw new RuntimeException('The uploaded file has no worksheet.');
+    }
+
+    $prev = libxml_use_internal_errors(true);
+    $sheet = @simplexml_load_string($sheetXml);
+    libxml_use_internal_errors($prev);
+    if ($sheet === false || !isset($sheet->sheetData)) return [];
+
+    $rows = [];
+    foreach ($sheet->sheetData->row as $rowXml) {
+        $indexed = [];
+        foreach ($rowXml->c as $c) {
+            $ref  = (string) $c['r'];
+            $col  = xlsx__col_index($ref);
+            $type = (string) $c['t'];
+            $val  = '';
+            if ($type === 's') {
+                $idx = (int) $c->v;
+                $val = $shared[$idx] ?? '';
+            } elseif ($type === 'inlineStr' || $type === 'str') {
+                if (isset($c->is->t)) $val = (string) $c->is->t;
+                elseif (isset($c->v)) $val = (string) $c->v;
+            } elseif (isset($c->v)) {
+                $val = (string) $c->v;
+            }
+            $indexed[$col] = $val;
+        }
+        if ($indexed === []) continue;
+        $max = max(array_keys($indexed));
+        $row = [];
+        for ($i = 0; $i <= $max; $i++) $row[] = $indexed[$i] ?? '';
+        // Skip fully-empty rows so blank tail rows in Excel don't
+        // count as import errors.
+        $nonEmpty = false;
+        foreach ($row as $cell) if (trim((string) $cell) !== '') { $nonEmpty = true; break; }
+        if ($nonEmpty) $rows[] = $row;
+    }
+    return $rows;
+}
