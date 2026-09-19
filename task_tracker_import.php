@@ -133,6 +133,21 @@ if (is_post() && ($_POST['action'] ?? '') === 'upload') {
             } else {
                 $preview = [];
                 $activityKeys = []; // lowercased title → temp preview index of the activity row
+                // Existing activities already in this project — lowercased
+                // title → task_id. Sub-activity rows may reference a parent
+                // that lives in the DB, not in the same upload file.
+                $dbActivities = [];
+                try {
+                    $dbStmt = db()->prepare('SELECT id, title FROM task
+                        WHERE project_id = ? AND (parent_id IS NULL OR parent_id = 0) AND is_active = 1');
+                    $dbStmt->execute([$projectId]);
+                    foreach ($dbStmt->fetchAll() as $a) {
+                        $key = strtolower(trim((string) $a['title']));
+                        // Latest wins if two active activities share a title;
+                        // shouldn't normally happen, but at least the row saves.
+                        $dbActivities[$key] = (int) $a['id'];
+                    }
+                } catch (Throwable $e) { /* project has no tasks yet */ }
                 $rowNo = 1;
                 foreach (array_slice($sheet, 1) as $cells) {
                     $rowNo++;
@@ -154,10 +169,18 @@ if (is_post() && ($_POST['action'] ?? '') === 'upload') {
                     $isSub = $subAct !== '';
                     $title = $isSub ? $subAct : $activity;
                     $parentPreviewIndex = null;
+                    $parentDbId         = null;
                     if ($isSub) {
-                        $activityKey = strtolower($activity);
-                        if (isset($activityKeys[$activityKey])) $parentPreviewIndex = $activityKeys[$activityKey];
-                        else $errors[] = 'Parent activity "' . $activity . '" was not seen earlier in this file.';
+                        $activityKey = strtolower(trim($activity));
+                        if (isset($activityKeys[$activityKey])) {
+                            // Parent is another row earlier in this same file.
+                            $parentPreviewIndex = $activityKeys[$activityKey];
+                        } elseif (isset($dbActivities[$activityKey])) {
+                            // Parent already lives in the project's DB.
+                            $parentDbId = $dbActivities[$activityKey];
+                        } else {
+                            $errors[] = 'Parent activity "' . $activity . '" was not seen earlier in this file and does not exist as an activity in this project.';
+                        }
                     }
 
                     $primaryResolved  = $resolveSeat($primary);
@@ -196,6 +219,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'upload') {
                         'target'        => $target,
                         'is_sub'        => $isSub,
                         'parent_idx'    => $parentPreviewIndex,
+                        'parent_db_id'  => $parentDbId,
                         'primary'       => $primary,
                         'primary_seat'  => $primarySeatId,
                         'primary_cands' => $primaryCandidates,
@@ -263,8 +287,15 @@ if (is_post() && ($_POST['action'] ?? '') === 'commit') {
                 $newOrder = ((float) ($orderStmt->fetch()['m'] ?? 0)) + 1000;
 
                 $parentDbId = null;
-                if ($row['is_sub'] && $row['parent_idx'] !== null && isset($tempIndexToDbId[$row['parent_idx']])) {
-                    $parentDbId = $tempIndexToDbId[$row['parent_idx']];
+                if ($row['is_sub']) {
+                    // Prefer the in-file parent (newly imported) so the
+                    // fresh parent's id is used; fall back to an existing
+                    // DB activity that was matched at parse time.
+                    if ($row['parent_idx'] !== null && isset($tempIndexToDbId[$row['parent_idx']])) {
+                        $parentDbId = $tempIndexToDbId[$row['parent_idx']];
+                    } elseif (!empty($row['parent_db_id'])) {
+                        $parentDbId = (int) $row['parent_db_id'];
+                    }
                 }
 
                 $ins = $db->prepare('INSERT INTO task
