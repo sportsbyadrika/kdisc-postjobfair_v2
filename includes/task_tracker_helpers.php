@@ -86,6 +86,43 @@ function task_tracker_bootstrap(): void
     }
 
     // -------------------------------------------------------------------
+    // financial_year — a shared master so projects pick from a
+    // consistent list rather than free-typing "FY 25-26" vs "2025-26"
+    // vs "25/26". Managed under Administration → Settings.
+    // -------------------------------------------------------------------
+    $db->query("CREATE TABLE IF NOT EXISTS financial_year (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(20) NOT NULL,
+        label VARCHAR(120) NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at DATETIME NULL,
+        updated_at DATETIME NULL,
+        created_by INT NULL,
+        updated_by INT NULL,
+        UNIQUE KEY unique_code (code),
+        KEY idx_active (is_active),
+        KEY idx_sort (sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $fySeeded = (int) $db->query('SELECT COUNT(*) FROM financial_year')->fetchColumn();
+    if ($fySeeded === 0) {
+        // Seed the three years around the current one so the master
+        // is immediately useful without operator setup. The Indian FY
+        // runs April → March; anything before April belongs to the
+        // FY that started the previous calendar year.
+        $y = (int) date('Y'); $m = (int) date('n');
+        $current = $m >= 4 ? $y : $y - 1;
+        $ins = $db->prepare('INSERT INTO financial_year
+            (code, label, sort_order, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, 1, NOW(), NOW())');
+        foreach ([-1, 0, 1, 2] as $offset) {
+            $start = $current + $offset;
+            $code  = $start . '-' . substr((string) ($start + 1), -2);
+            try { $ins->execute([$code, 'FY ' . $code, 10 + $offset * 10]); } catch (Throwable $e) { /* ignore dupes */ }
+        }
+    }
+
+    // -------------------------------------------------------------------
     // project — one row per project inside an office.
     // -------------------------------------------------------------------
     $db->query("CREATE TABLE IF NOT EXISTS project (
@@ -344,24 +381,62 @@ function get_user_scope(int $userId): array
     }
 
     // Every currently-held seat (unassigned_at IS NULL) + its
-    // responsibility_level, and its section/division/office by walking
-    // up the parent chain.
+    // responsibility_level. Walk up the parent chain in PHP so an
+    // optional Sub Section between Section and Seat doesn't break
+    // the level lookup.
     try {
         $stmt = db()->prepare("SELECT h.node_id AS seat_id,
                 n.responsibility_level AS resp_level,
-                n.parent_id AS section_id,
-                s.parent_id AS division_id,
-                d.parent_id AS office_id
+                n.parent_id AS immediate_parent_id
             FROM office_hierarchy_officer_history h
             INNER JOIN office_hierarchy_nodes n ON n.id = h.node_id
-            LEFT JOIN office_hierarchy_nodes s ON s.id = n.parent_id
-            LEFT JOIN office_hierarchy_nodes d ON d.id = s.parent_id
             WHERE h.officer_id = ? AND h.unassigned_at IS NULL
               AND n.level_type = 'seat' AND n.active_status = 1");
         $stmt->execute([$userId]);
-        $rows = $stmt->fetchAll();
+        $seatRows = $stmt->fetchAll();
     } catch (Throwable $e) {
-        $rows = [];
+        $seatRows = [];
+    }
+
+    // Resolve the section/division/office ancestor id for each seat by
+    // walking up parents. Cache node lookups so a hierarchy with many
+    // seats under one section reuses the same parent chain.
+    $nodeCache = [];
+    $fetchNode = static function (int $id) use (&$nodeCache): ?array {
+        if ($id <= 0) return null;
+        if (array_key_exists($id, $nodeCache)) return $nodeCache[$id];
+        try {
+            $s = db()->prepare('SELECT id, parent_id, level_type FROM office_hierarchy_nodes WHERE id = ?');
+            $s->execute([$id]);
+            $r = $s->fetch();
+            return $nodeCache[$id] = ($r === false ? null : $r);
+        } catch (Throwable $e) {
+            return $nodeCache[$id] = null;
+        }
+    };
+    $rows = [];
+    foreach ($seatRows as $r) {
+        $ancestors = ['section_id' => 0, 'division_id' => 0, 'office_id' => 0];
+        $cursor = (int) ($r['immediate_parent_id'] ?? 0);
+        // Guard against pathological data loops with a 12-level cap
+        // (real hierarchies are shallow — office/division/section/
+        // sub_section/seat is at most 5 levels).
+        for ($guard = 0; $guard < 12 && $cursor > 0; $guard++) {
+            $n = $fetchNode($cursor);
+            if ($n === null) break;
+            $type = (string) $n['level_type'];
+            if ($type === 'section'  && $ancestors['section_id']  === 0) $ancestors['section_id']  = (int) $n['id'];
+            if ($type === 'division' && $ancestors['division_id'] === 0) $ancestors['division_id'] = (int) $n['id'];
+            if ($type === 'office'   && $ancestors['office_id']   === 0) $ancestors['office_id']   = (int) $n['id'];
+            $cursor = (int) ($n['parent_id'] ?? 0);
+        }
+        $rows[] = [
+            'seat_id'     => (int) $r['seat_id'],
+            'resp_level'  => $r['resp_level'] ?? null,
+            'section_id'  => $ancestors['section_id'],
+            'division_id' => $ancestors['division_id'],
+            'office_id'   => $ancestors['office_id'],
+        ];
     }
 
     if ($rows === []) return $scope;

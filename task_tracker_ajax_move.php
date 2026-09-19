@@ -67,17 +67,29 @@ $ns->execute([$newStatus]);
 $newStatusRow = $ns->fetch();
 if ($newStatusRow === false || (int) $newStatusRow['is_active'] !== 1) $sendError('Target status is not active.');
 
-$astmt = $db->prepare("SELECT ta.seat_id, n.parent_id AS section_id, s.parent_id AS division_id
+// Walk parent chain in PHP so an optional Sub Section between Section
+// and Seat is transparent to the permission check.
+$astmt = $db->prepare("SELECT ta.seat_id, n.parent_id AS immediate_parent_id
     FROM task_assignment ta
     INNER JOIN office_hierarchy_nodes n ON n.id = ta.seat_id
-    LEFT JOIN office_hierarchy_nodes s ON s.id = n.parent_id
     WHERE ta.task_id = ? AND ta.role = 'primary' LIMIT 1");
 $astmt->execute([$taskId]);
 $assign = $astmt->fetch();
+$sectionId = 0; $divisionId = 0;
+$cursor = (int) ($assign['immediate_parent_id'] ?? 0);
+for ($g = 0; $g < 10 && $cursor > 0; $g++) {
+    $ps = $db->prepare('SELECT id, parent_id, level_type FROM office_hierarchy_nodes WHERE id = ?');
+    $ps->execute([$cursor]);
+    $pr = $ps->fetch();
+    if ($pr === false) break;
+    if ((string) $pr['level_type'] === 'section'  && $sectionId  === 0) $sectionId  = (int) $pr['id'];
+    if ((string) $pr['level_type'] === 'division' && $divisionId === 0) $divisionId = (int) $pr['id'];
+    $cursor = (int) ($pr['parent_id'] ?? 0);
+}
 $taskForPerm = array_merge((array) $task, [
-    'primary_seat_id'     => (int) ($assign['seat_id']     ?? 0),
-    'primary_section_id'  => (int) ($assign['section_id']  ?? 0),
-    'primary_division_id' => (int) ($assign['division_id'] ?? 0),
+    'primary_seat_id'     => (int) ($assign['seat_id'] ?? 0),
+    'primary_section_id'  => $sectionId,
+    'primary_division_id' => $divisionId,
 ]);
 if (!can_move_task($viewerId, $taskForPerm)) $sendError('You do not have permission to move this task.', 403);
 

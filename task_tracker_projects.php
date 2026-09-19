@@ -97,8 +97,22 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     }
 }
 
+// Financial-year dropdown options. Include the currently-selected
+// value on an existing project even when the row is now inactive, so
+// editing a historical project doesn't silently lose the FY.
+$fyRows = db()->query('SELECT id, code, label, is_active FROM financial_year ORDER BY sort_order ASC, code ASC')->fetchAll();
+
+// task_count is every active task under the project; completed_count is
+// the subset whose status is on a terminal-category row (Completed /
+// Dropped seeded by task_tracker_bootstrap — driven by the flag on
+// task_status so admins can add new terminal statuses without touching
+// this query).
 $projects = db()->query("SELECT p.*, u.name AS created_by_name,
-        (SELECT COUNT(*) FROM task t WHERE t.project_id = p.id AND t.is_active = 1) AS task_count
+        (SELECT COUNT(*) FROM task t
+            WHERE t.project_id = p.id AND t.is_active = 1) AS task_count,
+        (SELECT COUNT(*) FROM task t
+            INNER JOIN task_status s ON s.id = t.status_id
+            WHERE t.project_id = p.id AND t.is_active = 1 AND s.is_terminal = 1) AS completed_count
     FROM project p
     LEFT JOIN users u ON u.id = p.created_by
     WHERE p.office_id = " . (int) TASK_TRACKER_OFFICE_ID . "
@@ -134,6 +148,8 @@ render_page_header('Task Tracker · Projects', [
                     <th>Financial Year</th>
                     <th>Dates</th>
                     <th class="text-end">Tasks</th>
+                    <th class="text-end">Completed</th>
+                    <th class="text-end" style="min-width:180px;">Progress</th>
                     <th class="text-end">Next #</th>
                     <th>Status</th>
                     <?php if ($canManage): ?><th class="text-end">Action</th><?php endif; ?>
@@ -141,7 +157,7 @@ render_page_header('Task Tracker · Projects', [
             </thead>
             <tbody>
                 <?php if ($projects === []): ?>
-                    <tr><td colspan="<?= $canManage ? 9 : 8 ?>"><div class="empty-state"><i class="bi bi-inbox"></i>No projects yet<?= $canManage ? '. Click "New project" to create one.' : ' — ask an administrator to create one.' ?></div></td></tr>
+                    <tr><td colspan="<?= $canManage ? 11 : 10 ?>"><div class="empty-state"><i class="bi bi-inbox"></i>No projects yet<?= $canManage ? '. Click "New project" to create one.' : ' — ask an administrator to create one.' ?></div></td></tr>
                 <?php endif; ?>
                 <?php $i = 1; foreach ($projects as $p): ?>
                     <?php
@@ -180,8 +196,26 @@ render_page_header('Task Tracker · Projects', [
                                 else echo 'to ' . esc(date('d/m/Y', strtotime($e)));
                             ?>
                         </td>
+                        <?php
+                            $total     = (int) $p['task_count'];
+                            $completed = (int) $p['completed_count'];
+                            $pct       = $total > 0 ? ($completed * 100.0 / $total) : 0.0;
+                            // Same tone thresholds the assignment report uses.
+                            $barTone   = $pct >= 80 ? 'success' : ($pct >= 50 ? 'info' : ($pct >= 25 ? 'warning' : 'danger'));
+                            if ($total === 0) $barTone = 'secondary';
+                        ?>
                         <td class="text-end fw-bold">
-                            <a href="/task_tracker_project_view.php?id=<?= (int) $p['id'] ?>" class="text-decoration-none text-body"><?= number_format((int) $p['task_count']) ?></a>
+                            <a href="/task_tracker_project_view.php?id=<?= (int) $p['id'] ?>" class="text-decoration-none text-body"><?= number_format($total) ?></a>
+                        </td>
+                        <td class="text-end fw-bold text-success"><?= number_format($completed) ?></td>
+                        <td class="text-end" style="min-width:180px;">
+                            <div class="d-flex align-items-center justify-content-end gap-2"
+                                 title="<?= number_format($completed) ?> of <?= number_format($total) ?> task(s) landed on a terminal status">
+                                <div class="progress flex-grow-1" style="height:8px; max-width:100px;">
+                                    <div class="progress-bar bg-<?= esc($barTone) ?>" role="progressbar" style="width: <?= (float) $pct ?>%;" aria-valuenow="<?= (float) $pct ?>" aria-valuemin="0" aria-valuemax="100"></div>
+                                </div>
+                                <span class="fw-bold"><?= $total > 0 ? number_format($pct, 1) : '—' ?><?= $total > 0 ? '%' : '' ?></span>
+                            </div>
                         </td>
                         <td class="text-end small text-muted"><?= (int) $p['next_task_number'] ?></td>
                         <td>
@@ -242,7 +276,16 @@ render_page_header('Task Tracker · Projects', [
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="projectModalFY">Financial year</label>
-                            <input type="text" class="form-control" id="projectModalFY" name="financial_year" placeholder="e.g. 2024-25" maxlength="20">
+                            <select class="form-select" id="projectModalFY" name="financial_year">
+                                <option value="">— None —</option>
+                                <?php foreach ($fyRows as $fy): ?>
+                                    <option value="<?= esc((string) $fy['code']) ?>" data-active="<?= (int) $fy['is_active'] ?>"
+                                        <?= ((int) $fy['is_active']) === 0 ? 'class="text-muted"' : '' ?>>
+                                        <?= esc((string) $fy['code']) ?><?= !empty($fy['label']) ? ' · ' . esc((string) $fy['label']) : '' ?><?= ((int) $fy['is_active']) === 0 ? ' (inactive)' : '' ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <div class="small text-muted mt-1">Manage this list under Administration → Task Tracker · Financial Year master.</div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="projectModalStart">Start date</label>
@@ -294,7 +337,18 @@ render_page_header('Task Tracker · Projects', [
             title.innerHTML = '<i class="bi bi-pencil-square me-1"></i>Edit project';
             setV('projectModalId', d.id);
             setV('projectModalName', d.name || ''); setV('projectModalCode', d.code || '');
-            setV('projectModalFY', d.financial_year || '');
+            // If the stored FY code is no longer in the master (someone
+            // deleted the row after the project was created), inject a
+            // synthetic option so the value round-trips instead of
+            // silently getting cleared to blank on save.
+            const fySel = document.getElementById('projectModalFY');
+            const fyVal = d.financial_year || '';
+            if (fySel && fyVal && !Array.from(fySel.options).some(o => o.value === fyVal)) {
+                const opt = document.createElement('option');
+                opt.value = fyVal; opt.textContent = fyVal + ' (not in master)';
+                fySel.appendChild(opt);
+            }
+            setV('projectModalFY', fyVal);
             setV('projectModalStart', d.start_date || ''); setV('projectModalEnd', d.end_date || '');
             setV('projectModalDesc', d.description || '');
             setC('projectModalActive', d.is_active === 1);
