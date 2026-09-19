@@ -597,7 +597,7 @@ render_page_header($pageTitle, [
         <div class="row g-3">
             <?php if ($formHasFin): ?>
                 <div class="col-md-3">
-                    <label class="form-label" for="taskShare">Share amount (₹)</label>
+                    <label class="form-label" for="taskShare">Allotted amount (₹)</label>
                     <input type="number" step="0.01" min="0" class="form-control" id="taskShare" name="share_amount"
                         value="<?= $formValues['share_amount'] === null ? '' : esc((string) $formValues['share_amount']) ?>"
                         placeholder="Allocated from project budget">

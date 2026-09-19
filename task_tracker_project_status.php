@@ -139,7 +139,7 @@ render_page_header('Task Tracker · Project Status', [
                 <tr class="table-light">
                     <th style="min-width:280px;">Project · Activity · Sub-activity</th>
                     <th>Status</th>
-                    <th class="text-end">Share (₹)</th>
+                    <th class="text-end">Allotted (₹)</th>
                     <th class="text-end">Projected (₹)</th>
                     <th class="text-end">Target (₹)</th>
                     <th class="text-end">Actual (₹)</th>
