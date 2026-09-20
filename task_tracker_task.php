@@ -146,32 +146,58 @@ $ancestorOfType = static function (array $node, string $wantedType) use ($byId):
     return null;
 };
 
-$divisions = []; $sections = []; $seats = [];
+// Officer currently holding each seat (unassigned_at IS NULL). Read
+// once into a seat_id → officer_name map so the seat dropdown can
+// show "Seat Name (Officer Name)".
+$officerBySeat = [];
+try {
+    $officerStmt = db()->query("SELECT h.node_id AS seat_id, u.name AS officer_name
+        FROM office_hierarchy_officer_history h
+        LEFT JOIN users u ON u.id = h.officer_id
+        WHERE h.unassigned_at IS NULL");
+    foreach ($officerStmt->fetchAll() as $o) {
+        $sid = (int) $o['seat_id'];
+        if ($sid > 0 && !empty($o['officer_name'])) $officerBySeat[$sid] = (string) $o['officer_name'];
+    }
+} catch (Throwable $e) { /* history may be empty */ }
+
+$divisions = []; $sections = []; $subSections = []; $seats = [];
 foreach ($treeRows as $n) {
     if ($n['level_type'] === 'division') {
         $divisions[] = ['id' => (int) $n['id'], 'name' => (string) $n['name'], 'office_id' => (int) $n['parent_id']];
     } elseif ($n['level_type'] === 'section') {
         $sections[] = ['id' => (int) $n['id'], 'name' => (string) $n['name'], 'division_id' => (int) $n['parent_id']];
+    } elseif ($n['level_type'] === 'sub_section') {
+        // A sub_section's direct parent is a Section — that's the
+        // structural rule the Office Hierarchy enforces.
+        $subSections[] = ['id' => (int) $n['id'], 'name' => (string) $n['name'], 'section_id' => (int) $n['parent_id']];
     } elseif ($n['level_type'] === 'seat') {
-        $section  = $ancestorOfType($n, 'section');
-        $division = $section ? ($byId[(int) $section['parent_id']] ?? null) : null;
+        $section    = $ancestorOfType($n, 'section');
+        $division   = $section ? ($byId[(int) $section['parent_id']] ?? null) : null;
+        $parentRow  = $byId[(int) $n['parent_id']] ?? null;
+        $subSection = ($parentRow && (string) $parentRow['level_type'] === 'sub_section') ? $parentRow : null;
         $seats[] = [
-            'id'          => (int) $n['id'],
-            'name'        => (string) $n['name'],
-            'seat_number' => (string) ($n['seat_number'] ?? ''),
-            'section_id'  => $section  ? (int) $section['id']  : 0,
-            'division_id' => $division ? (int) $division['id'] : 0,
+            'id'             => (int) $n['id'],
+            'name'           => (string) $n['name'],
+            'seat_number'    => (string) ($n['seat_number'] ?? ''),
+            'officer_name'   => $officerBySeat[(int) $n['id']] ?? '',
+            'section_id'     => $section    ? (int) $section['id']    : 0,
+            'sub_section_id' => $subSection ? (int) $subSection['id'] : 0,
+            'division_id'    => $division   ? (int) $division['id']   : 0,
         ];
     }
 }
 
-// With $seats built, fill in section/division for the primary seat so
-// the cascading picker preselects the right chain when editing.
+$existingAssignmentPayload['primary_sub_section_id'] = 0;
+// With $seats built, fill in section/sub_section/division for the
+// primary seat so the cascading picker preselects the right chain
+// when editing.
 if ($existingAssignmentPayload['primary_seat_id'] > 0) {
     foreach ($seats as $sInfo) {
         if ($sInfo['id'] === $existingAssignmentPayload['primary_seat_id']) {
-            $existingAssignmentPayload['primary_section_id']  = $sInfo['section_id'];
-            $existingAssignmentPayload['primary_division_id'] = $sInfo['division_id'];
+            $existingAssignmentPayload['primary_section_id']     = $sInfo['section_id'];
+            $existingAssignmentPayload['primary_sub_section_id'] = $sInfo['sub_section_id'];
+            $existingAssignmentPayload['primary_division_id']    = $sInfo['division_id'];
             break;
         }
     }
@@ -634,19 +660,25 @@ render_page_header($pageTitle, [
 
         <h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-person-check me-1"></i>Primary responsibility</h6>
         <div class="row g-3">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label class="form-label" for="primaryDivision">Division</label>
                 <select class="form-select" id="primaryDivision">
                     <option value="">— Select division —</option>
                 </select>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label class="form-label" for="primarySection">Section</label>
                 <select class="form-select" id="primarySection">
                     <option value="">— Select section —</option>
                 </select>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
+                <label class="form-label" for="primarySubSection">Sub Section <span class="small text-muted">(optional)</span></label>
+                <select class="form-select" id="primarySubSection">
+                    <option value="">— All (including direct seats) —</option>
+                </select>
+            </div>
+            <div class="col-md-3">
                 <label class="form-label" for="primarySeatSel">Seat</label>
                 <select class="form-select" id="primarySeatSel">
                     <option value="">— Select seat —</option>
@@ -657,19 +689,25 @@ render_page_header($pageTitle, [
 
         <h6 class="text-uppercase small text-muted mb-3 mt-4"><i class="bi bi-people me-1"></i>Secondary responsibility</h6>
         <div class="row g-3">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label class="form-label" for="secondaryDivision">Division</label>
                 <select class="form-select" id="secondaryDivision">
                     <option value="">— Select division —</option>
                 </select>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label class="form-label" for="secondarySection">Section</label>
                 <select class="form-select" id="secondarySection">
                     <option value="">— Select section —</option>
                 </select>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
+                <label class="form-label" for="secondarySubSection">Sub Section <span class="small text-muted">(optional)</span></label>
+                <select class="form-select" id="secondarySubSection">
+                    <option value="">— All (including direct seats) —</option>
+                </select>
+            </div>
+            <div class="col-md-3">
                 <label class="form-label" for="secondarySeatSel">Seat</label>
                 <div class="input-group">
                     <select class="form-select" id="secondarySeatSel">
@@ -700,14 +738,16 @@ render_page_header($pageTitle, [
 
 <script>
 window.__taskTrackerPicker = {
-    divisions:  <?= json_encode($divisions, JSON_UNESCAPED_UNICODE) ?>,
-    sections:   <?= json_encode($sections,  JSON_UNESCAPED_UNICODE) ?>,
-    seats:      <?= json_encode($seats,     JSON_UNESCAPED_UNICODE) ?>,
-    preset:     <?= json_encode([
-        'primary_division_id' => $formValues['primary_division_id'],
-        'primary_section_id'  => $formValues['primary_section_id'],
-        'primary_seat_id'     => $formValues['primary_seat_id'],
-        'secondary_seat_ids'  => $formValues['secondary_seat_ids'],
+    divisions:   <?= json_encode($divisions,   JSON_UNESCAPED_UNICODE) ?>,
+    sections:    <?= json_encode($sections,    JSON_UNESCAPED_UNICODE) ?>,
+    subSections: <?= json_encode($subSections, JSON_UNESCAPED_UNICODE) ?>,
+    seats:       <?= json_encode($seats,       JSON_UNESCAPED_UNICODE) ?>,
+    preset:      <?= json_encode([
+        'primary_division_id'    => $formValues['primary_division_id'],
+        'primary_section_id'     => $formValues['primary_section_id'],
+        'primary_sub_section_id' => $existingAssignmentPayload['primary_sub_section_id'] ?? 0,
+        'primary_seat_id'        => $formValues['primary_seat_id'],
+        'secondary_seat_ids'     => $formValues['secondary_seat_ids'],
     ], JSON_UNESCAPED_UNICODE) ?>,
 };
 </script>
@@ -749,15 +789,44 @@ window.__taskTrackerPicker = {
                 selectEl.appendChild(opt);
             });
     };
-    const fillSeats = (selectEl, sectionId, currentVal, excludeIds = []) => {
+    // The Sub Section dropdown is optional — an empty value means
+    // "all sub sections plus seats directly under the section",
+    // matching how existing hierarchies without sub_sections behave.
+    const fillSubSections = (selectEl, sectionId, currentVal) => {
+        selectEl.innerHTML = '<option value="">— All (including direct seats) —</option>';
+        const subs = P.subSections.filter(s => String(s.section_id) === String(sectionId));
+        subs.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = String(s.id); opt.textContent = s.name;
+            if (String(s.id) === String(currentVal || '')) opt.selected = true;
+            selectEl.appendChild(opt);
+        });
+        // Hide the whole select group when the section has no sub_sections.
+        selectEl.disabled = subs.length === 0;
+    };
+    // Seat label = "Seat Name — Officer Name" (or Seat Number when set,
+    // "vacant" when no officer holds the seat right now).
+    const seatOptionLabel = (s) => {
+        const seatBits = s.seat_number ? (s.name + ' (' + s.seat_number + ')') : s.name;
+        const occ = s.officer_name ? s.officer_name : 'vacant';
+        return seatBits + ' — ' + occ;
+    };
+    const fillSeats = (selectEl, sectionId, subSectionId, currentVal, excludeIds = []) => {
         selectEl.innerHTML = '<option value="">— Select seat —</option>';
         P.seats
             .filter(s => String(s.section_id) === String(sectionId))
+            .filter(s => {
+                // Empty sub_section value = show ALL seats in the section
+                // (both those under sub_sections and those direct). A
+                // specific sub_section = only its seats.
+                if (!subSectionId) return true;
+                return String(s.sub_section_id) === String(subSectionId);
+            })
             .filter(s => !excludeIds.includes(s.id))
             .forEach(s => {
                 const opt = document.createElement('option');
                 opt.value = String(s.id);
-                opt.textContent = s.seat_number ? (s.name + ' (' + s.seat_number + ')') : s.name;
+                opt.textContent = seatOptionLabel(s);
                 if (String(s.id) === String(currentVal || '')) opt.selected = true;
                 selectEl.appendChild(opt);
             });
@@ -765,22 +834,30 @@ window.__taskTrackerPicker = {
     const seatById = (id) => P.seats.find(s => s.id === Number(id));
 
     // Primary picker
-    const primDiv = document.getElementById('primaryDivision');
-    const primSec = document.getElementById('primarySection');
-    const primSeat = document.getElementById('primarySeatSel');
-    const primHidden = document.getElementById('primarySeatHidden');
+    const primDiv     = document.getElementById('primaryDivision');
+    const primSec     = document.getElementById('primarySection');
+    const primSubSec  = document.getElementById('primarySubSection');
+    const primSeat    = document.getElementById('primarySeatSel');
+    const primHidden  = document.getElementById('primarySeatHidden');
 
     fillDivisions(primDiv, P.preset.primary_division_id);
     fillSections(primSec, P.preset.primary_division_id, P.preset.primary_section_id);
-    fillSeats(primSeat, P.preset.primary_section_id, P.preset.primary_seat_id);
+    fillSubSections(primSubSec, P.preset.primary_section_id, P.preset.primary_sub_section_id);
+    fillSeats(primSeat, P.preset.primary_section_id, P.preset.primary_sub_section_id, P.preset.primary_seat_id);
 
     primDiv.addEventListener('change', () => {
         fillSections(primSec, primDiv.value, '');
-        fillSeats(primSeat, '', '');
+        fillSubSections(primSubSec, '', '');
+        fillSeats(primSeat, '', '', '');
         primHidden.value = '';
     });
     primSec.addEventListener('change', () => {
-        fillSeats(primSeat, primSec.value, '');
+        fillSubSections(primSubSec, primSec.value, '');
+        fillSeats(primSeat, primSec.value, '', '');
+        primHidden.value = '';
+    });
+    primSubSec.addEventListener('change', () => {
+        fillSeats(primSeat, primSec.value, primSubSec.value, '');
         primHidden.value = '';
     });
     primSeat.addEventListener('change', () => {
@@ -789,20 +866,32 @@ window.__taskTrackerPicker = {
     });
 
     // Secondary picker: chips
-    const secDiv = document.getElementById('secondaryDivision');
-    const secSec = document.getElementById('secondarySection');
-    const secSeat = document.getElementById('secondarySeatSel');
-    const chipsEl = document.getElementById('secondaryChips');
+    const secDiv     = document.getElementById('secondaryDivision');
+    const secSec     = document.getElementById('secondarySection');
+    const secSubSec  = document.getElementById('secondarySubSection');
+    const secSeat    = document.getElementById('secondarySeatSel');
+    const chipsEl    = document.getElementById('secondaryChips');
     const hiddenWrap = document.getElementById('secondaryHiddenWrap');
-    const addBtn = document.getElementById('addSecondaryBtn');
+    const addBtn     = document.getElementById('addSecondaryBtn');
     let secondaryIds = Array.isArray(P.preset.secondary_seat_ids) ? P.preset.secondary_seat_ids.slice() : [];
 
     fillDivisions(secDiv, '');
     fillSections(secSec, '', '');
-    fillSeats(secSeat, '', '');
+    fillSubSections(secSubSec, '', '');
+    fillSeats(secSeat, '', '', '');
 
-    secDiv.addEventListener('change', () => { fillSections(secSec, secDiv.value, ''); fillSeats(secSeat, '', ''); });
-    secSec.addEventListener('change', () => { fillSeats(secSeat, secSec.value, '', currentSecondaryExcludes()); });
+    secDiv.addEventListener('change', () => {
+        fillSections(secSec, secDiv.value, '');
+        fillSubSections(secSubSec, '', '');
+        fillSeats(secSeat, '', '', '');
+    });
+    secSec.addEventListener('change', () => {
+        fillSubSections(secSubSec, secSec.value, '');
+        fillSeats(secSeat, secSec.value, '', '', currentSecondaryExcludes());
+    });
+    secSubSec.addEventListener('change', () => {
+        fillSeats(secSeat, secSec.value, secSubSec.value, '', currentSecondaryExcludes());
+    });
 
     const currentSecondaryExcludes = () => {
         const list = secondaryIds.slice();
@@ -821,7 +910,7 @@ window.__taskTrackerPicker = {
             chip.className = 'badge text-bg-light border d-inline-flex align-items-center gap-2 p-2';
             chip.innerHTML = '<i class="bi bi-person-workspace"></i><span></span>' +
                 '<button type="button" class="btn-close btn-close-sm" aria-label="Remove"></button>';
-            chip.querySelector('span').textContent = s.seat_number ? (s.name + ' (' + s.seat_number + ')') : s.name;
+            chip.querySelector('span').textContent = seatOptionLabel(s);
             chip.querySelector('button').addEventListener('click', () => {
                 secondaryIds = secondaryIds.filter(x => Number(x) !== Number(id));
                 rebuildSecondaryChips();
@@ -832,7 +921,7 @@ window.__taskTrackerPicker = {
             hid.type = 'hidden'; hid.name = 'secondary_seat_ids[]'; hid.value = String(id);
             hiddenWrap.appendChild(hid);
         });
-        if (secSec.value) fillSeats(secSeat, secSec.value, '', currentSecondaryExcludes());
+        if (secSec.value) fillSeats(secSeat, secSec.value, secSubSec.value, '', currentSecondaryExcludes());
     };
     rebuildSecondaryChips();
 

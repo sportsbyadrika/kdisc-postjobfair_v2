@@ -48,7 +48,7 @@ $projects = db()->query("SELECT p.id, p.code, p.name, p.start_date, p.end_date, 
 // we're rendering the Gantt tab. Gantt data lazy-loads via AJAX from
 // /task_tracker_ajax_gantt.php.
 $tab = (string) ($_GET['tab'] ?? 'tree');
-if (!in_array($tab, ['tree', 'gantt'], true)) $tab = 'tree';
+if (!in_array($tab, ['tree', 'gantt', 'people'], true)) $tab = 'tree';
 
 $finSelect = $hasFin
     ? 't.share_amount, t.projected_amount, t.target_expenditure, t.actual_expenditure'
@@ -119,7 +119,7 @@ $fmtMoney = static fn($v) => ($v === null || $v === '') ? '—' : '₹' . number
 $fmtDate  = static fn(?string $s) => substr((string) $s, 0, 10) === '' ? '—' : date('d/m/Y', strtotime((string) $s));
 
 $ganttProject = (int) ($_GET['project'] ?? 0);
-if ($ganttProject === 0 && $tab === 'gantt' && $projects !== []) $ganttProject = (int) $projects[0]['id'];
+if ($ganttProject === 0 && ($tab === 'gantt' || $tab === 'people') && $projects !== []) $ganttProject = (int) $projects[0]['id'];
 
 render_header('Task Tracker · Project Status', ['main_container_class' => 'container-fluid']);
 render_page_header('Task Tracker · Project Status', [
@@ -130,8 +130,9 @@ render_page_header('Task Tracker · Project Status', [
 ?>
 
 <ul class="nav nav-tabs mb-3">
-    <li class="nav-item"><a class="nav-link <?= $tab === 'tree'  ? 'active' : '' ?>" href="?tab=tree"><i class="bi bi-list-nested me-1"></i>Tree table</a></li>
-    <li class="nav-item"><a class="nav-link <?= $tab === 'gantt' ? 'active' : '' ?>" href="?tab=gantt<?= $ganttProject > 0 ? '&project=' . $ganttProject : '' ?>"><i class="bi bi-bar-chart-steps me-1"></i>Gantt chart</a></li>
+    <li class="nav-item"><a class="nav-link <?= $tab === 'tree'   ? 'active' : '' ?>" href="?tab=tree"><i class="bi bi-list-nested me-1"></i>Tree table</a></li>
+    <li class="nav-item"><a class="nav-link <?= $tab === 'gantt'  ? 'active' : '' ?>" href="?tab=gantt<?= $ganttProject > 0 ? '&project=' . $ganttProject : '' ?>"><i class="bi bi-bar-chart-steps me-1"></i>Gantt chart</a></li>
+    <li class="nav-item"><a class="nav-link <?= $tab === 'people' ? 'active' : '' ?>" href="?tab=people<?= $ganttProject > 0 ? '&project=' . $ganttProject : '' ?>"><i class="bi bi-people me-1"></i>People timeline</a></li>
 </ul>
 
 <?php if ($tab === 'tree'): ?>
@@ -330,7 +331,7 @@ document.addEventListener('click', (ev) => {
 
 <?php endif; ?>
 
-<?php else: /* Gantt tab */ ?>
+<?php elseif ($tab === 'gantt'): /* Gantt tab */ ?>
 
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
@@ -484,6 +485,95 @@ document.addEventListener('DOMContentLoaded', function () {
         } finally {
             saveBtn.disabled = false;
         }
+    });
+});
+</script>
+
+<?php else: /* People timeline tab */ ?>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <form method="get" class="d-flex align-items-center gap-2 mb-0">
+            <input type="hidden" name="tab" value="people">
+            <label class="form-label mb-0 me-1" for="peopleProj">Project</label>
+            <select name="project" id="peopleProj" class="form-select form-select-sm" onchange="this.form.submit()">
+                <?php foreach ($projects as $p): ?>
+                    <option value="<?= (int) $p['id'] ?>" <?= $ganttProject === (int) $p['id'] ? 'selected' : '' ?>>
+                        <?= esc((string) $p['code']) ?> · <?= esc((string) $p['name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </form>
+        <div class="btn-group btn-group-sm" role="group" aria-label="People-timeline mode">
+            <button type="button" class="btn btn-outline-secondary active" data-people-mode="Day">Day</button>
+            <button type="button" class="btn btn-outline-secondary"       data-people-mode="Week">Week</button>
+            <button type="button" class="btn btn-outline-secondary"       data-people-mode="Month">Month</button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="peopleEmpty" class="empty-state d-none"><i class="bi bi-bar-chart"></i>No engagements to show — assign tasks to seats and give them planned dates.</div>
+        <div id="peopleLoading" class="text-center text-muted py-4">
+            <span class="spinner-border spinner-border-sm me-1"></span>Loading engagements&hellip;
+        </div>
+        <div class="tt-gantt-scroll d-none" id="peopleWrap">
+            <svg id="peopleChart"></svg>
+        </div>
+    </div>
+    <div class="card-footer d-flex justify-content-between align-items-center small text-muted">
+        <span>One bar per (person × task). Rows are grouped so every person's engagements sit contiguously. <strong>[P]</strong> = primary, <strong>[S]</strong> = secondary. Vacant seats show as "&lt;seat&gt; (vacant)".</span>
+        <span id="peopleMeta" class="text-muted"></span>
+    </div>
+</div>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/frappe-gantt/0.6.1/frappe-gantt.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/frappe-gantt/0.6.1/frappe-gantt.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const svg     = document.getElementById('peopleChart');
+    const wrap    = document.getElementById('peopleWrap');
+    const loading = document.getElementById('peopleLoading');
+    const emptyEl = document.getElementById('peopleEmpty');
+    const meta    = document.getElementById('peopleMeta');
+    if (!svg || typeof Gantt === 'undefined') { if (loading) loading.classList.add('d-none'); return; }
+
+    const projectId = <?= (int) $ganttProject ?>;
+    if (projectId <= 0) { loading.classList.add('d-none'); return; }
+
+    let chart = null;
+    const renderMode = (mode) => {
+        if (!chart) return;
+        document.querySelectorAll('[data-people-mode]').forEach(b => b.classList.toggle('active', b.getAttribute('data-people-mode') === mode));
+        chart.change_view_mode(mode);
+    };
+
+    fetch('/task_tracker_ajax_gantt_people.php?project=' + projectId, {credentials: 'same-origin'})
+        .then(r => r.json())
+        .then(json => {
+            loading.classList.add('d-none');
+            if (!json.ok) { emptyEl.classList.remove('d-none'); emptyEl.textContent = 'Load failed: ' + (json.error || 'unknown'); return; }
+            if (!json.tasks || json.tasks.length === 0) { emptyEl.classList.remove('d-none'); return; }
+            wrap.classList.remove('d-none');
+            meta.textContent = json.people + ' person' + (json.people === 1 ? '' : 's')
+                + ' · ' + json.count + ' engagement' + (json.count === 1 ? '' : 's')
+                + (json.span_days ? ' · span ' + json.span_days + ' day' + (json.span_days === 1 ? '' : 's') : '')
+                + ' · view ' + json.suggested_view;
+            // Frappe-Gantt shows dependency arrows on this view is
+            // noisy — we already grouped by person — so we cleared
+            // dependencies server-side and just render bars.
+            chart = new Gantt(svg, json.tasks, {
+                view_mode: json.suggested_view || 'Day',
+                bar_height: 18, padding: 14,
+            });
+            renderMode(json.suggested_view || 'Day');
+        })
+        .catch(err => {
+            loading.classList.add('d-none');
+            emptyEl.classList.remove('d-none');
+            emptyEl.innerHTML = '<i class="bi bi-exclamation-triangle"></i>Load failed: ' + (err && err.message ? err.message : String(err));
+        });
+
+    document.querySelectorAll('[data-people-mode]').forEach(btn => {
+        btn.addEventListener('click', () => renderMode(btn.getAttribute('data-people-mode')));
     });
 });
 </script>
