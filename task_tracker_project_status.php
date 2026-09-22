@@ -374,9 +374,19 @@ document.addEventListener('click', (ev) => {
             <svg id="ganttChart"></svg>
         </div>
     </div>
-    <div class="card-footer d-flex justify-content-between align-items-center small text-muted">
-        <span>Bars run from <code>planned_start</code> to <code>planned_end</code>. Sub-activities show as dependencies of their parent activity. Use the buttons to change the time scale.</span>
-        <span id="ganttMeta" class="text-muted"></span>
+    <div class="card-footer small text-muted">
+        <div class="d-flex justify-content-between align-items-center">
+            <span>Bars run from <code>planned_start</code> to <code>planned_end</code>. Sub-activities show as dependencies of their parent activity. Use the buttons to change the time scale.</span>
+            <span id="ganttMeta" class="text-muted"></span>
+        </div>
+        <div class="tt-gantt-legend mt-2">
+            <span><i class="swatch" style="background:#16a34a"></i>Completed</span>
+            <span><i class="swatch" style="background:#0ea5e9"></i>On track</span>
+            <span><i class="swatch" style="background:#f59e0b"></i>Slightly behind</span>
+            <span><i class="swatch" style="background:#ea580c"></i>Critical (≥20% behind)</span>
+            <span><i class="swatch" style="background:#dc2626"></i>Overdue (past end date)</span>
+            <span><i class="swatch" style="background:#94a3b8"></i>Not yet started</span>
+        </div>
     </div>
 </div>
 
@@ -519,9 +529,19 @@ document.addEventListener('DOMContentLoaded', function () {
             <svg id="peopleChart"></svg>
         </div>
     </div>
-    <div class="card-footer d-flex justify-content-between align-items-center small text-muted">
-        <span>One bar per (person × task). Rows are grouped so every person's engagements sit contiguously. <strong>[P]</strong> = primary, <strong>[S]</strong> = secondary. Vacant seats show as "&lt;seat&gt; (vacant)".</span>
-        <span id="peopleMeta" class="text-muted"></span>
+    <div class="card-footer small text-muted">
+        <div class="d-flex justify-content-between align-items-center">
+            <span>One bar per (person × task). Rows are grouped so every person's engagements sit contiguously. <strong>[P]</strong> = primary, <strong>[S]</strong> = secondary. Vacant seats show as "&lt;seat&gt; (vacant)".</span>
+            <span id="peopleMeta" class="text-muted"></span>
+        </div>
+        <div class="tt-gantt-legend mt-2">
+            <span><i class="swatch" style="background:#16a34a"></i>Completed</span>
+            <span><i class="swatch" style="background:#0ea5e9"></i>On track</span>
+            <span><i class="swatch" style="background:#f59e0b"></i>Slightly behind</span>
+            <span><i class="swatch" style="background:#ea580c"></i>Critical (≥20% behind)</span>
+            <span><i class="swatch" style="background:#dc2626"></i>Overdue (past end date)</span>
+            <span><i class="swatch" style="background:#94a3b8"></i>Not yet started</span>
+        </div>
     </div>
 </div>
 
@@ -608,6 +628,28 @@ document.addEventListener('DOMContentLoaded', function () {
    scroll container — Frappe-Gantt sets an explicit width attribute
    based on the timeline length. */
 .tt-gantt-scroll > svg { display: block; }
+
+/* Bar colouring by schedule risk. Frappe-Gantt puts the task's
+   custom_class on the <g class="bar-wrapper …"> element; the child
+   <rect class="bar"> is the coloured body, <rect class="bar-progress">
+   is the darker progress fill drawn on top. We override both so the
+   colour is unambiguous regardless of how much progress has been
+   recorded. */
+.gantt .bar-wrapper.bar-completed .bar          { fill: #16a34a; }
+.gantt .bar-wrapper.bar-completed .bar-progress { fill: #15803d; }
+.gantt .bar-wrapper.bar-ontrack   .bar          { fill: #0ea5e9; }
+.gantt .bar-wrapper.bar-ontrack   .bar-progress { fill: #0369a1; }
+.gantt .bar-wrapper.bar-scheduled .bar          { fill: #94a3b8; }
+.gantt .bar-wrapper.bar-scheduled .bar-progress { fill: #475569; }
+.gantt .bar-wrapper.bar-behind    .bar          { fill: #f59e0b; }
+.gantt .bar-wrapper.bar-behind    .bar-progress { fill: #b45309; }
+.gantt .bar-wrapper.bar-critical  .bar          { fill: #ea580c; }
+.gantt .bar-wrapper.bar-critical  .bar-progress { fill: #9a3412; }
+.gantt .bar-wrapper.bar-overdue   .bar          { fill: #dc2626; }
+.gantt .bar-wrapper.bar-overdue   .bar-progress { fill: #7f1d1d; }
+
+.tt-gantt-legend { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.tt-gantt-legend .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
 </style>
 
 <?php render_footer(); ?>

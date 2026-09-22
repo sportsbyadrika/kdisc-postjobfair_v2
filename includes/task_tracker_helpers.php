@@ -561,3 +561,36 @@ function can_move_task(int $viewerId, ?array $task = null): bool
     // Same rule as edit — the board is a status field on the task.
     return can_edit_task($viewerId, $task);
 }
+
+/**
+ * Classify a task's schedule risk so the Gantt bar can pick a colour.
+ * Returns a class name that lands on the Frappe-Gantt bar-wrapper via
+ * the task's `custom_class`.
+ *
+ * Rules (in order of precedence):
+ *   bar-completed — progress ≥ 100% or the status row is terminal
+ *   bar-overdue   — planned_end has passed AND task isn't complete
+ *   bar-critical  — inside its window but ≥ 20% behind expected progress
+ *   bar-behind    — inside its window, 5% ≤ gap < 20% behind
+ *   bar-ontrack   — gap < 5% (on time OR ahead)
+ *   bar-scheduled — has no dates or hasn't started yet
+ *
+ * Where expected = (elapsed / total) × 100 across the planned window
+ * and gap = expected − actual progress %.
+ */
+function task_tracker_risk_class(?string $plannedStart, ?string $plannedEnd, int $progressPct, int $isTerminal): string
+{
+    if ($isTerminal === 1 || $progressPct >= 100) return 'bar-completed';
+    $today = date('Y-m-d');
+    if ($plannedEnd !== null && $plannedEnd !== '' && $plannedEnd < $today) return 'bar-overdue';
+    if ($plannedStart === null || $plannedStart === '' || $plannedEnd === null || $plannedEnd === '') return 'bar-scheduled';
+    if ($plannedStart > $today) return 'bar-scheduled';
+    $totalSec   = strtotime($plannedEnd) - strtotime($plannedStart);
+    $elapsedSec = strtotime($today)      - strtotime($plannedStart);
+    if ($totalSec <= 0) return 'bar-scheduled';
+    $expected = min(100, ($elapsedSec / $totalSec) * 100);
+    $gap = $expected - $progressPct;
+    if ($gap >= 20) return 'bar-critical';
+    if ($gap >= 5)  return 'bar-behind';
+    return 'bar-ontrack';
+}

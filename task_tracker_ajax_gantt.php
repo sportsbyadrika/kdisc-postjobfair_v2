@@ -68,6 +68,7 @@ foreach ($rows as $t) {
     if ($pe === '') $pe = $ps;
     $pct = $t['progress_pct'] !== null ? (int) $t['progress_pct']
         : ((int) ($t['is_terminal'] ?? 0) === 1 ? 100 : 0);
+    $risk = task_tracker_risk_class($ps, $pe, $pct, (int) ($t['is_terminal'] ?? 0));
     $tasks[] = [
         'id'           => 't' . (int) $t['id'],
         'name'         => $code . '-' . (int) $t['task_number'] . ' · ' . (string) $t['title'],
@@ -75,6 +76,7 @@ foreach ($rows as $t) {
         'end'          => $pe,
         'progress'     => $pct,
         'dependencies' => empty($t['parent_id']) ? '' : ('t' . (int) $t['parent_id']),
+        'custom_class' => $risk,
     ];
     if ($minStart === null || $ps < $minStart) $minStart = $ps;
     if ($maxEnd   === null || $pe > $maxEnd)   $maxEnd   = $pe;
