@@ -80,6 +80,7 @@ foreach ($rows as $r) {
     if ($pe === '') $pe = $ps;
     $pct = $r['progress_pct'] !== null ? (int) $r['progress_pct']
         : ((int) ($r['is_terminal'] ?? 0) === 1 ? 100 : 0);
+    $risk = task_tracker_risk_class($ps, $pe, $pct, (int) ($r['is_terminal'] ?? 0));
 
     $personName = trim((string) ($r['officer_name'] ?? ''));
     if ($personName === '') $personName = trim((string) ($r['seat_name'] ?? '')) . ' (vacant)';
@@ -97,6 +98,7 @@ foreach ($rows as $r) {
         'end'          => $pe,
         'progress'     => $pct,
         'dependencies' => '',
+        'custom_class' => $risk,
     ];
     if ($minStart === null || $ps < $minStart) $minStart = $ps;
     if ($maxEnd   === null || $pe > $maxEnd)   $maxEnd   = $pe;
