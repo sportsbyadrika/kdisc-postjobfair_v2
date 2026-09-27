@@ -872,17 +872,17 @@ render_header('Dashboard');
 <style>
 .mini-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .mini-cal .mc-h  { text-align: center; font-size: .75rem; font-weight: 600; color: var(--pjf-muted); padding: 4px 0; }
-.mini-cal .mc-d  { border: 1px solid #e3e6ee; border-radius: 6px; padding: 8px 4px; text-align: center; font-size: .85rem; color: #334155; }
+.mini-cal .mc-d  { position: relative; border: 1px solid #e3e6ee; border-radius: 6px; padding: 8px 4px; text-align: center; font-size: .85rem; color: #334155; }
 .mini-cal .mc-d.mc-today  { border-color: #0ea5e9; box-shadow: inset 0 0 0 1px #0ea5e9; }
 .mini-cal .mc-d.mc-has    { background: #dbeafe; color: #1e3a8a; font-weight: 600; cursor: pointer; }
 .mini-cal .mc-d.mc-has:hover { background: #bfdbfe; }
 .mini-cal .mc-blank { background: transparent; border: none; }
+.mini-cal .mc-count { position: absolute; top: 2px; right: 3px; background: #1d4ed8; color: #fff; font-size: .65rem; font-weight: 700; line-height: 1; padding: 2px 5px; border-radius: 10px; min-width: 18px; }
 </style>
 <script>
 (function () {
-    const meetingDays = <?= json_encode(array_keys($meetingDays)) ?>;
+    const meetingDays = <?= json_encode($meetingDays) ?>; // { YYYY-MM-DD: count }
     const today       = <?= json_encode($todayYmd) ?>;
-    const daySet = new Set(meetingDays);
     const titleEl = document.getElementById('calTitle');
     const gridEl  = document.getElementById('miniCalendar');
 
@@ -906,12 +906,18 @@ render_header('Dashboard');
             const cell = document.createElement('div');
             cell.className = 'mc-d';
             if (key === today) cell.classList.add('mc-today');
-            if (daySet.has(key)) {
+            const count = meetingDays[key] || 0;
+            if (count > 0) {
                 cell.classList.add('mc-has');
-                cell.title = 'Meetings scheduled';
+                cell.title = count + ' meeting' + (count === 1 ? '' : 's');
                 cell.addEventListener('click', () => { window.location.href = '/meetings.php?date=' + key; });
             }
-            cell.textContent = String(d);
+            const dayText = document.createElement('span'); dayText.textContent = String(d); cell.appendChild(dayText);
+            if (count > 0) {
+                const badge = document.createElement('span');
+                badge.className = 'mc-count'; badge.textContent = String(count);
+                cell.appendChild(badge);
+            }
             gridEl.appendChild(cell);
         }
     };

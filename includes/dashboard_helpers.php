@@ -164,18 +164,19 @@ function dashboard_meetings_on(string $ymd): array
     }
 }
 
-/** Days in a month that have at least one meeting; returns a
- *  set-like array keyed by YYYY-MM-DD. */
+/** Days in a month that have at least one meeting; returns a map
+ *  keyed by YYYY-MM-DD → count of meetings that day. */
 function dashboard_meeting_days_in_month(string $ym): array
 {
     try {
         $start = $ym . '-01';
         $end   = date('Y-m-t', strtotime($start));
-        $stmt = db()->prepare('SELECT DISTINCT meeting_date FROM meeting
-            WHERE meeting_date BETWEEN ? AND ? AND is_active = 1');
+        $stmt = db()->prepare('SELECT meeting_date, COUNT(*) AS c FROM meeting
+            WHERE meeting_date BETWEEN ? AND ? AND is_active = 1
+            GROUP BY meeting_date');
         $stmt->execute([$start, $end]);
         $out = [];
-        foreach ($stmt->fetchAll() as $r) $out[(string) $r['meeting_date']] = true;
+        foreach ($stmt->fetchAll() as $r) $out[(string) $r['meeting_date']] = (int) $r['c'];
         return $out;
     } catch (Throwable $e) {
         return [];

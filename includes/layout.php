@@ -44,7 +44,7 @@ function render_header(string $title, array $options = []): void
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><?= esc($title) ?> · Job Fair CRM</title>
+    <title><?= esc($title) ?> · K-DISC MIS</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -59,8 +59,8 @@ function render_header(string $title, array $options = []): void
             <a class="navbar-brand" href="/dashboard.php">
                 <span class="app-brand-mark"><i class="bi bi-briefcase-fill"></i></span>
                 <span class="app-brand-text">
-                    Job Fair CRM
-                    <small>Post Job Fair Tracker</small>
+                    K-DISC MIS
+                    <small>Meetings, Projects &amp; Admin</small>
                 </span>
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-expanded="false" aria-label="Toggle navigation">
@@ -566,7 +566,7 @@ function render_footer(bool $showFooter = true): void
 <?php if ($showFooter): ?>
 <footer class="app-footer mt-auto">
     <div class="container d-flex flex-column flex-sm-row justify-content-between align-items-center gap-1">
-        <span class="footer-text">&copy; <?= date('Y') ?> Job Fair CRM · KDISC Post Job Fair Tracker</span>
+        <span class="footer-text">&copy; <?= date('Y') ?> K-DISC MIS · Meetings, Projects &amp; Admin</span>
         <span class="footer-text">Internal use only</span>
     </div>
 </footer>
