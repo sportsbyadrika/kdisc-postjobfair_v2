@@ -118,11 +118,13 @@ function render_header(string $title, array $options = []): void
                                 if (function_exists('rbac_bootstrap')) rbac_bootstrap();
                                 $canJobFair    = function_exists('user_can_access_module') && user_can_access_module($uid, 'job_fair');
                                 $canProjMgmt   = function_exists('user_can_access_module') && user_can_access_module($uid, 'project_management');
+                                $canMeetings   = function_exists('user_can_access_module') && user_can_access_module($uid, 'meetings');
                                 $canDemand     = function_exists('user_can_access_module') && user_can_access_module($uid, 'demand_side');
                                 $canPmu        = function_exists('user_can_access_module') && user_can_access_module($uid, 'pmu_assets');
                                 $canAdminMod   = function_exists('user_can_access_module') && user_can_access_module($uid, 'administration');
                                 $isJobFairAdmin  = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'job_fair');
                                 $isProjMgmtAdmin = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'project_management');
+                                $isMeetingsAdmin = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'meetings');
                                 $isDemandAdmin   = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'demand_side');
                                 $isPmuAdmin      = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'pmu_assets');
                                 $isAdminAdmin    = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'administration');
@@ -194,6 +196,24 @@ function render_header(string $title, array $options = []): void
                                 </li>
                             <?php endif; ?>
 
+                            <?php /* ============ Module: Meetings ============ */ ?>
+                            <?php if ($canMeetings): ?>
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['meetings.php','meeting_edit.php','meeting_view.php','meeting_mom.php','contacts.php','meeting_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-calendar2-week me-1"></i>Meetings</a>
+                                    <ul class="dropdown-menu">
+                                        <li><h6 class="dropdown-header">Transactions</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/meetings.php"><i class="bi bi-list-ul me-2"></i>All meetings</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/meeting_edit.php"><i class="bi bi-plus-lg me-2"></i>New meeting</a></li>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><h6 class="dropdown-header">Masters</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/contacts.php"><i class="bi bi-person-vcard me-2"></i>Contacts master</a></li>
+                                        <?php if ($isMeetingsAdmin || is_manage_admin($user)): ?>
+                                            <li><a class="dropdown-item ps-4" href="/meeting_settings.php"><i class="bi bi-file-earmark-text me-2"></i>MoM report settings</a></li>
+                                        <?php endif; ?>
+                                    </ul>
+                                </li>
+                            <?php endif; ?>
+
                             <?php /* ============ Module: Demand Side ============ */ ?>
                             <?php if ($canDemand || is_admin($user)): ?>
                                 <li class="nav-item dropdown">
@@ -250,7 +270,7 @@ function render_header(string $title, array $options = []): void
                             <?php /* ============ Module: Administration ============ */ ?>
                             <?php if ($canAdminMod || is_manage_admin($user)): ?>
                                 <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['users.php','role_groups.php','reports.php','office_hierarchy.php','office_hierarchy_trash.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['users.php','role_groups.php','reports.php','office_hierarchy.php','office_hierarchy_trash.php','dashboard_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
                                     <ul class="dropdown-menu">
                                         <li><h6 class="dropdown-header">Users &amp; access</h6></li>
                                         <li><a class="dropdown-item ps-4" href="/users.php"><i class="bi bi-people me-2"></i>Users</a></li>
@@ -259,6 +279,9 @@ function render_header(string $title, array $options = []): void
                                         <li><h6 class="dropdown-header">Masters</h6></li>
                                         <li><a class="dropdown-item ps-4" href="/office_hierarchy.php"><i class="bi bi-diagram-3 me-2"></i>Office Hierarchy</a></li>
                                         <li><a class="dropdown-item ps-4" href="/office_hierarchy_trash.php"><i class="bi bi-trash me-2"></i>Office Hierarchy · Trash</a></li>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><h6 class="dropdown-header">Settings</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/dashboard_settings.php"><i class="bi bi-sliders2 me-2"></i>Dashboard settings</a></li>
                                         <li><hr class="dropdown-divider"></li>
                                         <li><h6 class="dropdown-header">Reports</h6></li>
                                         <li><a class="dropdown-item ps-4" href="/reports.php"><i class="bi bi-clock-history me-2"></i>Login Reports</a></li>
