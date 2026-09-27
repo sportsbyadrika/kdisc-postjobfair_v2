@@ -27,7 +27,9 @@ function dashboard_all_cards(): array
         ['code' => 'district_pmu',      'label' => 'District PMU Snapshot',   'description' => 'Asset register + submission counters (visible to PMU + admin roles).'],
         ['code' => 'district_photos',   'label' => 'District PMU Office Photos', 'description' => 'Photo panel loaded on demand from a Show-more button.'],
         ['code' => 'jobfair_status',    'label' => 'Post Job Fair Status',    'description' => 'CRM Job Fair post-fair conversion counters.'],
-        ['code' => 'meetings',          'label' => 'Meetings',                'description' => 'Meeting count card + mini calendar. Full module ships separately.'],
+        ['code' => 'meetings',          'label' => 'Meetings',                'description' => 'Meeting count card + mini calendar.'],
+        ['code' => 'projects_status',   'label' => 'Projects · Status',       'description' => 'Active / Completed project counts + task risk buckets (overdue / due / safe / not started).'],
+        ['code' => 'office_stats',      'label' => 'Office Hierarchy · Summary', 'description' => 'Division / Section / Sub Section / Seat counts.'],
     ];
 }
 
@@ -162,6 +164,82 @@ function dashboard_meetings_on(string $ymd): array
     } catch (Throwable $e) {
         return [];
     }
+}
+
+/**
+ * Projects · Status summary numbers for the dashboard card.
+ * Every field is 0 when the Task Tracker schema hasn't shipped yet.
+ * "Due window" is a 7-day horizon from today.
+ *
+ *   active_projects, completed_projects
+ *   overdue_tasks, due_tasks, safe_tasks, not_started_tasks
+ */
+function dashboard_projects_status(): array
+{
+    $out = [
+        'active_projects'    => 0,
+        'completed_projects' => 0,
+        'overdue_tasks'      => 0,
+        'due_tasks'          => 0,
+        'safe_tasks'         => 0,
+        'not_started_tasks'  => 0,
+    ];
+    try {
+        // A project is "completed" when its end_date is in the past
+        // OR every task on it is on a terminal status. We use the
+        // simpler date-based rule here so a running project without
+        // an explicit end_date stays Active.
+        $today = date('Y-m-d');
+        $out['active_projects'] = (int) db()->query("SELECT COUNT(*) FROM project
+            WHERE is_active = 1 AND (end_date IS NULL OR end_date >= '$today')")->fetchColumn();
+        $out['completed_projects'] = (int) db()->query("SELECT COUNT(*) FROM project
+            WHERE is_active = 1 AND end_date IS NOT NULL AND end_date < '$today'")->fetchColumn();
+
+        $dueCap = date('Y-m-d', strtotime('+7 days'));
+        // Only count tasks whose status is NOT terminal.
+        $out['overdue_tasks'] = (int) db()->query("SELECT COUNT(*) FROM task t
+            LEFT JOIN task_status s ON s.id = t.status_id
+            WHERE t.is_active = 1
+              AND t.planned_end IS NOT NULL AND t.planned_end < '$today'
+              AND (s.is_terminal IS NULL OR s.is_terminal = 0)")->fetchColumn();
+        $out['due_tasks'] = (int) db()->query("SELECT COUNT(*) FROM task t
+            LEFT JOIN task_status s ON s.id = t.status_id
+            WHERE t.is_active = 1
+              AND t.planned_end IS NOT NULL
+              AND t.planned_end BETWEEN '$today' AND '$dueCap'
+              AND (s.is_terminal IS NULL OR s.is_terminal = 0)")->fetchColumn();
+        $out['safe_tasks'] = (int) db()->query("SELECT COUNT(*) FROM task t
+            LEFT JOIN task_status s ON s.id = t.status_id
+            WHERE t.is_active = 1
+              AND t.planned_end IS NOT NULL AND t.planned_end > '$dueCap'
+              AND (t.planned_start IS NULL OR t.planned_start <= '$today')
+              AND (s.is_terminal IS NULL OR s.is_terminal = 0)")->fetchColumn();
+        $out['not_started_tasks'] = (int) db()->query("SELECT COUNT(*) FROM task t
+            LEFT JOIN task_status s ON s.id = t.status_id
+            WHERE t.is_active = 1
+              AND (s.is_terminal IS NULL OR s.is_terminal = 0)
+              AND ( (t.planned_start IS NOT NULL AND t.planned_start > '$today')
+                    OR t.planned_start IS NULL AND t.planned_end IS NULL )")->fetchColumn();
+    } catch (Throwable $e) { /* task tracker not present — zeros */ }
+    return $out;
+}
+
+/**
+ * Office Hierarchy summary — active-only counts per level. Zeros
+ * when the office_hierarchy_nodes table doesn't exist yet.
+ */
+function dashboard_office_hierarchy_counts(): array
+{
+    $out = ['division' => 0, 'section' => 0, 'sub_section' => 0, 'seat' => 0];
+    try {
+        foreach (db()->query("SELECT level_type, COUNT(*) AS c
+            FROM office_hierarchy_nodes
+            WHERE active_status = 1 AND level_type IN ('division','section','sub_section','seat')
+            GROUP BY level_type")->fetchAll() as $r) {
+            $out[(string) $r['level_type']] = (int) $r['c'];
+        }
+    } catch (Throwable $e) { /* table missing */ }
+    return $out;
 }
 
 /** Days in a month that have at least one meeting; returns a map
