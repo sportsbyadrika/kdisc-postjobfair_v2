@@ -419,6 +419,16 @@ render_header('Dashboard');
     </div>
 </div>
 
+<?php
+    // Every dashboard card block below runs unconditionally into
+    // its own output buffer so the six groups can render in any
+    // order (the operator drags them around under Administration ->
+    // Dashboard settings). Blocks whose visibility gate is off go
+    // through, produce nothing and land as an empty string in the
+    // map — a no-op at echo time.
+    $cardBlocks = [];
+    ob_start();
+?>
 <?php if ($isDashboardAdminView && dashboard_card_visible('demand_snapshot')): ?>
 <div class="mb-1">
     <h2 class="h6 text-muted text-uppercase mb-2"><i class="bi bi-building me-1"></i>Demand Side Snapshot <span class="text-muted small">(based on DWMS database)</span></h2>
@@ -541,6 +551,7 @@ render_header('Dashboard');
         </div>
     </div>
 <?php endif; /* demand_snapshot */ ?>
+<?php $cardBlocks['demand_snapshot'] = ob_get_clean(); ob_start(); ?>
 
 <?php if ($isDashboardAdminView && dashboard_card_visible('demand_verify')): ?>
 <div class="mb-1">
@@ -628,6 +639,7 @@ render_header('Dashboard');
     </div>
 </div>
 <?php endif; /* demand_verify */ ?>
+<?php $cardBlocks['demand_verify'] = ob_get_clean(); ob_start(); ?>
 
 <?php if ($isDashboardAdminView && dashboard_card_visible('district_pmu')): ?>
     <?php
@@ -778,7 +790,8 @@ render_header('Dashboard');
             <div class="card-footer small text-muted"><i class="bi bi-info-circle me-1"></i>Click a thumbnail to open the full-size photo in a new tab.</div>
         </div>
     <?php endif; ?>
-<?php endif; ?>
+<?php endif; /* district_pmu */ ?>
+<?php $cardBlocks['district_pmu'] = ob_get_clean(); ob_start(); ?>
 
 <?php if (dashboard_card_visible('jobfair_status')): ?>
 <h2 class="h6 text-muted text-uppercase mb-2 <?= $isDashboardAdminView ? 'mt-4' : '' ?>"><i class="bi bi-clipboard2-data me-1"></i>Post Job Fair Status</h2>
@@ -804,6 +817,7 @@ render_header('Dashboard');
     <?php endforeach; ?>
 </div>
 <?php endif; /* jobfair_status */ ?>
+<?php $cardBlocks['jobfair_status'] = ob_get_clean(); ob_start(); ?>
 
 <?php
     // Meetings card + mini calendar. Renders for every viewer when the
@@ -907,6 +921,15 @@ render_header('Dashboard');
 })();
 </script>
 <?php endif; /* meetings */ ?>
+<?php
+    $cardBlocks['meetings'] = ob_get_clean();
+    // Emit every captured card block in the order the operator
+    // arranged them under Dashboard settings.
+    foreach (dashboard_ordered_cards() as $orderedCard) {
+        $code = $orderedCard['code'];
+        if (isset($cardBlocks[$code]) && $cardBlocks[$code] !== '') echo $cardBlocks[$code];
+    }
+?>
 
 <?php if (!$isDashboardAdminView): ?>
 <div class="card mt-3">

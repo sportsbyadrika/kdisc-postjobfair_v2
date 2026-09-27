@@ -42,20 +42,76 @@ function dashboard_cards_bootstrap(): void
             id INT AUTO_INCREMENT PRIMARY KEY,
             card_code VARCHAR(64) NOT NULL,
             is_visible TINYINT(1) NOT NULL DEFAULT 1,
+            sort_order INT NOT NULL DEFAULT 100,
             updated_at DATETIME NULL,
             updated_by INT NULL,
             UNIQUE KEY unique_code (card_code)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+        // Idempotent add for the sort_order column so an install
+        // that seeded the visibility table before this feature
+        // shipped picks it up on the next request without an admin
+        // touching schema.
+        try {
+            $cols = [];
+            foreach ($db->query('SHOW COLUMNS FROM dashboard_card_visibility')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
+            if (!isset($cols['sort_order'])) {
+                $db->query('ALTER TABLE dashboard_card_visibility ADD COLUMN sort_order INT NOT NULL DEFAULT 100 AFTER is_visible');
+            }
+        } catch (Throwable $e) { /* ALTER refused — falls back to default order */ }
+
         // Initial seed. Demand Side Snapshot ships hidden per the
         // operator's request; every other card starts visible.
+        // Sort order matches dashboard_all_cards() display order so
+        // a fresh install renders in the same layout as before.
         // Re-runs are no-ops via INSERT IGNORE.
-        $seed = $db->prepare('INSERT IGNORE INTO dashboard_card_visibility (card_code, is_visible, updated_at) VALUES (?, ?, NOW())');
+        $seed = $db->prepare('INSERT IGNORE INTO dashboard_card_visibility (card_code, is_visible, sort_order, updated_at) VALUES (?, ?, ?, NOW())');
+        $ord = 10;
         foreach (dashboard_all_cards() as $c) {
             $default = ($c['code'] === 'demand_snapshot') ? 0 : 1;
-            $seed->execute([$c['code'], $default]);
+            $seed->execute([$c['code'], $default, $ord]);
+            $ord += 10;
         }
     } catch (Throwable $e) { /* ALTER-less hosting — helper still returns true below */ }
+}
+
+/**
+ * Return the card list in the configured display order. Rows are
+ * decorated with is_visible + sort_order from the DB when present.
+ * Cards known to dashboard_all_cards() but missing from the DB
+ * (fresh code, unseeded row) land at the end so nothing silently
+ * disappears — they show up and the admin can slot them into place.
+ */
+function dashboard_ordered_cards(): array
+{
+    $all = dashboard_all_cards();
+    $meta = [];
+    try {
+        foreach (db()->query('SELECT card_code, is_visible, sort_order FROM dashboard_card_visibility')->fetchAll() as $r) {
+            $meta[(string) $r['card_code']] = [
+                'is_visible' => ((int) $r['is_visible']) === 1,
+                'sort_order' => (int) ($r['sort_order'] ?? 100),
+            ];
+        }
+    } catch (Throwable $e) { /* table absent — fall through */ }
+
+    $decorated = [];
+    $tail = 10000;
+    foreach ($all as $c) {
+        $m = $meta[$c['code']] ?? null;
+        $decorated[] = [
+            'code'        => $c['code'],
+            'label'       => $c['label'],
+            'description' => $c['description'] ?? '',
+            'is_visible'  => $m['is_visible'] ?? true,
+            'sort_order'  => $m['sort_order'] ?? $tail++,
+        ];
+    }
+    usort($decorated, static function ($a, $b) {
+        if ($a['sort_order'] === $b['sort_order']) return strcmp((string) $a['code'], (string) $b['code']);
+        return $a['sort_order'] <=> $b['sort_order'];
+    });
+    return $decorated;
 }
 
 /**
