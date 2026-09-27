@@ -1,7 +1,9 @@
 <?php
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
+require_once __DIR__ . '/includes/dashboard_helpers.php';
 require_auth();
+dashboard_cards_bootstrap();
 
 $user = current_user();
 $uid = $user['id'];
@@ -417,7 +419,7 @@ render_header('Dashboard');
     </div>
 </div>
 
-<?php if ($isDashboardAdminView): ?>
+<?php if ($isDashboardAdminView && dashboard_card_visible('demand_snapshot')): ?>
 <div class="mb-1">
     <h2 class="h6 text-muted text-uppercase mb-2"><i class="bi bi-building me-1"></i>Demand Side Snapshot <span class="text-muted small">(based on DWMS database)</span></h2>
     <div class="row g-3">
@@ -538,7 +540,10 @@ render_header('Dashboard');
             </div>
         </div>
     </div>
+<?php endif; /* demand_snapshot */ ?>
 
+<?php if ($isDashboardAdminView && dashboard_card_visible('demand_verify')): ?>
+<div class="mb-1">
     <h2 class="h6 text-muted text-uppercase mb-2 mt-4"><i class="bi bi-clipboard-check me-1"></i>Demand Side &middot; Verification Status</h2>
     <div class="row g-3">
         <?php
@@ -622,9 +627,9 @@ render_header('Dashboard');
         <?php endforeach; ?>
     </div>
 </div>
-<?php endif; ?>
+<?php endif; /* demand_verify */ ?>
 
-<?php if ($isDashboardAdminView): ?>
+<?php if ($isDashboardAdminView && dashboard_card_visible('district_pmu')): ?>
     <?php
         $dpmuProfilePct  = $dpmuDistrictsCoveredCount > 0
             ? (int) round(($dpmuProfilesFilledCount / $dpmuDistrictsCoveredCount) * 100)
@@ -715,7 +720,7 @@ render_header('Dashboard');
         </div>
     </div>
 
-    <?php if ($dpmuPhotoRows !== []): ?>
+    <?php if ($dpmuPhotoRows !== [] && dashboard_card_visible('district_photos')): ?>
         <?php
             require_once __DIR__ . '/includes/dashboard_pmu_photo_tile.php';
             $initialTileCount = 3;   // one 3-column row across xl viewports
@@ -775,6 +780,7 @@ render_header('Dashboard');
     <?php endif; ?>
 <?php endif; ?>
 
+<?php if (dashboard_card_visible('jobfair_status')): ?>
 <h2 class="h6 text-muted text-uppercase mb-2 <?= $isDashboardAdminView ? 'mt-4' : '' ?>"><i class="bi bi-clipboard2-data me-1"></i>Post Job Fair Status</h2>
 <div class="row g-3 mb-1">
     <?php foreach ($kpiKeys as $kpiKey): ?>
@@ -797,6 +803,110 @@ render_header('Dashboard');
         </div>
     <?php endforeach; ?>
 </div>
+<?php endif; /* jobfair_status */ ?>
+
+<?php
+    // Meetings card + mini calendar. Renders for every viewer when the
+    // 'meetings' card group is turned on. The count + calendar data
+    // come from the meeting table when the Meetings module ships; until
+    // then the helper returns 0 / an empty map and the widget shows
+    // "no meetings" — no error page.
+    if (dashboard_card_visible('meetings')):
+        $meetingsTotal = dashboard_meeting_count_for((int) $uid);
+        $todayYmd      = date('Y-m-d');
+        $meetingsToday = dashboard_meetings_on($todayYmd);
+        $monthKey      = date('Y-m');
+        $meetingDays   = dashboard_meeting_days_in_month($monthKey);
+?>
+<div class="row g-3 mb-1 mt-3">
+    <div class="col-12 col-md-4">
+        <div class="card card-stat accent-primary h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100">
+                    <p class="stat-label">Meetings</p>
+                    <p class="stat-value"><?= number_format($meetingsTotal) ?></p>
+                    <a class="stat-link" href="/meetings.php">Open Meetings <i class="bi bi-arrow-right-short"></i></a>
+                    <div class="small text-muted mt-2">
+                        <?= count($meetingsToday) === 0
+                            ? 'No meetings scheduled today.'
+                            : (count($meetingsToday) . ' meeting' . (count($meetingsToday) === 1 ? '' : 's') . ' today.') ?>
+                    </div>
+                </div>
+                <span class="stat-icon-box tone-primary"><i class="bi bi-calendar2-week"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-8">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-calendar3 text-primary me-1"></i>Meeting calendar</span>
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="calPrev"><i class="bi bi-chevron-left"></i></button>
+                    <strong id="calTitle"></strong>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="calNext"><i class="bi bi-chevron-right"></i></button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="miniCalendar" class="mini-cal"></div>
+            </div>
+            <div class="card-footer small text-muted">
+                Blue-highlighted cells have at least one meeting. Click a cell to open the day's meetings.
+            </div>
+        </div>
+    </div>
+</div>
+<style>
+.mini-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.mini-cal .mc-h  { text-align: center; font-size: .75rem; font-weight: 600; color: var(--pjf-muted); padding: 4px 0; }
+.mini-cal .mc-d  { border: 1px solid #e3e6ee; border-radius: 6px; padding: 8px 4px; text-align: center; font-size: .85rem; color: #334155; }
+.mini-cal .mc-d.mc-today  { border-color: #0ea5e9; box-shadow: inset 0 0 0 1px #0ea5e9; }
+.mini-cal .mc-d.mc-has    { background: #dbeafe; color: #1e3a8a; font-weight: 600; cursor: pointer; }
+.mini-cal .mc-d.mc-has:hover { background: #bfdbfe; }
+.mini-cal .mc-blank { background: transparent; border: none; }
+</style>
+<script>
+(function () {
+    const meetingDays = <?= json_encode(array_keys($meetingDays)) ?>;
+    const today       = <?= json_encode($todayYmd) ?>;
+    const daySet = new Set(meetingDays);
+    const titleEl = document.getElementById('calTitle');
+    const gridEl  = document.getElementById('miniCalendar');
+
+    let cursor = new Date(); // starts on current month
+    cursor.setDate(1);
+
+    const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const monthLabel = (d) => d.toLocaleString(undefined, {month: 'long', year: 'numeric'});
+
+    const render = () => {
+        titleEl.textContent = monthLabel(cursor);
+        gridEl.innerHTML = '';
+        ['S','M','T','W','T','F','S'].forEach(l => { const h = document.createElement('div'); h.className='mc-h'; h.textContent=l; gridEl.appendChild(h); });
+        const first = new Date(cursor); first.setDate(1);
+        const startDow = first.getDay();
+        for (let i = 0; i < startDow; i++) { const b = document.createElement('div'); b.className='mc-d mc-blank'; gridEl.appendChild(b); }
+        const last = new Date(cursor.getFullYear(), cursor.getMonth()+1, 0).getDate();
+        for (let d = 1; d <= last; d++) {
+            const dt = new Date(cursor.getFullYear(), cursor.getMonth(), d);
+            const key = ymd(dt);
+            const cell = document.createElement('div');
+            cell.className = 'mc-d';
+            if (key === today) cell.classList.add('mc-today');
+            if (daySet.has(key)) {
+                cell.classList.add('mc-has');
+                cell.title = 'Meetings scheduled';
+                cell.addEventListener('click', () => { window.location.href = '/meetings.php?date=' + key; });
+            }
+            cell.textContent = String(d);
+            gridEl.appendChild(cell);
+        }
+    };
+    render();
+    document.getElementById('calPrev').addEventListener('click', () => { cursor.setMonth(cursor.getMonth()-1); render(); });
+    document.getElementById('calNext').addEventListener('click', () => { cursor.setMonth(cursor.getMonth()+1); render(); });
+})();
+</script>
+<?php endif; /* meetings */ ?>
 
 <?php if (!$isDashboardAdminView): ?>
 <div class="card mt-3">
