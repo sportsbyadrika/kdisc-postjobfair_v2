@@ -927,8 +927,115 @@ render_header('Dashboard');
 })();
 </script>
 <?php endif; /* meetings */ ?>
+<?php $cardBlocks['meetings'] = ob_get_clean(); ob_start(); ?>
+
+<?php if (dashboard_card_visible('projects_status')):
+    $ps = dashboard_projects_status();
+?>
+<h2 class="h6 text-muted text-uppercase mb-2 mt-4"><i class="bi bi-kanban me-1"></i>Projects · Status</h2>
+<div class="row g-3 mb-1">
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-primary h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Active projects</p><p class="stat-value"><?= number_format($ps['active_projects']) ?></p>
+                    <a class="stat-link" href="/task_tracker_projects.php">Open projects <i class="bi bi-arrow-right-short"></i></a></div>
+                <span class="stat-icon-box tone-primary"><i class="bi bi-briefcase"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-success h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Completed projects</p><p class="stat-value"><?= number_format($ps['completed_projects']) ?></p>
+                    <span class="small text-muted">Past their end date.</span></div>
+                <span class="stat-icon-box tone-success"><i class="bi bi-check2-circle"></i></span>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="row g-3 mb-1">
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-danger h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Overdue tasks</p><p class="stat-value text-danger"><?= number_format($ps['overdue_tasks']) ?></p>
+                    <span class="small text-muted">Past <code>planned_end</code>, not complete.</span></div>
+                <span class="stat-icon-box tone-danger"><i class="bi bi-exclamation-octagon"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-warning h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Due (within 7 days)</p><p class="stat-value text-warning"><?= number_format($ps['due_tasks']) ?></p>
+                    <span class="small text-muted">End date lands in the next week.</span></div>
+                <span class="stat-icon-box tone-warning"><i class="bi bi-clock-history"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-success h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Safe (on schedule)</p><p class="stat-value text-success"><?= number_format($ps['safe_tasks']) ?></p>
+                    <span class="small text-muted">More than a week to go.</span></div>
+                <span class="stat-icon-box tone-success"><i class="bi bi-shield-check"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-slate h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Not started</p><p class="stat-value text-muted"><?= number_format($ps['not_started_tasks']) ?></p>
+                    <span class="small text-muted">Scheduled ahead or no dates yet.</span></div>
+                <span class="stat-icon-box tone-slate"><i class="bi bi-hourglass"></i></span>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; /* projects_status */ ?>
+<?php $cardBlocks['projects_status'] = ob_get_clean(); ob_start(); ?>
+
+<?php if (dashboard_card_visible('office_stats')):
+    $oh = dashboard_office_hierarchy_counts();
+?>
+<h2 class="h6 text-muted text-uppercase mb-2 mt-4"><i class="bi bi-diagram-3 me-1"></i>Office Hierarchy · Summary</h2>
+<div class="row g-3 mb-1">
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-primary h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Divisions</p><p class="stat-value"><?= number_format($oh['division']) ?></p>
+                    <?php if (is_manage_admin($user)): ?><a class="stat-link" href="/office_hierarchy.php">Open hierarchy <i class="bi bi-arrow-right-short"></i></a><?php endif; ?></div>
+                <span class="stat-icon-box tone-primary"><i class="bi bi-diagram-3"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-info h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Sections</p><p class="stat-value"><?= number_format($oh['section']) ?></p></div>
+                <span class="stat-icon-box tone-info"><i class="bi bi-diagram-2"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-warning h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Sub Sections</p><p class="stat-value"><?= number_format($oh['sub_section']) ?></p></div>
+                <span class="stat-icon-box tone-warning"><i class="bi bi-diagram-2-fill"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-slate h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Seats</p><p class="stat-value"><?= number_format($oh['seat']) ?></p></div>
+                <span class="stat-icon-box tone-slate"><i class="bi bi-person-workspace"></i></span>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; /* office_stats */ ?>
 <?php
-    $cardBlocks['meetings'] = ob_get_clean();
+    $cardBlocks['office_stats'] = ob_get_clean();
     // Emit every captured card block in the order the operator
     // arranged them under Dashboard settings.
     foreach (dashboard_ordered_cards() as $orderedCard) {

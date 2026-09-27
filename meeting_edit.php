@@ -451,8 +451,10 @@ window.__meetingRef = {
     users:    <?= json_encode(array_map(static fn($u) => ['id' => (int) $u['id'], 'name' => (string) $u['name']], $users), JSON_UNESCAPED_UNICODE) ?>,
     contacts: <?= json_encode(array_map(static fn($c) => ['id' => (int) $c['id'], 'name' => (string) $c['name'], 'inst' => (string) ($c['institution'] ?? '')], $contacts), JSON_UNESCAPED_UNICODE) ?>,
     seats:    <?= json_encode(array_map(static fn($s) => ['id' => (int) $s['id'], 'name' => (string) $s['name'] . (empty($s['seat_number']) ? '' : ' (' . $s['seat_number'] . ')')], $seats), JSON_UNESCAPED_UNICODE) ?>,
+    meeting_id: <?= (int) ($existing['id'] ?? 0) ?>,
     preset: {
         participants: <?= json_encode(array_map(static fn($p) => [
+            'id' => (int) $p['id'],
             'user_id' => (int) ($p['user_id'] ?? 0),
             'contact_id' => (int) ($p['contact_id'] ?? 0),
             'is_mandatory' => (int) $p['is_mandatory'],
@@ -460,6 +462,7 @@ window.__meetingRef = {
             'role_label' => (string) ($p['role_label'] ?? ''),
         ], $existingParticipants)) ?>,
         agenda: <?= json_encode(array_map(static fn($a) => [
+            'id' => (int) $a['id'],
             'title' => (string) $a['title'],
             'description' => (string) ($a['description'] ?? ''),
             'lead_user_id' => (int) ($a['lead_user_id'] ?? 0),
@@ -469,6 +472,7 @@ window.__meetingRef = {
         decisions: <?= json_encode(array_map(static function ($d) use ($existingDecisionResp) {
             $rs = $existingDecisionResp[(int) $d['id']] ?? [];
             return [
+                'id' => (int) $d['id'],
                 'heading' => (string) $d['heading'],
                 'description' => (string) ($d['description'] ?? ''),
                 'due_date' => substr((string) ($d['due_date'] ?? ''), 0, 10),
@@ -477,8 +481,8 @@ window.__meetingRef = {
                 'contact_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['contact_id'] ?? 0), $rs))),
             ];
         }, $existingDecisions)) ?>,
-        next_agenda: <?= json_encode(array_map(static fn($n) => ['title' => (string) $n['title'], 'description' => (string) ($n['description'] ?? '')], $existingNextAgenda)) ?>,
-        urls: <?= json_encode(array_map(static fn($u) => ['label' => (string) ($u['label'] ?? ''), 'url' => (string) $u['url']], $existingUrls)) ?>,
+        next_agenda: <?= json_encode(array_map(static fn($n) => ['id' => (int) $n['id'], 'title' => (string) $n['title'], 'description' => (string) ($n['description'] ?? '')], $existingNextAgenda)) ?>,
+        urls: <?= json_encode(array_map(static fn($u) => ['id' => (int) $u['id'], 'label' => (string) ($u['label'] ?? ''), 'url' => (string) $u['url']], $existingUrls)) ?>,
     },
 };
 </script>
@@ -594,6 +598,71 @@ window.__meetingRef = {
         urls:         (R.preset.urls || []).slice(),
     };
     let contactsPool = R.contacts.slice(); // mutable — quick-add + refresh
+    let meetingId    = Number(R.meeting_id || 0);
+    // ------- Auto-save wiring -------
+    const csrfInput = document.querySelector('input[name="csrf_token"]');
+    const csrf = csrfInput ? csrfInput.value : '';
+    const statusPill = (() => {
+        const el = document.createElement('span');
+        el.id = 'saveStatus';
+        el.className = 'badge text-bg-light border ms-2';
+        el.style.minWidth = '90px'; el.style.display = 'inline-block'; el.style.textAlign = 'center';
+        el.textContent = meetingId > 0 ? 'Saved' : 'Draft (not yet saved)';
+        const submitBtn = document.querySelector('button[type=submit]');
+        if (submitBtn) submitBtn.parentNode.insertBefore(el, submitBtn);
+        return el;
+    })();
+    const setStatus = (text, tone) => {
+        statusPill.textContent = text;
+        statusPill.className = 'badge text-bg-' + (tone || 'light') + ' border ms-2';
+        statusPill.style.minWidth = '90px'; statusPill.style.display = 'inline-block'; statusPill.style.textAlign = 'center';
+    };
+    const ajax = async (params) => {
+        params.csrf_token = csrf;
+        const body = new URLSearchParams();
+        Object.entries(params).forEach(([k, v]) => {
+            if (Array.isArray(v)) v.forEach(x => body.append(k, x));
+            else body.set(k, v == null ? '' : String(v));
+        });
+        const res = await fetch('/meeting_ajax.php', { method: 'POST', body });
+        return await res.json();
+    };
+    const ensureDraft = async () => {
+        if (meetingId > 0) return meetingId;
+        setStatus('Creating draft…', 'info');
+        const divSel = document.querySelector('select[name="division_id"]');
+        const j = await ajax({ action: 'create_draft', division_id: divSel ? divSel.value : 0 });
+        if (!j.ok) { setStatus('Draft create failed', 'danger'); throw new Error(j.error || 'draft failed'); }
+        meetingId = j.meeting_id;
+        // Reflect in the URL so a refresh keeps the same draft; also
+        // unlock the division dropdown (creation resolves the reference
+        // number, editing the division post-creation is not supported).
+        try { history.replaceState(null, '', '/meeting_edit.php?id=' + meetingId); } catch (e) {}
+        setStatus('Draft saved', 'success');
+        return meetingId;
+    };
+    // Debounced field save.
+    const fieldDebounce = new Map();
+    const saveField = (field, value) => {
+        if (fieldDebounce.has(field)) clearTimeout(fieldDebounce.get(field));
+        setStatus('Saving…', 'info');
+        fieldDebounce.set(field, setTimeout(async () => {
+            try {
+                await ensureDraft();
+                const j = await ajax({ action: 'save_field', meeting_id: meetingId, field, value });
+                setStatus(j.ok ? 'Saved' : ('Save error: ' + (j.error || '')), j.ok ? 'success' : 'danger');
+            } catch (e) { setStatus('Save error', 'danger'); }
+        }, 700));
+    };
+    // Auto-save on every named field in the main form.
+    document.querySelectorAll('form input[name], form select[name], form textarea[name]')
+        .forEach(el => {
+            if (el.name === 'csrf_token' || el.name === 'action' || el.name === 'id') return;
+            if (el.name.startsWith('participant[') || el.name.startsWith('agenda[') || el.name.startsWith('decision[') || el.name.startsWith('next_agenda[') || el.name.startsWith('url[')) return;
+            // Every field autosaves on change; text inputs also on input (debounced).
+            const eventName = (el.tagName === 'TEXTAREA' || (el.type && ['text','email','url','number','search'].includes(el.type))) ? 'input' : 'change';
+            el.addEventListener(eventName, () => saveField(el.name, el.value));
+        });
 
     const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const findById = (list, id) => list.find(x => String(x.id) === String(id));
@@ -744,18 +813,29 @@ window.__meetingRef = {
     };
     const renderAll = () => { renderParticipants(); renderAgenda(); renderDecisions(); renderNextAgenda(); renderUrls(); };
 
-    // Table row edit / delete
+    // Table row edit / delete — deletes fire an AJAX call before
+    // mutating local state so the DB stays in sync.
+    const deleteRow = async (endpoint, id, listName, idx) => {
+        if (id && meetingId > 0) {
+            setStatus('Deleting…', 'info');
+            const j = await ajax({ action: endpoint, meeting_id: meetingId, id });
+            if (!j.ok) { setStatus('Delete failed', 'danger'); return; }
+            setStatus('Saved', 'success');
+        }
+        state[listName].splice(idx, 1);
+        renderAll();
+    };
     document.addEventListener('click', (ev) => {
         const eP = ev.target.closest('[data-edit-participant]'); if (eP) return openParticipant(+eP.dataset.editParticipant);
-        const dP = ev.target.closest('[data-del-participant]');  if (dP) { state.participants.splice(+dP.dataset.delParticipant, 1); renderAll(); return; }
+        const dP = ev.target.closest('[data-del-participant]');  if (dP) { const i = +dP.dataset.delParticipant; return deleteRow('delete_participant', state.participants[i]?.id || 0, 'participants', i); }
         const eA = ev.target.closest('[data-edit-agenda]'); if (eA) return openAgenda(+eA.dataset.editAgenda);
-        const dA = ev.target.closest('[data-del-agenda]');  if (dA) { state.agenda.splice(+dA.dataset.delAgenda, 1); renderAll(); return; }
+        const dA = ev.target.closest('[data-del-agenda]');  if (dA) { const i = +dA.dataset.delAgenda; return deleteRow('delete_agenda', state.agenda[i]?.id || 0, 'agenda', i); }
         const eD = ev.target.closest('[data-edit-decision]'); if (eD) return openDecision(+eD.dataset.editDecision);
-        const dD = ev.target.closest('[data-del-decision]');  if (dD) { state.decisions.splice(+dD.dataset.delDecision, 1); renderAll(); return; }
+        const dD = ev.target.closest('[data-del-decision]');  if (dD) { const i = +dD.dataset.delDecision; return deleteRow('delete_decision', state.decisions[i]?.id || 0, 'decisions', i); }
         const eN = ev.target.closest('[data-edit-next]'); if (eN) return openNext(+eN.dataset.editNext);
-        const dN = ev.target.closest('[data-del-next]');  if (dN) { state.next_agenda.splice(+dN.dataset.delNext, 1); renderAll(); return; }
+        const dN = ev.target.closest('[data-del-next]');  if (dN) { const i = +dN.dataset.delNext; return deleteRow('delete_next_agenda', state.next_agenda[i]?.id || 0, 'next_agenda', i); }
         const eU = ev.target.closest('[data-edit-url]'); if (eU) return openUrl(+eU.dataset.editUrl);
-        const dU = ev.target.closest('[data-del-url]');  if (dU) { state.urls.splice(+dU.dataset.delUrl, 1); renderAll(); return; }
+        const dU = ev.target.closest('[data-del-url]');  if (dU) { const i = +dU.dataset.delUrl; return deleteRow('delete_url', state.urls[i]?.id || 0, 'urls', i); }
     });
 
     // ============ MODAL OPEN / PREFILL ============
@@ -813,56 +893,76 @@ window.__meetingRef = {
 
     // ============ MODAL SAVE ============
     const collectMulti = (el) => Array.from(el.selectedOptions).map(o => Number(o.value)).filter(Boolean);
+    // Modal saves upsert via AJAX, then reflect the returned item_id
+    // in local state so subsequent edits target the same row.
+    const upsertRow = async (endpoint, payload, listName, idxRaw) => {
+        try {
+            await ensureDraft();
+            setStatus('Saving…', 'info');
+            const j = await ajax({ action: endpoint, meeting_id: meetingId, ...payload });
+            if (!j.ok) { alert('Save failed: ' + (j.error || '')); setStatus('Save error', 'danger'); return; }
+            const row = { ...payload, id: j.item_id };
+            if (idxRaw === '') state[listName].push(row); else state[listName][+idxRaw] = row;
+            renderAll(); closeAllModals();
+            setStatus('Saved', 'success');
+        } catch (e) { alert('Save failed: ' + e.message); setStatus('Save error', 'danger'); }
+    };
+
     document.getElementById('pModalSave').addEventListener('click', () => {
         const idxRaw = document.getElementById('pModalIdx').value;
         const uid = Number(document.getElementById('pModalUser').value || 0);
         const cid = Number(document.getElementById('pModalContact').value || 0);
         if (uid <= 0 && cid <= 0) { alert('Pick a user or a contact.'); return; }
-        const row = { user_id: uid, contact_id: cid,
+        const existingId = idxRaw !== '' ? (state.participants[+idxRaw]?.id || 0) : 0;
+        upsertRow('upsert_participant', {
+            id: existingId, user_id: uid, contact_id: cid,
             is_mandatory: document.getElementById('pModalMand').value,
             attended:     document.getElementById('pModalAtt').value,
-            role_label:   document.getElementById('pModalRole').value.trim() };
-        if (idxRaw === '') state.participants.push(row); else state.participants[+idxRaw] = row;
-        renderAll(); closeAllModals();
+            role_label:   document.getElementById('pModalRole').value.trim(),
+        }, 'participants', idxRaw);
     });
     document.getElementById('aModalSave').addEventListener('click', () => {
         const idxRaw = document.getElementById('aModalIdx').value;
         const title = document.getElementById('aModalTitle').value.trim();
         if (title === '') { alert('Title required.'); return; }
-        const row = { title, description: document.getElementById('aModalDesc').value.trim(),
+        const existingId = idxRaw !== '' ? (state.agenda[+idxRaw]?.id || 0) : 0;
+        upsertRow('upsert_agenda', {
+            id: existingId, title, description: document.getElementById('aModalDesc').value.trim(),
             lead_user_id:    Number(document.getElementById('aModalLeadUser').value || 0),
             lead_seat_id:    Number(document.getElementById('aModalLeadSeat').value || 0),
-            lead_contact_id: Number(document.getElementById('aModalLeadContact').value || 0) };
-        if (idxRaw === '') state.agenda.push(row); else state.agenda[+idxRaw] = row;
-        renderAll(); closeAllModals();
+            lead_contact_id: Number(document.getElementById('aModalLeadContact').value || 0),
+        }, 'agenda', idxRaw);
     });
     document.getElementById('dModalSave').addEventListener('click', () => {
         const idxRaw = document.getElementById('dModalIdx').value;
         const heading = document.getElementById('dModalHead').value.trim();
         if (heading === '') { alert('Heading required.'); return; }
-        const row = { heading, description: document.getElementById('dModalDesc').value.trim(),
+        const existingId = idxRaw !== '' ? (state.decisions[+idxRaw]?.id || 0) : 0;
+        upsertRow('upsert_decision', {
+            id: existingId, heading, description: document.getElementById('dModalDesc').value.trim(),
             due_date: document.getElementById('dModalDue').value,
             user_ids: collectMulti(document.getElementById('dModalUsers')),
             seat_ids: collectMulti(document.getElementById('dModalSeats')),
-            contact_ids: collectMulti(document.getElementById('dModalContacts')) };
-        if (idxRaw === '') state.decisions.push(row); else state.decisions[+idxRaw] = row;
-        renderAll(); closeAllModals();
+            contact_ids: collectMulti(document.getElementById('dModalContacts')),
+        }, 'decisions', idxRaw);
     });
     document.getElementById('nModalSave').addEventListener('click', () => {
         const idxRaw = document.getElementById('nModalIdx').value;
         const title = document.getElementById('nModalTitle').value.trim();
         if (title === '') { alert('Title required.'); return; }
-        const row = { title, description: document.getElementById('nModalDesc').value.trim() };
-        if (idxRaw === '') state.next_agenda.push(row); else state.next_agenda[+idxRaw] = row;
-        renderAll(); closeAllModals();
+        const existingId = idxRaw !== '' ? (state.next_agenda[+idxRaw]?.id || 0) : 0;
+        upsertRow('upsert_next_agenda', {
+            id: existingId, title, description: document.getElementById('nModalDesc').value.trim(),
+        }, 'next_agenda', idxRaw);
     });
     document.getElementById('uModalSave').addEventListener('click', () => {
         const idxRaw = document.getElementById('uModalIdx').value;
         const url = document.getElementById('uModalUrl').value.trim();
         if (url === '') { alert('URL required.'); return; }
-        const row = { label: document.getElementById('uModalLabel').value.trim(), url };
-        if (idxRaw === '') state.urls.push(row); else state.urls[+idxRaw] = row;
-        renderAll(); closeAllModals();
+        const existingId = idxRaw !== '' ? (state.urls[+idxRaw]?.id || 0) : 0;
+        upsertRow('upsert_url', {
+            id: existingId, label: document.getElementById('uModalLabel').value.trim(), url,
+        }, 'urls', idxRaw);
     });
 
     // ============ CHAIR quick-add + refresh ============
