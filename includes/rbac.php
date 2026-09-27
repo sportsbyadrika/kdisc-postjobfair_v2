@@ -31,6 +31,7 @@ require_once __DIR__ . '/auth.php';
 const RBAC_MODULES = [
     ['code' => 'job_fair',           'name' => 'Job Fair Result',    'sort_order' => 10],
     ['code' => 'project_management', 'name' => 'Project Management', 'sort_order' => 20],
+    ['code' => 'meetings',           'name' => 'Meetings',           'sort_order' => 25],
     ['code' => 'demand_side',        'name' => 'Demand Side',        'sort_order' => 30],
     ['code' => 'pmu_assets',         'name' => 'PMU Assets',         'sort_order' => 40],
     ['code' => 'administration',     'name' => 'Administration',     'sort_order' => 50],
@@ -164,14 +165,14 @@ function rbac_bootstrap(): void
 function rbac__backfill_from_legacy_roles(Database $db): void
 {
     $mapping = [
-        'administrator' => ['job_fair' => 'admin', 'project_management' => 'admin', 'demand_side' => 'admin', 'pmu_assets' => 'admin', 'administration' => 'admin'],
-        'dsm_admin'     => ['job_fair' => 'user',  'project_management' => 'admin', 'demand_side' => 'admin', 'pmu_assets' => 'admin', 'administration' => 'admin'],
-        'state_dsm'     => ['job_fair' => 'user',  'demand_side' => 'admin'],
-        'crm_member'    => ['job_fair' => 'user'],
-        'district_user' => ['job_fair' => 'user'],
-        'district_pmu'  => ['pmu_assets' => 'user'],
-        'state_pmu'     => ['pmu_assets' => 'user'],
-        'edms'          => ['pmu_assets' => 'reviewer'],
+        'administrator' => ['job_fair' => 'admin', 'project_management' => 'admin', 'meetings' => 'admin', 'demand_side' => 'admin', 'pmu_assets' => 'admin', 'administration' => 'admin'],
+        'dsm_admin'     => ['job_fair' => 'user',  'project_management' => 'admin', 'meetings' => 'admin', 'demand_side' => 'admin', 'pmu_assets' => 'admin', 'administration' => 'admin'],
+        'state_dsm'     => ['job_fair' => 'user',  'meetings' => 'user', 'demand_side' => 'admin'],
+        'crm_member'    => ['job_fair' => 'user',  'meetings' => 'user'],
+        'district_user' => ['job_fair' => 'user',  'meetings' => 'user'],
+        'district_pmu'  => ['meetings' => 'user', 'pmu_assets' => 'user'],
+        'state_pmu'     => ['meetings' => 'user', 'pmu_assets' => 'user'],
+        'edms'          => ['meetings' => 'user', 'pmu_assets' => 'reviewer'],
     ];
 
     $moduleId = [];
@@ -181,9 +182,11 @@ function rbac__backfill_from_legacy_roles(Database $db): void
         $roleId[(string) $r['module_code']][(string) $r['code']] = (int) $r['id'];
     }
 
-    $users = $db->query('SELECT u.id, u.role FROM users u
-        WHERE u.active_status = 1
-          AND NOT EXISTS (SELECT 1 FROM user_module_role umr WHERE umr.user_id = u.id)')->fetchAll();
+    // Backfill runs top-up per (user × module) rather than skipping
+    // users that already have any grants — that way when we later add
+    // a new module (e.g. 'meetings'), existing users get the grants
+    // for the new module without an admin having to touch each row.
+    $users = $db->query('SELECT id, role FROM users WHERE active_status = 1')->fetchAll();
     foreach ($users as $u) {
         $legacy = (string) ($u['role'] ?? '');
         $grants = $mapping[$legacy] ?? [];
@@ -192,6 +195,8 @@ function rbac__backfill_from_legacy_roles(Database $db): void
             $rid = $roleId[$modCode][$roleCode] ?? 0;
             if ($mid > 0 && $rid > 0) {
                 try {
+                    // INSERT IGNORE — never downgrades an admin's manual
+                    // grant back to whatever the legacy mapping says.
                     $db->prepare('INSERT IGNORE INTO user_module_role (user_id, module_id, module_role_id, created_at) VALUES (?, ?, ?, NOW())')
                        ->execute([(int) $u['id'], $mid, $rid]);
                 } catch (Throwable $e) { /* ignore */ }
