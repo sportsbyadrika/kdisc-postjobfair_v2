@@ -17,7 +17,13 @@ $isAdminAll = is_manage_admin($viewer) || user_can_admin_module($viewerId, 'meet
 
 $id = (int) ($_GET['id'] ?? 0);
 if ($id <= 0) { header('Location: /meetings.php'); exit; }
-$stmt = db()->prepare('SELECT m.*, u.name AS created_by_name FROM meeting m LEFT JOIN users u ON u.id = m.created_by WHERE m.id = ? LIMIT 1');
+$stmt = db()->prepare('SELECT m.*, u.name AS created_by_name,
+        cu.name AS chair_user_name, cc.name AS chair_contact_name, cc.institution AS chair_contact_inst
+    FROM meeting m
+    LEFT JOIN users u ON u.id = m.created_by
+    LEFT JOIN users cu ON cu.id = m.chair_user_id
+    LEFT JOIN contact cc ON cc.id = m.chair_contact_id
+    WHERE m.id = ? LIMIT 1');
 $stmt->execute([$id]);
 $meeting = $stmt->fetch();
 if ($meeting === false) { header('Location: /meetings.php'); exit; }
@@ -98,6 +104,19 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                     <div class="col-md-6"><div class="small text-muted">Virtual link</div><div><?php if (!empty($meeting['virtual_link'])): ?><a href="<?= esc((string) $meeting['virtual_link']) ?>" target="_blank"><?= esc((string) $meeting['virtual_link']) ?></a><?php else: ?>—<?php endif; ?></div></div>
                     <div class="col-md-6"><div class="small text-muted">Reference</div><div class="font-monospace"><?= esc((string) $meeting['reference_no']) ?></div></div>
                     <div class="col-md-6"><div class="small text-muted">Created by</div><div><?= esc((string) ($meeting['created_by_name'] ?? '—')) ?></div></div>
+                    <?php
+                        $chairName = trim((string) ($meeting['chair_user_name'] ?? '')) !== ''
+                            ? (string) $meeting['chair_user_name'] : (string) ($meeting['chair_contact_name'] ?? '');
+                        $chairType = trim((string) ($meeting['chair_user_name'] ?? '')) !== '' ? 'internal' : ((int) ($meeting['chair_contact_id'] ?? 0) > 0 ? 'external' : '');
+                        $chairInstitution = (string) ($meeting['chair_contact_inst'] ?? '');
+                    ?>
+                    <div class="col-md-6">
+                        <div class="small text-muted">Chairperson (<?= $chairType ?: '—' ?>)</div>
+                        <div>
+                            <?= $chairName !== '' ? esc($chairName) : '<span class="text-muted">—</span>' ?>
+                            <?php if ($chairInstitution !== ''): ?><span class="small text-muted">· <?= esc($chairInstitution) ?></span><?php endif; ?>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

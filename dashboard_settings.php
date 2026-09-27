@@ -42,11 +42,19 @@ $flashAndBack = static function (string $msg, string $type = 'success'): void {
 if (is_post() && ($_POST['action'] ?? '') === 'save') {
     csrf_check_or_die();
     $submitted = (array) ($_POST['visible'] ?? []); // card_code => '1' when checked
+    $order     = (array) ($_POST['order']   ?? []); // ordered list of card_codes
     try {
-        $up = db()->prepare('UPDATE dashboard_card_visibility SET is_visible = ?, updated_at = NOW(), updated_by = ? WHERE card_code = ?');
+        // Write both fields for every known card. Sort order comes
+        // from the position in the submitted list; anything absent
+        // from the list falls to the end.
+        $up = db()->prepare('UPDATE dashboard_card_visibility SET is_visible = ?, sort_order = ?, updated_at = NOW(), updated_by = ? WHERE card_code = ?');
+        $rank = [];
+        $step = 10;
+        foreach ($order as $i => $code) $rank[(string) $code] = ($i + 1) * $step;
         foreach (dashboard_all_cards() as $c) {
             $on = isset($submitted[$c['code']]) ? 1 : 0;
-            $up->execute([$on, $viewerId, $c['code']]);
+            $sortOrder = $rank[$c['code']] ?? 10000;
+            $up->execute([$on, $sortOrder, $viewerId, $c['code']]);
         }
         $flashAndBack('Dashboard settings updated.');
     } catch (Throwable $e) {
@@ -54,12 +62,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     }
 }
 
-$current = [];
-try {
-    foreach (db()->query('SELECT card_code, is_visible FROM dashboard_card_visibility')->fetchAll() as $r) {
-        $current[(string) $r['card_code']] = ((int) $r['is_visible']) === 1;
-    }
-} catch (Throwable $e) { /* table missing */ }
+$ordered = dashboard_ordered_cards();
 
 render_header('Administration · Dashboard settings', ['main_container_class' => 'container-xl']);
 render_page_header('Administration · Dashboard settings', [
@@ -78,28 +81,68 @@ render_page_header('Administration · Dashboard settings', [
     <input type="hidden" name="action" value="save">
     <div class="card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-toggles text-primary me-1"></i>Card groups on the dashboard</span>
-        <span class="small text-muted">Tick to show · untick to hide</span>
+        <span class="small text-muted">Tick to show · untick to hide · drag the <i class="bi bi-grip-vertical"></i> handle to reorder</span>
     </div>
     <div class="card-body">
-        <?php foreach (dashboard_all_cards() as $c):
-            $on = array_key_exists($c['code'], $current) ? $current[$c['code']] : true;
-        ?>
-            <div class="form-check form-switch py-2 border-bottom">
-                <input class="form-check-input" type="checkbox" role="switch"
-                       id="card_<?= esc($c['code']) ?>"
-                       name="visible[<?= esc($c['code']) ?>]" value="1"
-                       <?= $on ? 'checked' : '' ?>>
-                <label class="form-check-label fw-semibold" for="card_<?= esc($c['code']) ?>">
-                    <?= esc((string) $c['label']) ?>
-                </label>
-                <div class="small text-muted"><?= esc((string) ($c['description'] ?? '')) ?></div>
-            </div>
-        <?php endforeach; ?>
+        <div id="cardRowsWrap">
+            <?php foreach ($ordered as $c): ?>
+                <div class="ds-row d-flex align-items-start gap-2 py-2 border-bottom" data-code="<?= esc($c['code']) ?>">
+                    <div class="ds-handle text-muted" style="cursor: grab; padding-top: 2px;" title="Drag to reorder">
+                        <i class="bi bi-grip-vertical fs-5"></i>
+                    </div>
+                    <div class="form-check form-switch flex-grow-1">
+                        <input class="form-check-input" type="checkbox" role="switch"
+                               id="card_<?= esc($c['code']) ?>"
+                               name="visible[<?= esc($c['code']) ?>]" value="1"
+                               <?= $c['is_visible'] ? 'checked' : '' ?>>
+                        <label class="form-check-label fw-semibold" for="card_<?= esc($c['code']) ?>">
+                            <?= esc((string) $c['label']) ?>
+                        </label>
+                        <div class="small text-muted"><?= esc((string) ($c['description'] ?? '')) ?></div>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
+        <div id="orderHiddenWrap"></div>
     </div>
     <div class="card-footer d-flex justify-content-end gap-2">
         <a class="btn btn-light" href="/dashboard.php">Cancel</a>
-        <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i>Save</button>
+        <button class="btn btn-primary" type="submit" id="dsSave"><i class="bi bi-check2-circle me-1"></i>Save</button>
     </div>
 </form>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const wrap = document.getElementById('cardRowsWrap');
+    const hidden = document.getElementById('orderHiddenWrap');
+    if (!wrap || typeof Sortable === 'undefined') return;
+
+    const rebuildHidden = () => {
+        hidden.innerHTML = '';
+        wrap.querySelectorAll('.ds-row').forEach(row => {
+            const code = row.getAttribute('data-code');
+            const h = document.createElement('input');
+            h.type = 'hidden'; h.name = 'order[]'; h.value = code;
+            hidden.appendChild(h);
+        });
+    };
+    new Sortable(wrap, {
+        animation: 150,
+        handle: '.ds-handle',
+        ghostClass: 'ds-ghost',
+        chosenClass: 'ds-chosen',
+        forceFallback: true,
+        onEnd: rebuildHidden,
+    });
+    rebuildHidden(); // seed on load so save works even without dragging
+});
+</script>
+
+<style>
+.ds-row { user-select: none; }
+.ds-row.ds-chosen { background: #f0f6ff; }
+.ds-row.ds-ghost  { opacity: .5; }
+</style>
 
 <?php render_footer(); ?>

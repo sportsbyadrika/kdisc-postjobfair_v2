@@ -419,6 +419,16 @@ render_header('Dashboard');
     </div>
 </div>
 
+<?php
+    // Every dashboard card block below runs unconditionally into
+    // its own output buffer so the six groups can render in any
+    // order (the operator drags them around under Administration ->
+    // Dashboard settings). Blocks whose visibility gate is off go
+    // through, produce nothing and land as an empty string in the
+    // map — a no-op at echo time.
+    $cardBlocks = [];
+    ob_start();
+?>
 <?php if ($isDashboardAdminView && dashboard_card_visible('demand_snapshot')): ?>
 <div class="mb-1">
     <h2 class="h6 text-muted text-uppercase mb-2"><i class="bi bi-building me-1"></i>Demand Side Snapshot <span class="text-muted small">(based on DWMS database)</span></h2>
@@ -541,6 +551,7 @@ render_header('Dashboard');
         </div>
     </div>
 <?php endif; /* demand_snapshot */ ?>
+<?php $cardBlocks['demand_snapshot'] = ob_get_clean(); ob_start(); ?>
 
 <?php if ($isDashboardAdminView && dashboard_card_visible('demand_verify')): ?>
 <div class="mb-1">
@@ -628,6 +639,7 @@ render_header('Dashboard');
     </div>
 </div>
 <?php endif; /* demand_verify */ ?>
+<?php $cardBlocks['demand_verify'] = ob_get_clean(); ob_start(); ?>
 
 <?php if ($isDashboardAdminView && dashboard_card_visible('district_pmu')): ?>
     <?php
@@ -778,7 +790,8 @@ render_header('Dashboard');
             <div class="card-footer small text-muted"><i class="bi bi-info-circle me-1"></i>Click a thumbnail to open the full-size photo in a new tab.</div>
         </div>
     <?php endif; ?>
-<?php endif; ?>
+<?php endif; /* district_pmu */ ?>
+<?php $cardBlocks['district_pmu'] = ob_get_clean(); ob_start(); ?>
 
 <?php if (dashboard_card_visible('jobfair_status')): ?>
 <h2 class="h6 text-muted text-uppercase mb-2 <?= $isDashboardAdminView ? 'mt-4' : '' ?>"><i class="bi bi-clipboard2-data me-1"></i>Post Job Fair Status</h2>
@@ -804,6 +817,7 @@ render_header('Dashboard');
     <?php endforeach; ?>
 </div>
 <?php endif; /* jobfair_status */ ?>
+<?php $cardBlocks['jobfair_status'] = ob_get_clean(); ob_start(); ?>
 
 <?php
     // Meetings card + mini calendar. Renders for every viewer when the
@@ -858,17 +872,17 @@ render_header('Dashboard');
 <style>
 .mini-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .mini-cal .mc-h  { text-align: center; font-size: .75rem; font-weight: 600; color: var(--pjf-muted); padding: 4px 0; }
-.mini-cal .mc-d  { border: 1px solid #e3e6ee; border-radius: 6px; padding: 8px 4px; text-align: center; font-size: .85rem; color: #334155; }
+.mini-cal .mc-d  { position: relative; border: 1px solid #e3e6ee; border-radius: 6px; padding: 8px 4px; text-align: center; font-size: .85rem; color: #334155; }
 .mini-cal .mc-d.mc-today  { border-color: #0ea5e9; box-shadow: inset 0 0 0 1px #0ea5e9; }
 .mini-cal .mc-d.mc-has    { background: #dbeafe; color: #1e3a8a; font-weight: 600; cursor: pointer; }
 .mini-cal .mc-d.mc-has:hover { background: #bfdbfe; }
 .mini-cal .mc-blank { background: transparent; border: none; }
+.mini-cal .mc-count { position: absolute; top: 2px; right: 3px; background: #1d4ed8; color: #fff; font-size: .65rem; font-weight: 700; line-height: 1; padding: 2px 5px; border-radius: 10px; min-width: 18px; }
 </style>
 <script>
 (function () {
-    const meetingDays = <?= json_encode(array_keys($meetingDays)) ?>;
+    const meetingDays = <?= json_encode($meetingDays) ?>; // { YYYY-MM-DD: count }
     const today       = <?= json_encode($todayYmd) ?>;
-    const daySet = new Set(meetingDays);
     const titleEl = document.getElementById('calTitle');
     const gridEl  = document.getElementById('miniCalendar');
 
@@ -892,12 +906,18 @@ render_header('Dashboard');
             const cell = document.createElement('div');
             cell.className = 'mc-d';
             if (key === today) cell.classList.add('mc-today');
-            if (daySet.has(key)) {
+            const count = meetingDays[key] || 0;
+            if (count > 0) {
                 cell.classList.add('mc-has');
-                cell.title = 'Meetings scheduled';
+                cell.title = count + ' meeting' + (count === 1 ? '' : 's');
                 cell.addEventListener('click', () => { window.location.href = '/meetings.php?date=' + key; });
             }
-            cell.textContent = String(d);
+            const dayText = document.createElement('span'); dayText.textContent = String(d); cell.appendChild(dayText);
+            if (count > 0) {
+                const badge = document.createElement('span');
+                badge.className = 'mc-count'; badge.textContent = String(count);
+                cell.appendChild(badge);
+            }
             gridEl.appendChild(cell);
         }
     };
@@ -907,6 +927,15 @@ render_header('Dashboard');
 })();
 </script>
 <?php endif; /* meetings */ ?>
+<?php
+    $cardBlocks['meetings'] = ob_get_clean();
+    // Emit every captured card block in the order the operator
+    // arranged them under Dashboard settings.
+    foreach (dashboard_ordered_cards() as $orderedCard) {
+        $code = $orderedCard['code'];
+        if (isset($cardBlocks[$code]) && $cardBlocks[$code] !== '') echo $cardBlocks[$code];
+    }
+?>
 
 <?php if (!$isDashboardAdminView): ?>
 <div class="card mt-3">

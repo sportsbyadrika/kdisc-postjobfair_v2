@@ -30,8 +30,8 @@ render_header('Login', [
                 <div class="text-center mb-4">
                     <span class="login-brand-mark mb-3"><i class="bi bi-briefcase-fill"></i></span>
                     <p class="login-kicker mb-1">KDISC Internal Portal</p>
-                    <h1 class="h4 mb-1">Job Fair CRM</h1>
-                    <p class="text-muted mb-0 small">Sign in to manage post job fair tracking</p>
+                    <h1 class="h4 mb-1">K-DISC MIS</h1>
+                    <p class="text-muted mb-0 small">Meetings, Projects &amp; Admin</p>
                 </div>
                 <?php if ($error): ?>
                     <div class="alert alert-danger d-flex align-items-center gap-2">
@@ -66,7 +66,7 @@ render_header('Login', [
                 </div>
             </div>
         </div>
-        <p class="text-center text-muted small mt-3 mb-0">&copy; <?= date('Y') ?> KDISC · Job Fair CRM</p>
+        <p class="text-center text-muted small mt-3 mb-0">&copy; <?= date('Y') ?> KDISC · K-DISC MIS</p>
     </div>
 </div>
 <?php render_footer(false); ?>

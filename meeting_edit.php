@@ -334,8 +334,14 @@ render_page_header($pageTitle, [
                 </select>
             </div>
             <div class="col-md-6">
-                <label class="form-label">Chairperson (contact)</label>
-                <select class="form-select" name="chair_contact_id">
+                <label class="form-label d-flex justify-content-between align-items-center">
+                    <span>Chairperson (contact)</span>
+                    <span class="d-inline-flex align-items-center gap-2">
+                        <a href="#" class="small" id="chairNewContactBtn"><i class="bi bi-plus-lg"></i> New contact</a>
+                        <button type="button" class="btn btn-sm btn-link p-0" id="chairRefreshBtn" title="Refresh contact list"><i class="bi bi-arrow-clockwise"></i></button>
+                    </span>
+                </label>
+                <select class="form-select" name="chair_contact_id" id="chairContactSelect">
                     <option value="0">— None —</option>
                     <?php foreach ($contacts as $c): ?>
                         <option value="<?= (int) $c['id'] ?>" <?= (int) $formValues['chair_contact_id'] === (int) $c['id'] ? 'selected' : '' ?>><?= esc((string) $c['name']) ?><?= !empty($c['institution']) ? ' · ' . esc((string) $c['institution']) : '' ?></option>
@@ -354,19 +360,37 @@ render_page_header($pageTitle, [
         </div>
 
         <hr class="my-4">
-        <h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-people me-1"></i>Participants</h6>
-        <div id="participantsWrap"></div>
-        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="addParticipant"><i class="bi bi-plus-lg me-1"></i>Add participant</button>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="text-uppercase small text-muted mb-0"><i class="bi bi-people me-1"></i>Participants</h6>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="participantModal"><i class="bi bi-plus-lg me-1"></i>Add participant</button>
+        </div>
+        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="participantTable">
+            <thead><tr><th>Name</th><th>Type</th><th>Attendance</th><th>Role</th><th class="text-end">Action</th></tr></thead>
+            <tbody></tbody>
+        </table></div>
+        <div id="participantHidden"></div>
 
         <hr class="my-4">
-        <h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-list-ol me-1"></i>Agenda</h6>
-        <div id="agendaWrap"></div>
-        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="addAgenda"><i class="bi bi-plus-lg me-1"></i>Add agenda item</button>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="text-uppercase small text-muted mb-0"><i class="bi bi-list-ol me-1"></i>Agenda</h6>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="agendaModal"><i class="bi bi-plus-lg me-1"></i>Add agenda item</button>
+        </div>
+        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="agendaTable">
+            <thead><tr><th style="width:4%;">#</th><th>Title</th><th>Description</th><th>Lead</th><th class="text-end">Action</th></tr></thead>
+            <tbody></tbody>
+        </table></div>
+        <div id="agendaHidden"></div>
 
         <hr class="my-4">
-        <h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-check2-square me-1"></i>Decision points</h6>
-        <div id="decisionsWrap"></div>
-        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="addDecision"><i class="bi bi-plus-lg me-1"></i>Add decision</button>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="text-uppercase small text-muted mb-0"><i class="bi bi-check2-square me-1"></i>Decision points</h6>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="decisionModal"><i class="bi bi-plus-lg me-1"></i>Add decision</button>
+        </div>
+        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="decisionTable">
+            <thead><tr><th style="width:4%;">#</th><th>Heading</th><th>Description</th><th>Due</th><th>Responsible</th><th class="text-end">Action</th></tr></thead>
+            <tbody></tbody>
+        </table></div>
+        <div id="decisionHidden"></div>
 
         <hr class="my-4">
         <h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-calendar-plus me-1"></i>Next meeting <span class="small text-muted">(optional)</span></h6>
@@ -395,13 +419,26 @@ render_page_header($pageTitle, [
                 </select>
             </div>
         </div>
-        <div id="nextAgendaWrap" class="mt-3"></div>
-        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="addNextAgenda"><i class="bi bi-plus-lg me-1"></i>Add next-meeting agenda</button>
+        <div class="d-flex justify-content-between align-items-center mb-2 mt-3">
+            <span class="small fw-semibold">Next-meeting agenda</span>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="nextAgendaModal"><i class="bi bi-plus-lg me-1"></i>Add next-meeting agenda</button>
+        </div>
+        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="nextAgendaTable">
+            <thead><tr><th style="width:4%;">#</th><th>Title</th><th>Description</th><th class="text-end">Action</th></tr></thead>
+            <tbody></tbody>
+        </table></div>
+        <div id="nextAgendaHidden"></div>
 
         <hr class="my-4">
-        <h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-link-45deg me-1"></i>Attachment URLs <span class="small text-muted">(Google Drive / SharePoint / any)</span></h6>
-        <div id="urlsWrap"></div>
-        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="addUrl"><i class="bi bi-plus-lg me-1"></i>Add URL</button>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="text-uppercase small text-muted mb-0"><i class="bi bi-link-45deg me-1"></i>Attachment URLs <span class="small text-muted">(Google Drive / SharePoint / any)</span></h6>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="urlModal"><i class="bi bi-plus-lg me-1"></i>Add URL</button>
+        </div>
+        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="urlTable">
+            <thead><tr><th>Label</th><th>URL</th><th class="text-end">Action</th></tr></thead>
+            <tbody></tbody>
+        </table></div>
+        <div id="urlHidden"></div>
     </div>
     <div class="card-footer d-flex justify-content-end gap-2">
         <a class="btn btn-light" href="<?= $existing ? '/meeting_view.php?id=' . (int) $existing['id'] : '/meetings.php' ?>">Cancel</a>
@@ -445,122 +482,436 @@ window.__meetingRef = {
     },
 };
 </script>
+<!-- =============== Modal templates =============== -->
+<div class="mm-backdrop" id="mmBackdrop" style="display:none;"></div>
+
+<!-- Participant modal -->
+<div class="mm-modal" id="participantModal" style="display:none;">
+    <div class="mm-header"><span><i class="bi bi-people me-1"></i>Participant</span><button type="button" class="btn-close" data-close-modal></button></div>
+    <div class="mm-body">
+        <input type="hidden" id="pModalIdx" value="">
+        <div class="mb-2"><label class="form-label small">User (from seat)</label><select class="form-select" id="pModalUser"></select></div>
+        <div class="mb-2"><label class="form-label small">Contact (external)</label><select class="form-select" id="pModalContact"></select></div>
+        <div class="row g-2">
+            <div class="col-md-4"><label class="form-label small">Attendance type</label>
+                <select class="form-select" id="pModalMand"><option value="1">Mandatory</option><option value="0">Optional</option></select></div>
+            <div class="col-md-4"><label class="form-label small">Present?</label>
+                <select class="form-select" id="pModalAtt"><option value="">— not yet —</option><option value="1">Present</option><option value="0">Absent</option></select></div>
+            <div class="col-md-4"><label class="form-label small">Role</label>
+                <input class="form-control" id="pModalRole" placeholder="e.g. Guest"></div>
+        </div>
+    </div>
+    <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="pModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
+</div>
+
+<!-- Agenda modal -->
+<div class="mm-modal" id="agendaModal" style="display:none;">
+    <div class="mm-header"><span><i class="bi bi-list-ol me-1"></i>Agenda item</span><button type="button" class="btn-close" data-close-modal></button></div>
+    <div class="mm-body">
+        <input type="hidden" id="aModalIdx" value="">
+        <div class="mb-2"><label class="form-label small">Title *</label><input class="form-control" id="aModalTitle"></div>
+        <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="aModalDesc" rows="2"></textarea></div>
+        <div class="mb-2"><label class="form-label small">Lead — user</label><select class="form-select" id="aModalLeadUser"></select></div>
+        <div class="mb-2"><label class="form-label small">Lead — seat</label><select class="form-select" id="aModalLeadSeat"></select></div>
+        <div class="mb-2"><label class="form-label small">Lead — contact</label><select class="form-select" id="aModalLeadContact"></select></div>
+    </div>
+    <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="aModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
+</div>
+
+<!-- Decision modal -->
+<div class="mm-modal" id="decisionModal" style="display:none; width: min(720px, 92vw);">
+    <div class="mm-header"><span><i class="bi bi-check2-square me-1"></i>Decision point</span><button type="button" class="btn-close" data-close-modal></button></div>
+    <div class="mm-body">
+        <input type="hidden" id="dModalIdx" value="">
+        <div class="mb-2"><label class="form-label small">Heading *</label><input class="form-control" id="dModalHead"></div>
+        <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="dModalDesc" rows="3"></textarea></div>
+        <div class="mb-2"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
+        <div class="row g-2">
+            <div class="col-md-4"><label class="form-label small">Responsible users</label><select class="form-select" id="dModalUsers" multiple size="6"></select></div>
+            <div class="col-md-4"><label class="form-label small">Responsible seats</label><select class="form-select" id="dModalSeats" multiple size="6"></select></div>
+            <div class="col-md-4"><label class="form-label small">Responsible contacts</label><select class="form-select" id="dModalContacts" multiple size="6"></select></div>
+        </div>
+    </div>
+    <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="dModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
+</div>
+
+<!-- Next-agenda modal -->
+<div class="mm-modal" id="nextAgendaModal" style="display:none;">
+    <div class="mm-header"><span><i class="bi bi-calendar-plus me-1"></i>Next-meeting agenda</span><button type="button" class="btn-close" data-close-modal></button></div>
+    <div class="mm-body">
+        <input type="hidden" id="nModalIdx" value="">
+        <div class="mb-2"><label class="form-label small">Title *</label><input class="form-control" id="nModalTitle"></div>
+        <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="nModalDesc" rows="2"></textarea></div>
+    </div>
+    <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="nModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
+</div>
+
+<!-- URL modal -->
+<div class="mm-modal" id="urlModal" style="display:none;">
+    <div class="mm-header"><span><i class="bi bi-link-45deg me-1"></i>Attachment URL</span><button type="button" class="btn-close" data-close-modal></button></div>
+    <div class="mm-body">
+        <input type="hidden" id="uModalIdx" value="">
+        <div class="mb-2"><label class="form-label small">Label</label><input class="form-control" id="uModalLabel" placeholder="Optional"></div>
+        <div class="mb-2"><label class="form-label small">URL *</label><input type="url" class="form-control" id="uModalUrl" placeholder="https://…"></div>
+    </div>
+    <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="uModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
+</div>
+
+<!-- New contact quick-add modal -->
+<div class="mm-modal" id="newContactModal" style="display:none;">
+    <div class="mm-header"><span><i class="bi bi-person-plus me-1"></i>New contact</span><button type="button" class="btn-close" data-close-modal></button></div>
+    <div class="mm-body">
+        <div class="row g-2">
+            <div class="col-md-6"><label class="form-label small">Name *</label><input class="form-control" id="ncName"></div>
+            <div class="col-md-6"><label class="form-label small">Institution</label><input class="form-control" id="ncInst"></div>
+            <div class="col-md-6"><label class="form-label small">Designation</label><input class="form-control" id="ncDes"></div>
+            <div class="col-md-3"><label class="form-label small">Mobile</label><input class="form-control" id="ncMob"></div>
+            <div class="col-md-3"><label class="form-label small">Email</label><input type="email" class="form-control" id="ncEm"></div>
+        </div>
+    </div>
+    <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="ncSave"><i class="bi bi-check2 me-1"></i>Save contact</button></div>
+</div>
+
+<style>
+.mm-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.35); z-index: 1080; }
+.mm-modal   { position: fixed; top: 15vh; left: 50%; transform: translateX(-50%); width: min(560px, 92vw); background: #fff; border-radius: 8px; box-shadow: 0 20px 40px rgba(0,0,0,.2); z-index: 1090; }
+.mm-header  { padding: 10px 14px; border-bottom: 1px solid #e3e6ee; cursor: move; display: flex; justify-content: space-between; align-items: center; font-weight: 600; user-select: none; }
+.mm-body    { padding: 14px; max-height: 62vh; overflow-y: auto; }
+.mm-footer  { padding: 10px 14px; border-top: 1px solid #e3e6ee; display: flex; justify-content: flex-end; gap: 6px; }
+.mm-modal.mm-dragging { transition: none; }
+</style>
+
 <script>
 (function () {
     const R = window.__meetingRef;
-    const optHtml = (list, keyName, sel) => {
-        let out = '<option value="0">— None —</option>';
-        list.forEach(x => {
-            const label = x.name + (x.inst ? ' · ' + x.inst : '');
-            out += `<option value="${x.id}" ${String(x.id) === String(sel) ? 'selected' : ''}>${label.replace(/</g,'&lt;')}</option>`;
-        });
-        return out;
+
+    // ============ STATE ARRAYS ============
+    const state = {
+        participants: (R.preset.participants || []).slice(),
+        agenda:       (R.preset.agenda || []).slice(),
+        decisions:    (R.preset.decisions || []).slice(),
+        next_agenda:  (R.preset.next_agenda || []).slice(),
+        urls:         (R.preset.urls || []).slice(),
     };
-    const multiOptHtml = (list, sel) => {
+    let contactsPool = R.contacts.slice(); // mutable — quick-add + refresh
+
+    const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const findById = (list, id) => list.find(x => String(x.id) === String(id));
+    const nameOf = (list, id) => { const x = findById(list, id); return x ? (x.name + (x.inst ? ' · ' + x.inst : '')) : ''; };
+    const optionsFor = (list, selId, includeNone=true) => {
+        let h = includeNone ? '<option value="0">— None —</option>' : '';
+        list.forEach(x => { h += `<option value="${x.id}" ${String(x.id) === String(selId ?? '') ? 'selected' : ''}>${esc(x.name + (x.inst ? ' · ' + x.inst : ''))}</option>`; });
+        return h;
+    };
+    const multiOptionsFor = (list, sel) => {
         const set = new Set((sel || []).map(String));
-        let out = '';
-        list.forEach(x => {
-            const label = x.name + (x.inst ? ' · ' + x.inst : '');
-            out += `<option value="${x.id}" ${set.has(String(x.id)) ? 'selected' : ''}>${label.replace(/</g,'&lt;')}</option>`;
+        return list.map(x => `<option value="${x.id}" ${set.has(String(x.id)) ? 'selected' : ''}>${esc(x.name + (x.inst ? ' · ' + x.inst : ''))}</option>`).join('');
+    };
+
+    // ============ MOVABLE MODAL HELPERS ============
+    const backdrop = document.getElementById('mmBackdrop');
+    const openModal = (id) => {
+        // Fresh position each open so a dragged spot doesn't stick.
+        const modal = document.getElementById(id);
+        if (!modal) return;
+        modal.style.top = '15vh'; modal.style.left = '50%'; modal.style.transform = 'translateX(-50%)';
+        backdrop.style.display = 'block'; modal.style.display = 'block';
+    };
+    const closeAllModals = () => {
+        backdrop.style.display = 'none';
+        document.querySelectorAll('.mm-modal').forEach(m => m.style.display = 'none');
+    };
+    document.addEventListener('click', (ev) => {
+        const openBtn = ev.target.closest('[data-open-modal]');
+        if (openBtn) { ev.preventDefault(); openModal(openBtn.getAttribute('data-open-modal')); return; }
+        if (ev.target.closest('[data-close-modal]')) { closeAllModals(); return; }
+        if (ev.target === backdrop) closeAllModals();
+    });
+    // Drag by header
+    document.querySelectorAll('.mm-modal').forEach(modal => {
+        const header = modal.querySelector('.mm-header');
+        if (!header) return;
+        let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
+        header.addEventListener('mousedown', (e) => {
+            if (e.target.closest('button')) return; // don't drag when clicking close
+            dragging = true;
+            modal.classList.add('mm-dragging');
+            modal.style.transform = 'none';
+            const rect = modal.getBoundingClientRect();
+            origX = rect.left; origY = rect.top;
+            modal.style.left = origX + 'px'; modal.style.top = origY + 'px';
+            startX = e.clientX; startY = e.clientY;
+            e.preventDefault();
         });
-        return out;
-    };
+        document.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            modal.style.left = (origX + e.clientX - startX) + 'px';
+            modal.style.top  = (origY + e.clientY - startY) + 'px';
+        });
+        document.addEventListener('mouseup', () => { dragging = false; modal.classList.remove('mm-dragging'); });
+    });
 
-    const addParticipant = (p = {}) => {
-        const idx = document.querySelectorAll('#participantsWrap .prow').length;
-        const html = `<div class="prow row g-2 align-items-end mb-2 border rounded p-2">
-            <div class="col-md-3"><label class="form-label small">User (from seat)</label>
-                <select class="form-select form-select-sm" name="participant[${idx}][user_id]">${optHtml(R.users, 'name', p.user_id || 0)}</select></div>
-            <div class="col-md-3"><label class="form-label small">Contact (external)</label>
-                <select class="form-select form-select-sm" name="participant[${idx}][contact_id]">${optHtml(R.contacts, 'name', p.contact_id || 0)}</select></div>
-            <div class="col-md-2"><label class="form-label small">Attendance type</label>
-                <select class="form-select form-select-sm" name="participant[${idx}][is_mandatory]">
-                    <option value="1" ${String(p.is_mandatory ?? 1) === '1' ? 'selected' : ''}>Mandatory</option>
-                    <option value="0" ${String(p.is_mandatory) === '0' ? 'selected' : ''}>Optional</option>
-                </select></div>
-            <div class="col-md-2"><label class="form-label small">Present?</label>
-                <select class="form-select form-select-sm" name="participant[${idx}][attended]">
-                    <option value="" ${p.attended === '' || p.attended === undefined ? 'selected' : ''}>— not yet —</option>
-                    <option value="1" ${String(p.attended) === '1' ? 'selected' : ''}>Present</option>
-                    <option value="0" ${String(p.attended) === '0' ? 'selected' : ''}>Absent</option>
-                </select></div>
-            <div class="col-md-1"><label class="form-label small">Role</label>
-                <input class="form-control form-control-sm" name="participant[${idx}][role_label]" placeholder="e.g. Guest" value="${(p.role_label || '').replace(/"/g,'&quot;')}"></div>
-            <div class="col-md-1 text-end"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.prow').remove();"><i class="bi bi-x"></i></button></div>
-        </div>`;
-        document.getElementById('participantsWrap').insertAdjacentHTML('beforeend', html);
+    // ============ TABLE RENDERERS ============
+    const renderParticipants = () => {
+        const tbody = document.querySelector('#participantTable tbody');
+        tbody.innerHTML = state.participants.map((p, i) => {
+            const name = p.user_id ? nameOf(R.users, p.user_id) : (p.contact_id ? nameOf(contactsPool, p.contact_id) : '—');
+            const type = String(p.is_mandatory) === '1' ? '<span class="badge text-bg-danger">Mandatory</span>' : '<span class="badge text-bg-secondary">Optional</span>';
+            const att = p.attended === '' || p.attended === undefined || p.attended === null ? '<span class="text-muted">not recorded</span>' : (String(p.attended) === '1' ? '<span class="badge text-bg-success">Present</span>' : '<span class="badge text-bg-secondary">Absent</span>');
+            return `<tr><td>${esc(name)}</td><td>${type}</td><td>${att}</td><td class="small">${esc(p.role_label || '')}</td>
+                <td class="text-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-participant="${i}"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-participant="${i}"><i class="bi bi-x"></i></button>
+                </td></tr>`;
+        }).join('') || '<tr><td colspan="5" class="text-center text-muted small py-2">No participants yet — click Add participant.</td></tr>';
+        const hidden = document.getElementById('participantHidden');
+        hidden.innerHTML = state.participants.map((p, i) => {
+            return `<input type="hidden" name="participant[${i}][user_id]"      value="${p.user_id || 0}">
+                    <input type="hidden" name="participant[${i}][contact_id]"   value="${p.contact_id || 0}">
+                    <input type="hidden" name="participant[${i}][is_mandatory]" value="${p.is_mandatory ?? 1}">
+                    <input type="hidden" name="participant[${i}][attended]"     value="${p.attended ?? ''}">
+                    <input type="hidden" name="participant[${i}][role_label]"   value="${esc(p.role_label || '')}">`;
+        }).join('');
     };
-    const addAgenda = (a = {}) => {
-        const idx = document.querySelectorAll('#agendaWrap .arow').length;
-        const html = `<div class="arow row g-2 align-items-end mb-2 border rounded p-2">
-            <div class="col-md-4"><label class="form-label small">Agenda title</label>
-                <input class="form-control form-control-sm" name="agenda[${idx}][title]" value="${(a.title || '').replace(/"/g,'&quot;')}"></div>
-            <div class="col-md-4"><label class="form-label small">Description</label>
-                <input class="form-control form-control-sm" name="agenda[${idx}][description]" value="${(a.description || '').replace(/"/g,'&quot;')}"></div>
-            <div class="col-md-3"><label class="form-label small">Lead (user OR contact OR seat)</label>
-                <select class="form-select form-select-sm" name="agenda[${idx}][lead_user_id]">${optHtml(R.users, 'name', a.lead_user_id || 0)}</select>
-                <select class="form-select form-select-sm mt-1" name="agenda[${idx}][lead_seat_id]">${optHtml(R.seats, 'name', a.lead_seat_id || 0)}</select>
-                <select class="form-select form-select-sm mt-1" name="agenda[${idx}][lead_contact_id]">${optHtml(R.contacts, 'name', a.lead_contact_id || 0)}</select></div>
-            <div class="col-md-1 text-end"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.arow').remove();"><i class="bi bi-x"></i></button></div>
-        </div>`;
-        document.getElementById('agendaWrap').insertAdjacentHTML('beforeend', html);
+    const renderAgenda = () => {
+        const tbody = document.querySelector('#agendaTable tbody');
+        tbody.innerHTML = state.agenda.map((a, i) => {
+            const lead = nameOf(R.users, a.lead_user_id) || nameOf(R.seats, a.lead_seat_id) || nameOf(contactsPool, a.lead_contact_id) || '';
+            return `<tr><td>${i+1}</td><td>${esc(a.title)}</td><td class="small text-muted">${esc((a.description || '').slice(0, 100))}</td><td class="small">${esc(lead)}</td>
+                <td class="text-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-agenda="${i}"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-agenda="${i}"><i class="bi bi-x"></i></button>
+                </td></tr>`;
+        }).join('') || '<tr><td colspan="5" class="text-center text-muted small py-2">No agenda items yet.</td></tr>';
+        const hidden = document.getElementById('agendaHidden');
+        hidden.innerHTML = state.agenda.map((a, i) => {
+            return `<input type="hidden" name="agenda[${i}][title]"           value="${esc(a.title || '')}">
+                    <input type="hidden" name="agenda[${i}][description]"     value="${esc(a.description || '')}">
+                    <input type="hidden" name="agenda[${i}][lead_user_id]"    value="${a.lead_user_id || 0}">
+                    <input type="hidden" name="agenda[${i}][lead_seat_id]"    value="${a.lead_seat_id || 0}">
+                    <input type="hidden" name="agenda[${i}][lead_contact_id]" value="${a.lead_contact_id || 0}">`;
+        }).join('');
     };
-    const addDecision = (d = {}) => {
-        const idx = document.querySelectorAll('#decisionsWrap .drow').length;
-        const html = `<div class="drow row g-2 align-items-start mb-2 border rounded p-2">
-            <div class="col-md-4"><label class="form-label small">Heading</label>
-                <input class="form-control form-control-sm" name="decision[${idx}][heading]" value="${(d.heading || '').replace(/"/g,'&quot;')}">
-                <label class="form-label small mt-2">Description</label>
-                <textarea class="form-control form-control-sm" name="decision[${idx}][description]" rows="3">${(d.description || '').replace(/</g,'&lt;')}</textarea>
-                <label class="form-label small mt-2">Due date</label>
-                <input type="date" class="form-control form-control-sm" name="decision[${idx}][due_date]" value="${d.due_date || ''}"></div>
-            <div class="col-md-3"><label class="form-label small">Responsible users</label>
-                <select class="form-select form-select-sm" name="decision[${idx}][user_ids][]" multiple size="6">${multiOptHtml(R.users, d.user_ids || [])}</select></div>
-            <div class="col-md-3"><label class="form-label small">Responsible seats</label>
-                <select class="form-select form-select-sm" name="decision[${idx}][seat_ids][]" multiple size="6">${multiOptHtml(R.seats, d.seat_ids || [])}</select></div>
-            <div class="col-md-2"><label class="form-label small">Responsible contacts</label>
-                <select class="form-select form-select-sm" name="decision[${idx}][contact_ids][]" multiple size="6">${multiOptHtml(R.contacts, d.contact_ids || [])}</select>
-                <button type="button" class="btn btn-sm btn-outline-danger mt-2" onclick="this.closest('.drow').remove();"><i class="bi bi-x"></i> Remove</button></div>
-        </div>`;
-        document.getElementById('decisionsWrap').insertAdjacentHTML('beforeend', html);
+    const renderDecisions = () => {
+        const tbody = document.querySelector('#decisionTable tbody');
+        tbody.innerHTML = state.decisions.map((d, i) => {
+            const responsibles = [
+                ...(d.user_ids || []).map(id => nameOf(R.users, id)),
+                ...(d.seat_ids || []).map(id => nameOf(R.seats, id)),
+                ...(d.contact_ids || []).map(id => nameOf(contactsPool, id)),
+            ].filter(Boolean).map(esc).join(', ');
+            return `<tr><td>${i+1}</td><td>${esc(d.heading)}</td><td class="small text-muted">${esc((d.description || '').slice(0, 100))}</td><td class="small">${esc(d.due_date || '')}</td><td class="small">${responsibles}</td>
+                <td class="text-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-decision="${i}"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-decision="${i}"><i class="bi bi-x"></i></button>
+                </td></tr>`;
+        }).join('') || '<tr><td colspan="6" class="text-center text-muted small py-2">No decision points yet.</td></tr>';
+        const hidden = document.getElementById('decisionHidden');
+        hidden.innerHTML = state.decisions.map((d, i) => {
+            const users   = (d.user_ids    || []).map(id => `<input type="hidden" name="decision[${i}][user_ids][]"    value="${id}">`).join('');
+            const seats   = (d.seat_ids    || []).map(id => `<input type="hidden" name="decision[${i}][seat_ids][]"    value="${id}">`).join('');
+            const conts   = (d.contact_ids || []).map(id => `<input type="hidden" name="decision[${i}][contact_ids][]" value="${id}">`).join('');
+            return `<input type="hidden" name="decision[${i}][heading]"     value="${esc(d.heading || '')}">
+                    <input type="hidden" name="decision[${i}][description]" value="${esc(d.description || '')}">
+                    <input type="hidden" name="decision[${i}][due_date]"    value="${d.due_date || ''}">${users}${seats}${conts}`;
+        }).join('');
     };
-    const addNextAgenda = (n = {}) => {
-        const idx = document.querySelectorAll('#nextAgendaWrap .nrow').length;
-        const html = `<div class="nrow row g-2 align-items-end mb-2 border rounded p-2">
-            <div class="col-md-4"><label class="form-label small">Next-meeting agenda title</label>
-                <input class="form-control form-control-sm" name="next_agenda[${idx}][title]" value="${(n.title || '').replace(/"/g,'&quot;')}"></div>
-            <div class="col-md-7"><label class="form-label small">Description</label>
-                <input class="form-control form-control-sm" name="next_agenda[${idx}][description]" value="${(n.description || '').replace(/"/g,'&quot;')}"></div>
-            <div class="col-md-1 text-end"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.nrow').remove();"><i class="bi bi-x"></i></button></div>
-        </div>`;
-        document.getElementById('nextAgendaWrap').insertAdjacentHTML('beforeend', html);
+    const renderNextAgenda = () => {
+        const tbody = document.querySelector('#nextAgendaTable tbody');
+        tbody.innerHTML = state.next_agenda.map((n, i) => {
+            return `<tr><td>${i+1}</td><td>${esc(n.title)}</td><td class="small text-muted">${esc(n.description || '')}</td>
+                <td class="text-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-next="${i}"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-next="${i}"><i class="bi bi-x"></i></button>
+                </td></tr>`;
+        }).join('') || '<tr><td colspan="4" class="text-center text-muted small py-2">No next-meeting agenda yet.</td></tr>';
+        document.getElementById('nextAgendaHidden').innerHTML = state.next_agenda.map((n, i) =>
+            `<input type="hidden" name="next_agenda[${i}][title]"       value="${esc(n.title || '')}">
+             <input type="hidden" name="next_agenda[${i}][description]" value="${esc(n.description || '')}">`).join('');
     };
-    const addUrl = (u = {}) => {
-        const idx = document.querySelectorAll('#urlsWrap .urow').length;
-        const html = `<div class="urow row g-2 align-items-end mb-2 border rounded p-2">
-            <div class="col-md-3"><label class="form-label small">Label</label>
-                <input class="form-control form-control-sm" name="url[${idx}][label]" value="${(u.label || '').replace(/"/g,'&quot;')}" placeholder="Optional label"></div>
-            <div class="col-md-8"><label class="form-label small">URL</label>
-                <input type="url" class="form-control form-control-sm" name="url[${idx}][url]" value="${(u.url || '').replace(/"/g,'&quot;')}" placeholder="https://…"></div>
-            <div class="col-md-1 text-end"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.urow').remove();"><i class="bi bi-x"></i></button></div>
-        </div>`;
-        document.getElementById('urlsWrap').insertAdjacentHTML('beforeend', html);
+    const renderUrls = () => {
+        const tbody = document.querySelector('#urlTable tbody');
+        tbody.innerHTML = state.urls.map((u, i) => {
+            return `<tr><td class="small">${esc(u.label || '')}</td><td class="small"><a href="${esc(u.url)}" target="_blank">${esc(u.url)}</a></td>
+                <td class="text-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-url="${i}"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-url="${i}"><i class="bi bi-x"></i></button>
+                </td></tr>`;
+        }).join('') || '<tr><td colspan="3" class="text-center text-muted small py-2">No URLs yet.</td></tr>';
+        document.getElementById('urlHidden').innerHTML = state.urls.map((u, i) =>
+            `<input type="hidden" name="url[${i}][label]" value="${esc(u.label || '')}">
+             <input type="hidden" name="url[${i}][url]"   value="${esc(u.url || '')}">`).join('');
     };
+    const renderAll = () => { renderParticipants(); renderAgenda(); renderDecisions(); renderNextAgenda(); renderUrls(); };
 
-    document.getElementById('addParticipant').addEventListener('click', () => addParticipant());
-    document.getElementById('addAgenda').addEventListener('click', () => addAgenda());
-    document.getElementById('addDecision').addEventListener('click', () => addDecision());
-    document.getElementById('addNextAgenda').addEventListener('click', () => addNextAgenda());
-    document.getElementById('addUrl').addEventListener('click', () => addUrl());
+    // Table row edit / delete
+    document.addEventListener('click', (ev) => {
+        const eP = ev.target.closest('[data-edit-participant]'); if (eP) return openParticipant(+eP.dataset.editParticipant);
+        const dP = ev.target.closest('[data-del-participant]');  if (dP) { state.participants.splice(+dP.dataset.delParticipant, 1); renderAll(); return; }
+        const eA = ev.target.closest('[data-edit-agenda]'); if (eA) return openAgenda(+eA.dataset.editAgenda);
+        const dA = ev.target.closest('[data-del-agenda]');  if (dA) { state.agenda.splice(+dA.dataset.delAgenda, 1); renderAll(); return; }
+        const eD = ev.target.closest('[data-edit-decision]'); if (eD) return openDecision(+eD.dataset.editDecision);
+        const dD = ev.target.closest('[data-del-decision]');  if (dD) { state.decisions.splice(+dD.dataset.delDecision, 1); renderAll(); return; }
+        const eN = ev.target.closest('[data-edit-next]'); if (eN) return openNext(+eN.dataset.editNext);
+        const dN = ev.target.closest('[data-del-next]');  if (dN) { state.next_agenda.splice(+dN.dataset.delNext, 1); renderAll(); return; }
+        const eU = ev.target.closest('[data-edit-url]'); if (eU) return openUrl(+eU.dataset.editUrl);
+        const dU = ev.target.closest('[data-del-url]');  if (dU) { state.urls.splice(+dU.dataset.delUrl, 1); renderAll(); return; }
+    });
 
-    // Hydrate from preset (edit path).
-    (R.preset.participants || []).forEach(addParticipant);
-    (R.preset.agenda || []).forEach(addAgenda);
-    (R.preset.decisions || []).forEach(addDecision);
-    (R.preset.next_agenda || []).forEach(addNextAgenda);
-    (R.preset.urls || []).forEach(addUrl);
-    if ((R.preset.participants || []).length === 0) addParticipant();
-    if ((R.preset.agenda || []).length === 0)       addAgenda();
+    // ============ MODAL OPEN / PREFILL ============
+    const openParticipant = (idx) => {
+        const p = idx == null ? {} : state.participants[idx];
+        document.getElementById('pModalIdx').value = idx == null ? '' : idx;
+        document.getElementById('pModalUser').innerHTML    = optionsFor(R.users,        p.user_id    || 0);
+        document.getElementById('pModalContact').innerHTML = optionsFor(contactsPool,   p.contact_id || 0);
+        document.getElementById('pModalMand').value = String(p.is_mandatory ?? 1);
+        document.getElementById('pModalAtt').value  = p.attended == null ? '' : String(p.attended);
+        document.getElementById('pModalRole').value = p.role_label || '';
+        openModal('participantModal');
+    };
+    const openAgenda = (idx) => {
+        const a = idx == null ? {} : state.agenda[idx];
+        document.getElementById('aModalIdx').value = idx == null ? '' : idx;
+        document.getElementById('aModalTitle').value = a.title || '';
+        document.getElementById('aModalDesc').value  = a.description || '';
+        document.getElementById('aModalLeadUser').innerHTML    = optionsFor(R.users,       a.lead_user_id    || 0);
+        document.getElementById('aModalLeadSeat').innerHTML    = optionsFor(R.seats,       a.lead_seat_id    || 0);
+        document.getElementById('aModalLeadContact').innerHTML = optionsFor(contactsPool,  a.lead_contact_id || 0);
+        openModal('agendaModal');
+    };
+    const openDecision = (idx) => {
+        const d = idx == null ? {} : state.decisions[idx];
+        document.getElementById('dModalIdx').value = idx == null ? '' : idx;
+        document.getElementById('dModalHead').value = d.heading || '';
+        document.getElementById('dModalDesc').value = d.description || '';
+        document.getElementById('dModalDue').value  = d.due_date || '';
+        document.getElementById('dModalUsers').innerHTML    = multiOptionsFor(R.users,       d.user_ids || []);
+        document.getElementById('dModalSeats').innerHTML    = multiOptionsFor(R.seats,       d.seat_ids || []);
+        document.getElementById('dModalContacts').innerHTML = multiOptionsFor(contactsPool,  d.contact_ids || []);
+        openModal('decisionModal');
+    };
+    const openNext = (idx) => {
+        const n = idx == null ? {} : state.next_agenda[idx];
+        document.getElementById('nModalIdx').value = idx == null ? '' : idx;
+        document.getElementById('nModalTitle').value = n.title || '';
+        document.getElementById('nModalDesc').value  = n.description || '';
+        openModal('nextAgendaModal');
+    };
+    const openUrl = (idx) => {
+        const u = idx == null ? {} : state.urls[idx];
+        document.getElementById('uModalIdx').value = idx == null ? '' : idx;
+        document.getElementById('uModalLabel').value = u.label || '';
+        document.getElementById('uModalUrl').value   = u.url || '';
+        openModal('urlModal');
+    };
+    // Open buttons that DON'T carry data-open-modal need custom open calls
+    document.querySelectorAll('[data-open-modal="participantModal"]').forEach(b => b.addEventListener('click', () => openParticipant(null)));
+    document.querySelectorAll('[data-open-modal="agendaModal"]').forEach(b => b.addEventListener('click', () => openAgenda(null)));
+    document.querySelectorAll('[data-open-modal="decisionModal"]').forEach(b => b.addEventListener('click', () => openDecision(null)));
+    document.querySelectorAll('[data-open-modal="nextAgendaModal"]').forEach(b => b.addEventListener('click', () => openNext(null)));
+    document.querySelectorAll('[data-open-modal="urlModal"]').forEach(b => b.addEventListener('click', () => openUrl(null)));
+
+    // ============ MODAL SAVE ============
+    const collectMulti = (el) => Array.from(el.selectedOptions).map(o => Number(o.value)).filter(Boolean);
+    document.getElementById('pModalSave').addEventListener('click', () => {
+        const idxRaw = document.getElementById('pModalIdx').value;
+        const uid = Number(document.getElementById('pModalUser').value || 0);
+        const cid = Number(document.getElementById('pModalContact').value || 0);
+        if (uid <= 0 && cid <= 0) { alert('Pick a user or a contact.'); return; }
+        const row = { user_id: uid, contact_id: cid,
+            is_mandatory: document.getElementById('pModalMand').value,
+            attended:     document.getElementById('pModalAtt').value,
+            role_label:   document.getElementById('pModalRole').value.trim() };
+        if (idxRaw === '') state.participants.push(row); else state.participants[+idxRaw] = row;
+        renderAll(); closeAllModals();
+    });
+    document.getElementById('aModalSave').addEventListener('click', () => {
+        const idxRaw = document.getElementById('aModalIdx').value;
+        const title = document.getElementById('aModalTitle').value.trim();
+        if (title === '') { alert('Title required.'); return; }
+        const row = { title, description: document.getElementById('aModalDesc').value.trim(),
+            lead_user_id:    Number(document.getElementById('aModalLeadUser').value || 0),
+            lead_seat_id:    Number(document.getElementById('aModalLeadSeat').value || 0),
+            lead_contact_id: Number(document.getElementById('aModalLeadContact').value || 0) };
+        if (idxRaw === '') state.agenda.push(row); else state.agenda[+idxRaw] = row;
+        renderAll(); closeAllModals();
+    });
+    document.getElementById('dModalSave').addEventListener('click', () => {
+        const idxRaw = document.getElementById('dModalIdx').value;
+        const heading = document.getElementById('dModalHead').value.trim();
+        if (heading === '') { alert('Heading required.'); return; }
+        const row = { heading, description: document.getElementById('dModalDesc').value.trim(),
+            due_date: document.getElementById('dModalDue').value,
+            user_ids: collectMulti(document.getElementById('dModalUsers')),
+            seat_ids: collectMulti(document.getElementById('dModalSeats')),
+            contact_ids: collectMulti(document.getElementById('dModalContacts')) };
+        if (idxRaw === '') state.decisions.push(row); else state.decisions[+idxRaw] = row;
+        renderAll(); closeAllModals();
+    });
+    document.getElementById('nModalSave').addEventListener('click', () => {
+        const idxRaw = document.getElementById('nModalIdx').value;
+        const title = document.getElementById('nModalTitle').value.trim();
+        if (title === '') { alert('Title required.'); return; }
+        const row = { title, description: document.getElementById('nModalDesc').value.trim() };
+        if (idxRaw === '') state.next_agenda.push(row); else state.next_agenda[+idxRaw] = row;
+        renderAll(); closeAllModals();
+    });
+    document.getElementById('uModalSave').addEventListener('click', () => {
+        const idxRaw = document.getElementById('uModalIdx').value;
+        const url = document.getElementById('uModalUrl').value.trim();
+        if (url === '') { alert('URL required.'); return; }
+        const row = { label: document.getElementById('uModalLabel').value.trim(), url };
+        if (idxRaw === '') state.urls.push(row); else state.urls[+idxRaw] = row;
+        renderAll(); closeAllModals();
+    });
+
+    // ============ CHAIR quick-add + refresh ============
+    const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+    const rebuildChairSelect = (selectId) => {
+        const sel = document.getElementById(selectId);
+        const currentVal = sel.value;
+        sel.innerHTML = '<option value="0">— None —</option>' + contactsPool.map(c =>
+            `<option value="${c.id}">${esc(c.name + (c.inst || c.institution ? ' · ' + (c.inst || c.institution) : ''))}</option>`).join('');
+        sel.value = currentVal;
+    };
+    document.getElementById('chairNewContactBtn')?.addEventListener('click', (ev) => { ev.preventDefault(); openModal('newContactModal'); });
+    document.getElementById('chairRefreshBtn')?.addEventListener('click', async () => {
+        try {
+            const res = await fetch('/contacts_ajax.php?action=list');
+            const json = await res.json();
+            if (json.ok) {
+                contactsPool = json.contacts.map(c => ({ id: c.id, name: c.name, inst: c.institution || '' }));
+                rebuildChairSelect('chairContactSelect');
+                renderAll();
+            }
+        } catch (e) { alert('Refresh failed: ' + e.message); }
+    });
+    document.getElementById('ncSave').addEventListener('click', async () => {
+        const name = document.getElementById('ncName').value.trim();
+        if (name === '') { alert('Name required.'); return; }
+        const body = new URLSearchParams();
+        body.set('action', 'create'); body.set('csrf_token', csrfToken); body.set('name', name);
+        body.set('institution', document.getElementById('ncInst').value.trim());
+        body.set('designation', document.getElementById('ncDes').value.trim());
+        body.set('mobile', document.getElementById('ncMob').value.trim());
+        body.set('email',  document.getElementById('ncEm').value.trim());
+        try {
+            const res = await fetch('/contacts_ajax.php', { method: 'POST', body });
+            const json = await res.json();
+            if (!json.ok) throw new Error(json.error || 'Create failed');
+            const c = json.contact;
+            contactsPool.push({ id: c.id, name: c.name, inst: c.institution || '' });
+            rebuildChairSelect('chairContactSelect');
+            document.getElementById('chairContactSelect').value = c.id;
+            // Clear the modal fields.
+            ['ncName','ncInst','ncDes','ncMob','ncEm'].forEach(id => document.getElementById(id).value = '');
+            renderAll();
+            closeAllModals();
+        } catch (e) { alert('Create failed: ' + e.message); }
+    });
+
+    // Initial render (preset already applied to state above).
+    renderAll();
 })();
 </script>
 
