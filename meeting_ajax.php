@@ -26,6 +26,7 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/meetings_helpers.php';
+require_once __DIR__ . '/includes/task_tracker_helpers.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -39,6 +40,7 @@ require_auth();
 $viewer   = current_user() ?? [];
 $viewerId = (int) ($viewer['id'] ?? 0);
 meetings_bootstrap();
+task_tracker_bootstrap();
 $isAdminAll = is_manage_admin($viewer) || user_can_admin_module($viewerId, 'meetings');
 
 if (!is_post())    $sendError('POST required.', 405);
@@ -194,6 +196,106 @@ if ($action === 'delete_agenda') {
     echo json_encode(['ok' => true]); exit;
 }
 
+/**
+ * Sync tasks for a decision point. Called from upsert_decision after
+ * the responsible rows are rewritten.
+ *
+ * For every internal user responsible on the decision WHO HOLDS AN
+ * ACTIVE SEAT, upsert a task in the "Own Tasks" (code=OWN) project.
+ * The task's primary assignment is that user's seat so it lands in
+ * My Work. For users who were on the decision but aren't any more,
+ * their existing task is deactivated.
+ *
+ * Returns silently on any DB error — the decision save stays
+ * committed; the task sync is best-effort.
+ */
+$syncDecisionTasks = static function (int $decisionId, array $userIds, int $viewerId): void {
+    try {
+        $db = db();
+        // Find the Own Tasks project.
+        $st = $db->prepare("SELECT id, code, next_task_number FROM project WHERE code = 'OWN' LIMIT 1");
+        $st->execute();
+        $ownProject = $st->fetch();
+        if ($ownProject === false) return;
+        $ownProjectId = (int) $ownProject['id'];
+
+        // Load the decision itself for title + description + due_date + meeting ref.
+        $st = $db->prepare('SELECT md.heading, md.description, md.due_date, m.reference_no
+            FROM meeting_decision md
+            INNER JOIN meeting m ON m.id = md.meeting_id
+            WHERE md.id = ?');
+        $st->execute([$decisionId]);
+        $dec = $st->fetch();
+        if ($dec === false) return;
+        $title = '[' . (string) $dec['reference_no'] . '] ' . (string) $dec['heading'];
+        $desc  = (string) ($dec['description'] ?? '');
+        $due   = (string) ($dec['due_date'] ?? '');
+        $due   = ($due !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $due)) ? $due : null;
+
+        // Default status = Not Started.
+        $defaultStatus = (int) ($db->query("SELECT id FROM task_status WHERE name = 'Not Started' LIMIT 1")->fetchColumn() ?: 0);
+        if ($defaultStatus === 0) $defaultStatus = (int) ($db->query('SELECT id FROM task_status WHERE is_active = 1 ORDER BY sort_order ASC LIMIT 1')->fetchColumn() ?: 0);
+
+        // Current task set for this decision.
+        $st = $db->prepare('SELECT t.id, t.is_active, ta.seat_id, oh.officer_id
+            FROM task t
+            LEFT JOIN task_assignment ta ON ta.task_id = t.id AND ta.role = "primary"
+            LEFT JOIN office_hierarchy_officer_history oh ON oh.node_id = ta.seat_id AND oh.unassigned_at IS NULL
+            WHERE t.meeting_decision_id = ?');
+        $st->execute([$decisionId]);
+        $existing = $st->fetchAll(); // one row per existing task
+        $existingByUser = [];
+        foreach ($existing as $t) {
+            $uid = (int) ($t['officer_id'] ?? 0);
+            if ($uid > 0) $existingByUser[$uid] = (int) $t['id'];
+        }
+
+        // Figure out each responsible user's active seat.
+        $wantedByUser = [];
+        foreach ($userIds as $uid) {
+            $uid = (int) $uid;
+            if ($uid <= 0) continue;
+            $sst = $db->prepare('SELECT node_id FROM office_hierarchy_officer_history WHERE officer_id = ? AND unassigned_at IS NULL ORDER BY id DESC LIMIT 1');
+            $sst->execute([$uid]);
+            $seatId = (int) ($sst->fetchColumn() ?: 0);
+            if ($seatId > 0) $wantedByUser[$uid] = $seatId;
+        }
+
+        // Upsert for each wanted user.
+        foreach ($wantedByUser as $uid => $seatId) {
+            if (isset($existingByUser[$uid])) {
+                $taskId = $existingByUser[$uid];
+                $db->prepare('UPDATE task SET title = ?, description = ?, planned_end = ?, is_active = 1, updated_at = NOW(), updated_by = ? WHERE id = ?')
+                   ->execute([$title, $desc === '' ? null : $desc, $due, $viewerId, $taskId]);
+            } else {
+                // Allocate next_task_number atomically on the Own project.
+                $db->query('START TRANSACTION');
+                $lk = $db->prepare('SELECT next_task_number FROM project WHERE id = ? FOR UPDATE');
+                $lk->execute([$ownProjectId]);
+                $nextNum = (int) ($lk->fetchColumn() ?: 1);
+                $db->prepare('INSERT INTO task (project_id, task_number, title, description, status_id, priority, planned_end, meeting_decision_id, is_active, created_at, updated_at, created_by, updated_by, board_order)
+                    VALUES (?, ?, ?, ?, ?, "medium", ?, ?, 1, NOW(), NOW(), ?, ?, ?)')
+                    ->execute([$ownProjectId, $nextNum, $title, $desc === '' ? null : $desc, $defaultStatus, $due, $decisionId, $viewerId, $viewerId, $nextNum * 1000]);
+                $newId = $db->lastInsertId();
+                $db->prepare('UPDATE project SET next_task_number = next_task_number + 1 WHERE id = ?')->execute([$ownProjectId]);
+                // Primary seat assignment so My Work finds it.
+                $db->prepare('INSERT INTO task_assignment (task_id, seat_id, role, created_at, created_by) VALUES (?, ?, "primary", NOW(), ?)')
+                   ->execute([$newId, $seatId, $viewerId]);
+                $db->query('COMMIT');
+                $existingByUser[$uid] = $newId;
+            }
+        }
+        // Deactivate tasks for users no longer responsible.
+        foreach ($existingByUser as $uid => $taskId) {
+            if (!isset($wantedByUser[$uid])) {
+                $db->prepare('UPDATE task SET is_active = 0, updated_at = NOW(), updated_by = ? WHERE id = ?')->execute([$viewerId, $taskId]);
+            }
+        }
+    } catch (Throwable $e) {
+        try { db()->query('ROLLBACK'); } catch (Throwable $r) { /* ignore */ }
+    }
+};
+
 if ($action === 'upsert_decision') {
     $id = (int) ($_POST['id'] ?? 0);
     $heading = trim((string) ($_POST['heading'] ?? ''));
@@ -225,6 +327,8 @@ if ($action === 'upsert_decision') {
         foreach ($seatIds    as $x) $insR->execute([$id, null, null, $x]);
         foreach ($contactIds as $x) $insR->execute([$id, null, $x, null]);
         db()->query('COMMIT');
+        // Sync the Own Tasks for every internal user responsible.
+        $syncDecisionTasks((int) $id, $userIds, $viewerId);
         echo json_encode(['ok' => true, 'item_id' => $id]); exit;
     } catch (Throwable $e) {
         try { db()->query('ROLLBACK'); } catch (Throwable $r) { /* ignore */ }
@@ -235,6 +339,8 @@ if ($action === 'delete_decision') {
     $id = (int) ($_POST['id'] ?? 0);
     db()->prepare('DELETE FROM meeting_decision_responsible WHERE decision_id = ?')->execute([$id]);
     db()->prepare('DELETE FROM meeting_decision WHERE id = ? AND meeting_id = ?')->execute([$id, $meetingId]);
+    // Deactivate all linked tasks so the owner no longer sees them.
+    try { db()->prepare('UPDATE task SET is_active = 0, updated_at = NOW(), updated_by = ? WHERE meeting_decision_id = ?')->execute([$viewerId, $id]); } catch (Throwable $e) { /* ignore */ }
     echo json_encode(['ok' => true]); exit;
 }
 

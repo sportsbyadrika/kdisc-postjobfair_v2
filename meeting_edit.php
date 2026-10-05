@@ -586,17 +586,33 @@ window.__meetingRef = {
 </div>
 
 <!-- Decision modal -->
-<div class="mm-modal" id="decisionModal" style="display:none; width: min(720px, 92vw);">
+<div class="mm-modal" id="decisionModal" style="display:none; width: min(960px, 94vw);">
     <div class="mm-header"><span><i class="bi bi-check2-square me-1"></i>Decision point</span><button type="button" class="btn-close" data-close-modal></button></div>
     <div class="mm-body">
         <input type="hidden" id="dModalIdx" value="">
         <div class="mb-2"><label class="form-label small">Heading *</label><input class="form-control" id="dModalHead"></div>
         <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="dModalDesc" rows="3"></textarea></div>
-        <div class="mb-2"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
-        <div class="row g-2">
-            <div class="col-md-4"><label class="form-label small">Responsible Internal Users</label><select class="form-select" id="dModalUsers" multiple size="6"></select></div>
-            <div class="col-md-4"><label class="form-label small">Responsible seats</label><select class="form-select" id="dModalSeats" multiple size="6"></select></div>
-            <div class="col-md-4"><label class="form-label small">Responsible External Users</label><select class="form-select" id="dModalContacts" multiple size="6"></select></div>
+        <div class="mb-3"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
+        <div class="small text-muted mb-2">Pick the people responsible. Any Internal User you tick who holds a seat gets an auto-generated task in <strong>Own Tasks</strong> so they can track status.</div>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold"><i class="bi bi-people me-1"></i>Participants <span class="text-muted small">(this meeting)</span></label>
+                <input type="text" class="form-control form-control-sm mb-2" id="dSearchParts" placeholder="Search participants…">
+                <div class="pm-check-list" id="dListParts"></div>
+                <div class="small text-muted mt-1" id="dListPartsCount"></div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-badge me-1"></i>Other Internal Users</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="dSearchUsers" placeholder="Search internal users…">
+                <div class="pm-check-list" id="dListUsers"></div>
+                <div class="small text-muted mt-1" id="dListUsersCount"></div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-vcard me-1"></i>Other External Users</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="dSearchContacts" placeholder="Search external users…">
+                <div class="pm-check-list" id="dListContacts"></div>
+                <div class="small text-muted mt-1" id="dListContactsCount"></div>
+            </div>
         </div>
     </div>
     <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="dModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
@@ -1015,11 +1031,29 @@ window.__meetingRef = {
         document.getElementById('dModalHead').value = d.heading || '';
         document.getElementById('dModalDesc').value = d.description || '';
         document.getElementById('dModalDue').value  = d.due_date || '';
-        document.getElementById('dModalUsers').innerHTML    = multiOptionsFor(R.users,       d.user_ids || []);
-        document.getElementById('dModalSeats').innerHTML    = multiOptionsFor(R.seats,       d.seat_ids || []);
-        document.getElementById('dModalContacts').innerHTML = multiOptionsFor(contactsPool,  d.contact_ids || []);
+        // Three-column layout, same shape as the agenda modal.
+        const partPool = sortByName(buildParticipantPool());
+        const prePart = [];
+        (d.user_ids    || []).forEach(id => prePart.push('u' + id));
+        (d.contact_ids || []).forEach(id => prePart.push('c' + id));
+        buildCheckList('dListParts', partPool, prePart, 'drp_');
+        const participantUserIds    = new Set(state.participants.filter(p => p.user_id    > 0).map(p => p.user_id));
+        const participantContactIds = new Set(state.participants.filter(p => p.contact_id > 0).map(p => p.contact_id));
+        const otherUsers    = sortByName(R.users).filter(u => !participantUserIds.has(u.id));
+        const otherContacts = sortByName(contactsPool).filter(c => !participantContactIds.has(c.id));
+        buildCheckList('dListUsers',    otherUsers,    d.user_ids    || [], 'dru_');
+        buildCheckList('dListContacts', otherContacts, d.contact_ids || [], 'drc_');
+        document.getElementById('dSearchParts').value    = '';
+        document.getElementById('dSearchUsers').value    = '';
+        document.getElementById('dSearchContacts').value = '';
+        filterCheckList('dListParts',    'dListPartsCount',    '');
+        filterCheckList('dListUsers',    'dListUsersCount',    '');
+        filterCheckList('dListContacts', 'dListContactsCount', '');
         openModal('decisionModal');
     };
+    document.getElementById('dSearchParts')?.addEventListener('input', (e) => filterCheckList('dListParts',    'dListPartsCount',    e.target.value));
+    document.getElementById('dSearchUsers')?.addEventListener('input', (e) => filterCheckList('dListUsers',    'dListUsersCount',    e.target.value));
+    document.getElementById('dSearchContacts')?.addEventListener('input', (e) => filterCheckList('dListContacts', 'dListContactsCount', e.target.value));
     const openNext = (idx) => {
         const n = idx == null ? {} : state.next_agenda[idx];
         document.getElementById('nModalIdx').value = idx == null ? '' : idx;
@@ -1137,12 +1171,20 @@ window.__meetingRef = {
         const heading = document.getElementById('dModalHead').value.trim();
         if (heading === '') { alert('Heading required.'); return; }
         const existingId = idxRaw !== '' ? (state.decisions[+idxRaw]?.id || 0) : 0;
+        const userSet = new Set(), contactSet = new Set();
+        document.querySelectorAll('#dListParts input:checked').forEach(c => {
+            const raw = String(c.value);
+            if (raw[0] === 'u') userSet.add(Number(raw.slice(1)));
+            else if (raw[0] === 'c') contactSet.add(Number(raw.slice(1)));
+        });
+        document.querySelectorAll('#dListUsers input:checked').forEach(c => userSet.add(Number(c.value)));
+        document.querySelectorAll('#dListContacts input:checked').forEach(c => contactSet.add(Number(c.value)));
         upsertRow('upsert_decision', {
             id: existingId, heading, description: document.getElementById('dModalDesc').value.trim(),
             due_date: document.getElementById('dModalDue').value,
-            user_ids: collectMulti(document.getElementById('dModalUsers')),
-            seat_ids: collectMulti(document.getElementById('dModalSeats')),
-            contact_ids: collectMulti(document.getElementById('dModalContacts')),
+            user_ids: Array.from(userSet).filter(Boolean),
+            seat_ids: [], // seat-as-responsibility UI retired
+            contact_ids: Array.from(contactSet).filter(Boolean),
         }, 'decisions', idxRaw);
     });
     document.getElementById('nModalSave').addEventListener('click', () => {
