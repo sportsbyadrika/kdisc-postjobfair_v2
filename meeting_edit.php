@@ -497,6 +497,8 @@ window.__meetingRef = {
                 'heading' => (string) $d['heading'],
                 'description' => (string) ($d['description'] ?? ''),
                 'due_date' => substr((string) ($d['due_date'] ?? ''), 0, 10),
+                'create_own_tasks' => isset($d['create_own_tasks']) ? (int) $d['create_own_tasks'] : 1,
+                'status_private'   => isset($d['status_private'])   ? (int) $d['status_private']   : 0,
                 'user_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['user_id'] ?? 0), $rs))),
                 'seat_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['seat_id'] ?? 0), $rs))),
                 'contact_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['contact_id'] ?? 0), $rs))),
@@ -592,8 +594,22 @@ window.__meetingRef = {
         <input type="hidden" id="dModalIdx" value="">
         <div class="mb-2"><label class="form-label small">Heading *</label><input class="form-control" id="dModalHead"></div>
         <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="dModalDesc" rows="3"></textarea></div>
-        <div class="mb-3"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
-        <div class="small text-muted mb-2">Pick the people responsible. Any Internal User you tick who holds a seat gets an auto-generated task in <strong>Own Tasks</strong> so they can track status.</div>
+        <div class="row g-2 mb-3 align-items-end">
+            <div class="col-md-4"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
+            <div class="col-md-4">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="dModalCreateOwn" checked>
+                    <label class="form-check-label small" for="dModalCreateOwn"><strong>Show in Own Tasks</strong> under Project Management</label>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="dModalPrivate">
+                    <label class="form-check-label small" for="dModalPrivate"><strong>Show status only to the owner</strong> (hidden from heads/others)</label>
+                </div>
+            </div>
+        </div>
+        <div class="small text-muted mb-2">Pick the people responsible. When <em>Show in Own Tasks</em> is on, each Internal User who holds a seat gets their <strong>own</strong> task row so every owner tracks their own status.</div>
         <div class="row g-3">
             <div class="col-md-4">
                 <label class="form-label small fw-semibold"><i class="bi bi-people me-1"></i>Participants <span class="text-muted small">(this meeting)</span></label>
@@ -1031,6 +1047,8 @@ window.__meetingRef = {
         document.getElementById('dModalHead').value = d.heading || '';
         document.getElementById('dModalDesc').value = d.description || '';
         document.getElementById('dModalDue').value  = d.due_date || '';
+        document.getElementById('dModalCreateOwn').checked = d.create_own_tasks == null ? true : Number(d.create_own_tasks) === 1;
+        document.getElementById('dModalPrivate').checked   = Number(d.status_private || 0) === 1;
         // Three-column layout, same shape as the agenda modal.
         const partPool = sortByName(buildParticipantPool());
         const prePart = [];
@@ -1182,6 +1200,8 @@ window.__meetingRef = {
         upsertRow('upsert_decision', {
             id: existingId, heading, description: document.getElementById('dModalDesc').value.trim(),
             due_date: document.getElementById('dModalDue').value,
+            create_own_tasks: document.getElementById('dModalCreateOwn').checked ? 1 : 0,
+            status_private:   document.getElementById('dModalPrivate').checked   ? 1 : 0,
             user_ids: Array.from(userSet).filter(Boolean),
             seat_ids: [], // seat-as-responsibility UI retired
             contact_ids: Array.from(contactSet).filter(Boolean),

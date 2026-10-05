@@ -181,6 +181,20 @@ function meetings_bootstrap(): void
             }
         } catch (Throwable $e) { /* alter refused — reference-number derivation falls back to name */ }
 
+        // Decision-point toggles added after the initial schema.
+        // Idempotent via SHOW COLUMNS; failed ALTERs are tolerated
+        // (DB user may not have ALTER privilege on hosted setups).
+        try {
+            $cols = [];
+            foreach ($db->query('SHOW COLUMNS FROM meeting_decision')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
+            if (!isset($cols['create_own_tasks'])) {
+                $db->query('ALTER TABLE meeting_decision ADD COLUMN create_own_tasks TINYINT(1) NOT NULL DEFAULT 1 AFTER due_date');
+            }
+            if (!isset($cols['status_private'])) {
+                $db->query('ALTER TABLE meeting_decision ADD COLUMN status_private TINYINT(1) NOT NULL DEFAULT 0 AFTER create_own_tasks');
+            }
+        } catch (Throwable $e) { /* ALTER refused — decision modal still works without the toggles */ }
+
         // Seed the MoM PDF branding keys so the settings page always
         // renders every row even on a fresh install.
         $seed = $db->prepare('INSERT IGNORE INTO meeting_setting (setting_key, setting_value, updated_at) VALUES (?, ?, NOW())');
