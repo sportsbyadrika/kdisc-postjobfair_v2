@@ -286,6 +286,24 @@ function task_tracker_bootstrap(): void
         "ALTER TABLE task ADD COLUMN actual_expenditure DECIMAL(15,2) NULL AFTER target_expenditure");
     task_tracker__add_column_if_missing($db, 'task', 'progress_pct',
         "ALTER TABLE task ADD COLUMN progress_pct TINYINT UNSIGNED NULL AFTER actual_expenditure");
+
+    // Link column — ties a task back to the meeting decision point it
+    // was spawned from, so the meeting view can show live status and
+    // the My Work page can link back to the originating meeting.
+    task_tracker__add_column_if_missing($db, 'task', 'meeting_decision_id',
+        "ALTER TABLE task ADD COLUMN meeting_decision_id INT NULL AFTER progress_pct, ADD KEY idx_meeting_decision (meeting_decision_id)");
+
+    // "Own Tasks" container project — a system row that holds every
+    // decision-point task across the install. One shared row keeps
+    // the schema clean; My Work still filters by the viewer's seats
+    // so each person only sees their own.
+    try {
+        $has = $db->query("SELECT id FROM project WHERE code = 'OWN' LIMIT 1")->fetchColumn();
+        if (!$has) {
+            $db->prepare('INSERT INTO project (office_id, name, code, description, is_active, next_task_number, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 1, NOW(), NOW())')
+               ->execute([TASK_TRACKER_OFFICE_ID, 'Own Tasks', 'OWN', 'Auto-generated tasks from meeting decision points.']);
+        }
+    } catch (Throwable $e) { /* project table may not exist yet */ }
 }
 
 /**

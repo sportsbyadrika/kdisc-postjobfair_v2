@@ -560,22 +560,22 @@ window.__meetingRef = {
         <input type="hidden" id="aModalIdx" value="">
         <div class="mb-2"><label class="form-label small">Title *</label><input class="form-control" id="aModalTitle"></div>
         <div class="mb-3"><label class="form-label small">Description</label><textarea class="form-control" id="aModalDesc" rows="2"></textarea></div>
-        <div class="small text-muted mb-2">Leads can span any mix of Internal Users, Seats, and External Users — tick as many as apply.</div>
+        <div class="small text-muted mb-2">Leads are usually drawn from the meeting's participant list. Tick anyone from the Participants column; the other two columns let you add someone who isn't on the list yet.</div>
         <div class="row g-3">
             <div class="col-md-4">
-                <label class="form-label small fw-semibold"><i class="bi bi-person-badge me-1"></i>Internal Users</label>
+                <label class="form-label small fw-semibold"><i class="bi bi-people me-1"></i>Participants <span class="text-muted small">(this meeting)</span></label>
+                <input type="text" class="form-control form-control-sm mb-2" id="aSearchParts" placeholder="Search participants…">
+                <div class="pm-check-list" id="aListParts"></div>
+                <div class="small text-muted mt-1" id="aListPartsCount"></div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-badge me-1"></i>Other Internal Users</label>
                 <input type="text" class="form-control form-control-sm mb-2" id="aSearchUsers" placeholder="Search internal users…">
                 <div class="pm-check-list" id="aListUsers"></div>
                 <div class="small text-muted mt-1" id="aListUsersCount"></div>
             </div>
             <div class="col-md-4">
-                <label class="form-label small fw-semibold"><i class="bi bi-person-workspace me-1"></i>Seats</label>
-                <input type="text" class="form-control form-control-sm mb-2" id="aSearchSeats" placeholder="Search seats…">
-                <div class="pm-check-list" id="aListSeats"></div>
-                <div class="small text-muted mt-1" id="aListSeatsCount"></div>
-            </div>
-            <div class="col-md-4">
-                <label class="form-label small fw-semibold"><i class="bi bi-person-vcard me-1"></i>External Users</label>
+                <label class="form-label small fw-semibold"><i class="bi bi-person-vcard me-1"></i>Other External Users</label>
                 <input type="text" class="form-control form-control-sm mb-2" id="aSearchContacts" placeholder="Search external users…">
                 <div class="pm-check-list" id="aListContacts"></div>
                 <div class="small text-muted mt-1" id="aListContactsCount"></div>
@@ -586,17 +586,33 @@ window.__meetingRef = {
 </div>
 
 <!-- Decision modal -->
-<div class="mm-modal" id="decisionModal" style="display:none; width: min(720px, 92vw);">
+<div class="mm-modal" id="decisionModal" style="display:none; width: min(960px, 94vw);">
     <div class="mm-header"><span><i class="bi bi-check2-square me-1"></i>Decision point</span><button type="button" class="btn-close" data-close-modal></button></div>
     <div class="mm-body">
         <input type="hidden" id="dModalIdx" value="">
         <div class="mb-2"><label class="form-label small">Heading *</label><input class="form-control" id="dModalHead"></div>
         <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="dModalDesc" rows="3"></textarea></div>
-        <div class="mb-2"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
-        <div class="row g-2">
-            <div class="col-md-4"><label class="form-label small">Responsible Internal Users</label><select class="form-select" id="dModalUsers" multiple size="6"></select></div>
-            <div class="col-md-4"><label class="form-label small">Responsible seats</label><select class="form-select" id="dModalSeats" multiple size="6"></select></div>
-            <div class="col-md-4"><label class="form-label small">Responsible External Users</label><select class="form-select" id="dModalContacts" multiple size="6"></select></div>
+        <div class="mb-3"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
+        <div class="small text-muted mb-2">Pick the people responsible. Any Internal User you tick who holds a seat gets an auto-generated task in <strong>Own Tasks</strong> so they can track status.</div>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold"><i class="bi bi-people me-1"></i>Participants <span class="text-muted small">(this meeting)</span></label>
+                <input type="text" class="form-control form-control-sm mb-2" id="dSearchParts" placeholder="Search participants…">
+                <div class="pm-check-list" id="dListParts"></div>
+                <div class="small text-muted mt-1" id="dListPartsCount"></div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-badge me-1"></i>Other Internal Users</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="dSearchUsers" placeholder="Search internal users…">
+                <div class="pm-check-list" id="dListUsers"></div>
+                <div class="small text-muted mt-1" id="dListUsersCount"></div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-vcard me-1"></i>Other External Users</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="dSearchContacts" placeholder="Search external users…">
+                <div class="pm-check-list" id="dListContacts"></div>
+                <div class="small text-muted mt-1" id="dListContactsCount"></div>
+            </div>
         </div>
     </div>
     <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="dModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
@@ -961,24 +977,53 @@ window.__meetingRef = {
     // Live search inside each checkbox list.
     document.getElementById('pSearchUsers')?.addEventListener('input', (e) => filterCheckList('pListUsers', 'pListUsersCount', e.target.value));
     document.getElementById('pSearchContacts')?.addEventListener('input', (e) => filterCheckList('pListContacts', 'pListContactsCount', e.target.value));
+    // Compose the Participants column from the live state array
+    // every time the modal opens — the operator may have added or
+    // removed participants since the last open. Each entry carries
+    // a type ('u' for internal user, 'c' for external) so the
+    // checkbox value encodes which pool it feeds back into on save.
+    const buildParticipantPool = () => {
+        const rows = [];
+        state.participants.forEach(p => {
+            if (p.user_id > 0) {
+                const u = findById(R.users, p.user_id);
+                if (u) rows.push({ id: 'u' + p.user_id, name: u.name, inst: '' });
+            }
+            if (p.contact_id > 0) {
+                const c = findById(contactsPool, p.contact_id);
+                if (c) rows.push({ id: 'c' + p.contact_id, name: c.name, inst: c.inst || '' });
+            }
+        });
+        return rows;
+    };
     const openAgenda = (idx) => {
         const a = idx == null ? {} : state.agenda[idx];
         document.getElementById('aModalIdx').value = idx == null ? '' : idx;
         document.getElementById('aModalTitle').value = a.title || '';
         document.getElementById('aModalDesc').value  = a.description || '';
-        buildCheckList('aListUsers',    sortByName(R.users),       a.user_ids    || [], 'alu_');
-        buildCheckList('aListSeats',    sortByName(R.seats),       a.seat_ids    || [], 'als_');
-        buildCheckList('aListContacts', sortByName(contactsPool),  a.contact_ids || [], 'alc_');
-        document.getElementById('aSearchUsers').value = '';
-        document.getElementById('aSearchSeats').value = '';
+        // Participant pool (prefixed-id scheme: u<id> or c<id>).
+        const partPool = sortByName(buildParticipantPool());
+        const prePart = [];
+        (a.user_ids    || []).forEach(id => prePart.push('u' + id));
+        (a.contact_ids || []).forEach(id => prePart.push('c' + id));
+        buildCheckList('aListParts', partPool, prePart, 'alp_');
+        // Fallback pools: Internal / External users NOT already in participants.
+        const participantUserIds    = new Set(state.participants.filter(p => p.user_id    > 0).map(p => p.user_id));
+        const participantContactIds = new Set(state.participants.filter(p => p.contact_id > 0).map(p => p.contact_id));
+        const otherUsers    = sortByName(R.users).filter(u => !participantUserIds.has(u.id));
+        const otherContacts = sortByName(contactsPool).filter(c => !participantContactIds.has(c.id));
+        buildCheckList('aListUsers',    otherUsers,    a.user_ids    || [], 'alu_');
+        buildCheckList('aListContacts', otherContacts, a.contact_ids || [], 'alc_');
+        document.getElementById('aSearchParts').value    = '';
+        document.getElementById('aSearchUsers').value    = '';
         document.getElementById('aSearchContacts').value = '';
+        filterCheckList('aListParts',    'aListPartsCount',    '');
         filterCheckList('aListUsers',    'aListUsersCount',    '');
-        filterCheckList('aListSeats',    'aListSeatsCount',    '');
         filterCheckList('aListContacts', 'aListContactsCount', '');
         openModal('agendaModal');
     };
+    document.getElementById('aSearchParts')?.addEventListener('input', (e) => filterCheckList('aListParts',    'aListPartsCount',    e.target.value));
     document.getElementById('aSearchUsers')?.addEventListener('input', (e) => filterCheckList('aListUsers',    'aListUsersCount',    e.target.value));
-    document.getElementById('aSearchSeats')?.addEventListener('input', (e) => filterCheckList('aListSeats',    'aListSeatsCount',    e.target.value));
     document.getElementById('aSearchContacts')?.addEventListener('input', (e) => filterCheckList('aListContacts', 'aListContactsCount', e.target.value));
     const openDecision = (idx) => {
         const d = idx == null ? {} : state.decisions[idx];
@@ -986,11 +1031,29 @@ window.__meetingRef = {
         document.getElementById('dModalHead').value = d.heading || '';
         document.getElementById('dModalDesc').value = d.description || '';
         document.getElementById('dModalDue').value  = d.due_date || '';
-        document.getElementById('dModalUsers').innerHTML    = multiOptionsFor(R.users,       d.user_ids || []);
-        document.getElementById('dModalSeats').innerHTML    = multiOptionsFor(R.seats,       d.seat_ids || []);
-        document.getElementById('dModalContacts').innerHTML = multiOptionsFor(contactsPool,  d.contact_ids || []);
+        // Three-column layout, same shape as the agenda modal.
+        const partPool = sortByName(buildParticipantPool());
+        const prePart = [];
+        (d.user_ids    || []).forEach(id => prePart.push('u' + id));
+        (d.contact_ids || []).forEach(id => prePart.push('c' + id));
+        buildCheckList('dListParts', partPool, prePart, 'drp_');
+        const participantUserIds    = new Set(state.participants.filter(p => p.user_id    > 0).map(p => p.user_id));
+        const participantContactIds = new Set(state.participants.filter(p => p.contact_id > 0).map(p => p.contact_id));
+        const otherUsers    = sortByName(R.users).filter(u => !participantUserIds.has(u.id));
+        const otherContacts = sortByName(contactsPool).filter(c => !participantContactIds.has(c.id));
+        buildCheckList('dListUsers',    otherUsers,    d.user_ids    || [], 'dru_');
+        buildCheckList('dListContacts', otherContacts, d.contact_ids || [], 'drc_');
+        document.getElementById('dSearchParts').value    = '';
+        document.getElementById('dSearchUsers').value    = '';
+        document.getElementById('dSearchContacts').value = '';
+        filterCheckList('dListParts',    'dListPartsCount',    '');
+        filterCheckList('dListUsers',    'dListUsersCount',    '');
+        filterCheckList('dListContacts', 'dListContactsCount', '');
         openModal('decisionModal');
     };
+    document.getElementById('dSearchParts')?.addEventListener('input', (e) => filterCheckList('dListParts',    'dListPartsCount',    e.target.value));
+    document.getElementById('dSearchUsers')?.addEventListener('input', (e) => filterCheckList('dListUsers',    'dListUsersCount',    e.target.value));
+    document.getElementById('dSearchContacts')?.addEventListener('input', (e) => filterCheckList('dListContacts', 'dListContactsCount', e.target.value));
     const openNext = (idx) => {
         const n = idx == null ? {} : state.next_agenda[idx];
         document.getElementById('nModalIdx').value = idx == null ? '' : idx;
@@ -1085,12 +1148,22 @@ window.__meetingRef = {
         const title = document.getElementById('aModalTitle').value.trim();
         if (title === '') { alert('Title required.'); return; }
         const existingId = idxRaw !== '' ? (state.agenda[+idxRaw]?.id || 0) : 0;
-        const user_ids    = Array.from(document.querySelectorAll('#aListUsers input:checked')).map(c => Number(c.value));
-        const seat_ids    = Array.from(document.querySelectorAll('#aListSeats input:checked')).map(c => Number(c.value));
-        const contact_ids = Array.from(document.querySelectorAll('#aListContacts input:checked')).map(c => Number(c.value));
+        // Collect from both the Participants column (prefixed with
+        // u/c to distinguish type) and the other-user / other-contact
+        // columns, then dedupe into the final arrays.
+        const userSet = new Set(), contactSet = new Set();
+        document.querySelectorAll('#aListParts input:checked').forEach(c => {
+            const raw = String(c.value);
+            if (raw[0] === 'u') userSet.add(Number(raw.slice(1)));
+            else if (raw[0] === 'c') contactSet.add(Number(raw.slice(1)));
+        });
+        document.querySelectorAll('#aListUsers input:checked').forEach(c => userSet.add(Number(c.value)));
+        document.querySelectorAll('#aListContacts input:checked').forEach(c => contactSet.add(Number(c.value)));
         upsertRow('upsert_agenda', {
             id: existingId, title, description: document.getElementById('aModalDesc').value.trim(),
-            user_ids, seat_ids, contact_ids,
+            user_ids: Array.from(userSet).filter(Boolean),
+            seat_ids: [], // seat-as-lead UI retired; schema still accepts the field
+            contact_ids: Array.from(contactSet).filter(Boolean),
         }, 'agenda', idxRaw);
     });
     document.getElementById('dModalSave').addEventListener('click', () => {
@@ -1098,12 +1171,20 @@ window.__meetingRef = {
         const heading = document.getElementById('dModalHead').value.trim();
         if (heading === '') { alert('Heading required.'); return; }
         const existingId = idxRaw !== '' ? (state.decisions[+idxRaw]?.id || 0) : 0;
+        const userSet = new Set(), contactSet = new Set();
+        document.querySelectorAll('#dListParts input:checked').forEach(c => {
+            const raw = String(c.value);
+            if (raw[0] === 'u') userSet.add(Number(raw.slice(1)));
+            else if (raw[0] === 'c') contactSet.add(Number(raw.slice(1)));
+        });
+        document.querySelectorAll('#dListUsers input:checked').forEach(c => userSet.add(Number(c.value)));
+        document.querySelectorAll('#dListContacts input:checked').forEach(c => contactSet.add(Number(c.value)));
         upsertRow('upsert_decision', {
             id: existingId, heading, description: document.getElementById('dModalDesc').value.trim(),
             due_date: document.getElementById('dModalDue').value,
-            user_ids: collectMulti(document.getElementById('dModalUsers')),
-            seat_ids: collectMulti(document.getElementById('dModalSeats')),
-            contact_ids: collectMulti(document.getElementById('dModalContacts')),
+            user_ids: Array.from(userSet).filter(Boolean),
+            seat_ids: [], // seat-as-responsibility UI retired
+            contact_ids: Array.from(contactSet).filter(Boolean),
         }, 'decisions', idxRaw);
     });
     document.getElementById('nModalSave').addEventListener('click', () => {

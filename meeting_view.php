@@ -78,6 +78,29 @@ if ($agenda !== []) {
 
 $decisions = db()->prepare('SELECT * FROM meeting_decision WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC');
 $decisions->execute([$id]); $decisions = $decisions->fetchAll();
+
+// Live task status per decision — each decision may have several
+// tasks (one per internal user responsible with an active seat).
+$decisionTasks = [];
+if ($decisions !== []) {
+    $dids = array_map(static fn($d) => (int) $d['id'], $decisions);
+    try {
+        $ph = implode(',', array_fill(0, count($dids), '?'));
+        $st = db()->prepare("SELECT t.id AS task_id, t.meeting_decision_id, t.task_number, t.title, t.is_active,
+                s.name AS status_name, s.colour_token, s.is_terminal, s.category,
+                oh.officer_id, u.name AS officer_name,
+                p.code AS project_code
+            FROM task t
+            LEFT JOIN task_status s ON s.id = t.status_id
+            LEFT JOIN task_assignment ta ON ta.task_id = t.id AND ta.role = 'primary'
+            LEFT JOIN office_hierarchy_officer_history oh ON oh.node_id = ta.seat_id AND oh.unassigned_at IS NULL
+            LEFT JOIN users u ON u.id = oh.officer_id
+            LEFT JOIN project p ON p.id = t.project_id
+            WHERE t.meeting_decision_id IN ($ph) AND t.is_active = 1");
+        $st->execute($dids);
+        foreach ($st->fetchAll() as $t) $decisionTasks[(int) $t['meeting_decision_id']][] = $t;
+    } catch (Throwable $e) { /* link column may not exist on legacy installs */ }
+}
 $decRespRows = [];
 if ($decisions !== []) {
     $ids = array_map(static fn($d) => (int) $d['id'], $decisions);
@@ -208,6 +231,20 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                             <div class="small mt-1">Responsible:
                                 <?php foreach ($rs as $r): $label = $r['user_name'] ?: ($r['contact_name'] ?: $r['seat_name']); ?>
                                     <span class="badge text-bg-light border me-1"><?= esc((string) $label) ?></span>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                        <?php $ts = $decisionTasks[(int) $d['id']] ?? []; if ($ts !== []): ?>
+                            <div class="small mt-2">
+                                <span class="text-muted">Linked tasks:</span>
+                                <?php foreach ($ts as $t):
+                                    $tone = (string) ($t['colour_token'] ?? 'secondary'); if ($tone === 'neutral') $tone = 'secondary';
+                                    $pfx  = (string) ($t['project_code'] ?? 'OWN') . '-' . (int) $t['task_number'];
+                                ?>
+                                    <a class="badge text-bg-<?= esc($tone) ?> text-decoration-none me-1" href="/task_tracker_task_view.php?id=<?= (int) $t['task_id'] ?>"
+                                       title="<?= esc((string) ($t['officer_name'] ?? '')) ?>">
+                                        <?= esc($pfx) ?> · <?= esc((string) ($t['status_name'] ?? '—')) ?><?= !empty($t['officer_name']) ? ' · ' . esc((string) $t['officer_name']) : '' ?>
+                                    </a>
                                 <?php endforeach; ?>
                             </div>
                         <?php endif; ?>

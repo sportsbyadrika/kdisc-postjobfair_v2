@@ -32,11 +32,15 @@ if ($taskId <= 0) { header('Location: /task_tracker_projects.php'); exit; }
 
 $stmt = db()->prepare('SELECT t.*, p.name AS project_name, p.code AS project_code, p.id AS project_id_of_task,
         s.name AS status_name, s.colour_token AS status_colour, s.category AS status_category, s.is_terminal,
-        pt.title AS parent_title, pt.task_number AS parent_task_number
+        pt.title AS parent_title, pt.task_number AS parent_task_number,
+        md.heading AS source_decision_heading, md.meeting_id AS source_meeting_id,
+        mtg.reference_no AS source_meeting_ref, mtg.title AS source_meeting_title
     FROM task t
     INNER JOIN project p ON p.id = t.project_id
     LEFT JOIN task_status s ON s.id = t.status_id
     LEFT JOIN task pt ON pt.id = t.parent_id
+    LEFT JOIN meeting_decision md ON md.id = t.meeting_decision_id
+    LEFT JOIN meeting mtg ON mtg.id = md.meeting_id
     WHERE t.id = ? LIMIT 1');
 $stmt->execute([$taskId]);
 $task = $stmt->fetch();
@@ -268,6 +272,18 @@ render_page_header($key . ' · ' . $task['title'], [
 
 <?php if ($flashMessage !== null): ?>
     <div class="alert alert-<?= esc($flashType) ?>"><?= esc($flashMessage) ?></div>
+<?php endif; ?>
+
+<?php if (!empty($task['meeting_decision_id'])): ?>
+    <div class="alert alert-info">
+        <i class="bi bi-calendar2-week me-1"></i>
+        This task was auto-generated from a decision point in meeting
+        <strong><a href="/meeting_view.php?id=<?= (int) $task['source_meeting_id'] ?>"><?= esc((string) ($task['source_meeting_ref'] ?? '')) ?></a></strong>
+        <?php if (!empty($task['source_meeting_title'])): ?>· <?= esc((string) $task['source_meeting_title']) ?><?php endif; ?>
+        <?php if (!empty($task['source_decision_heading'])): ?>
+            <div class="small mt-1"><strong>Decision:</strong> <?= esc((string) $task['source_decision_heading']) ?></div>
+        <?php endif; ?>
+    </div>
 <?php endif; ?>
 
 <div class="row g-3">
