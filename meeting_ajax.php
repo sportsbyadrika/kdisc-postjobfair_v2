@@ -150,27 +150,46 @@ if ($action === 'upsert_agenda') {
     $title = trim((string) ($_POST['title'] ?? ''));
     if ($title === '') $sendError('Title required.');
     $desc = trim((string) ($_POST['description'] ?? '')) ?: null;
-    $lu = (int) ($_POST['lead_user_id'] ?? 0) ?: null;
-    $ls = (int) ($_POST['lead_seat_id'] ?? 0) ?: null;
-    $lc = (int) ($_POST['lead_contact_id'] ?? 0) ?: null;
+    // Multi-lead: user_ids[] / seat_ids[] / contact_ids[]. For
+    // backward compatibility we also populate the legacy single-id
+    // columns with the first entry from each list so older display
+    // code that reads them still shows something sensible.
+    $userIds    = array_values(array_filter(array_map('intval', (array) ($_POST['user_ids']    ?? []))));
+    $seatIds    = array_values(array_filter(array_map('intval', (array) ($_POST['seat_ids']    ?? []))));
+    $contactIds = array_values(array_filter(array_map('intval', (array) ($_POST['contact_ids'] ?? []))));
+    $firstUser    = $userIds[0]    ?? null;
+    $firstSeat    = $seatIds[0]    ?? null;
+    $firstContact = $contactIds[0] ?? null;
+
+    db()->query('START TRANSACTION');
     try {
         if ($id > 0) {
             db()->prepare('UPDATE meeting_agenda SET title = ?, description = ?, lead_user_id = ?, lead_seat_id = ?, lead_contact_id = ? WHERE id = ? AND meeting_id = ?')
-                ->execute([$title, $desc, $lu, $ls, $lc, $id, $meetingId]);
+                ->execute([$title, $desc, $firstUser, $firstSeat, $firstContact, $id, $meetingId]);
         } else {
-            $so = (int) db()->prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 FROM meeting_agenda WHERE meeting_id = ?')->execute([$meetingId]);
             $st = db()->prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM meeting_agenda WHERE meeting_id = ?');
             $st->execute([$meetingId]);
             $newSort = (int) ($st->fetchColumn() ?: 1);
             db()->prepare('INSERT INTO meeting_agenda (meeting_id, sort_order, title, description, lead_user_id, lead_seat_id, lead_contact_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
-                ->execute([$meetingId, $newSort, $title, $desc, $lu, $ls, $lc]);
+                ->execute([$meetingId, $newSort, $title, $desc, $firstUser, $firstSeat, $firstContact]);
             $id = db()->lastInsertId();
         }
+        // Rewrite the many-to-many lead set.
+        db()->prepare('DELETE FROM meeting_agenda_lead WHERE agenda_id = ?')->execute([$id]);
+        $insL = db()->prepare('INSERT INTO meeting_agenda_lead (agenda_id, user_id, seat_id, contact_id) VALUES (?, ?, ?, ?)');
+        foreach ($userIds    as $x) $insL->execute([$id, $x, null, null]);
+        foreach ($seatIds    as $x) $insL->execute([$id, null, $x, null]);
+        foreach ($contactIds as $x) $insL->execute([$id, null, null, $x]);
+        db()->query('COMMIT');
         echo json_encode(['ok' => true, 'item_id' => $id]); exit;
-    } catch (Throwable $e) { $sendError($e->getMessage(), 500); }
+    } catch (Throwable $e) {
+        try { db()->query('ROLLBACK'); } catch (Throwable $r) { /* ignore */ }
+        $sendError($e->getMessage(), 500);
+    }
 }
 if ($action === 'delete_agenda') {
     $id = (int) ($_POST['id'] ?? 0);
+    db()->prepare('DELETE FROM meeting_agenda_lead WHERE agenda_id = ?')->execute([$id]);
     db()->prepare('DELETE FROM meeting_agenda WHERE id = ? AND meeting_id = ?')->execute([$id, $meetingId]);
     echo json_encode(['ok' => true]); exit;
 }

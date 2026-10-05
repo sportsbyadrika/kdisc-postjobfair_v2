@@ -107,6 +107,18 @@ function meetings_bootstrap(): void
             KEY idx_meeting (meeting_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+        $db->query("CREATE TABLE IF NOT EXISTS meeting_agenda_lead (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            agenda_id INT NOT NULL,
+            user_id INT NULL,
+            seat_id INT NULL,
+            contact_id INT NULL,
+            KEY idx_agenda (agenda_id),
+            KEY idx_user (user_id),
+            KEY idx_seat (seat_id),
+            KEY idx_contact (contact_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
         $db->query("CREATE TABLE IF NOT EXISTS meeting_decision (
             id INT AUTO_INCREMENT PRIMARY KEY,
             meeting_id INT NOT NULL,
