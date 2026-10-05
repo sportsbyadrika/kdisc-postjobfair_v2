@@ -18,11 +18,13 @@ $isAdminAll = is_manage_admin($viewer) || user_can_admin_module($viewerId, 'meet
 $id = (int) ($_GET['id'] ?? 0);
 if ($id <= 0) { header('Location: /meetings.php'); exit; }
 $stmt = db()->prepare('SELECT m.*, u.name AS created_by_name,
-        cu.name AS chair_user_name, cc.name AS chair_contact_name, cc.institution AS chair_contact_inst
+        cu.name AS chair_user_name, cc.name AS chair_contact_name, cc.institution AS chair_contact_inst,
+        pm.reference_no AS prev_ref, pm.title AS prev_title
     FROM meeting m
     LEFT JOIN users u ON u.id = m.created_by
     LEFT JOIN users cu ON cu.id = m.chair_user_id
     LEFT JOIN contact cc ON cc.id = m.chair_contact_id
+    LEFT JOIN meeting pm ON pm.id = m.previous_meeting_id
     WHERE m.id = ? LIMIT 1');
 $stmt->execute([$id]);
 $meeting = $stmt->fetch();
@@ -111,10 +113,23 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                         $chairInstitution = (string) ($meeting['chair_contact_inst'] ?? '');
                     ?>
                     <div class="col-md-6">
-                        <div class="small text-muted">Chairperson (<?= $chairType ?: '—' ?>)</div>
+                        <div class="small text-muted">Chairperson (<?= $chairType === 'external' ? 'External User' : ($chairType ?: '—') ?>)</div>
                         <div>
                             <?= $chairName !== '' ? esc($chairName) : '<span class="text-muted">—</span>' ?>
                             <?php if ($chairInstitution !== ''): ?><span class="small text-muted">· <?= esc($chairInstitution) ?></span><?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="small text-muted">Previous meeting</div>
+                        <div>
+                            <?php if (!empty($meeting['previous_meeting_id'])): ?>
+                                <a href="/meeting_view.php?id=<?= (int) $meeting['previous_meeting_id'] ?>">
+                                    <span class="font-monospace small"><?= esc((string) ($meeting['prev_ref'] ?? '')) ?></span>
+                                    <?php if (!empty($meeting['prev_title'])): ?> · <?= esc((string) $meeting['prev_title']) ?><?php endif; ?>
+                                </a>
+                            <?php else: ?>
+                                <span class="text-muted">—</span>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </div>
