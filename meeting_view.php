@@ -234,9 +234,19 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                                 <?php endforeach; ?>
                             </div>
                         <?php endif; ?>
-                        <?php $ts = $decisionTasks[(int) $d['id']] ?? []; if ($ts !== []): ?>
+                        <?php
+                            $ts = $decisionTasks[(int) $d['id']] ?? [];
+                            // Privacy: when status_private = 1 on the decision, only
+                            // the task's own owner (and admins) see its status chip.
+                            $isPrivate = (int) ($d['status_private'] ?? 0) === 1;
+                            if ($isPrivate && !$canEdit) {
+                                $ts = array_values(array_filter($ts, static fn($t) => (int) ($t['officer_id'] ?? 0) === $viewerId));
+                            }
+                        ?>
+                        <?php if ($ts !== []): ?>
                             <div class="small mt-2">
                                 <span class="text-muted">Linked tasks:</span>
+                                <?php if ($isPrivate): ?><span class="badge text-bg-dark me-1" title="Status is hidden from others"><i class="bi bi-lock-fill"></i> private</span><?php endif; ?>
                                 <?php foreach ($ts as $t):
                                     $tone = (string) ($t['colour_token'] ?? 'secondary'); if ($tone === 'neutral') $tone = 'secondary';
                                     $pfx  = (string) ($t['project_code'] ?? 'OWN') . '-' . (int) $t['task_number'];
@@ -247,6 +257,8 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                                     </a>
                                 <?php endforeach; ?>
                             </div>
+                        <?php elseif ($isPrivate && (int) ($d['create_own_tasks'] ?? 1) === 1): ?>
+                            <div class="small mt-2 text-muted"><i class="bi bi-lock-fill me-1"></i>Task status is private — only the owner can see it.</div>
                         <?php endif; ?>
                     </div>
                 <?php endforeach; ?>
