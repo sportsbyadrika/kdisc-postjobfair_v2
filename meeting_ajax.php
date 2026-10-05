@@ -197,19 +197,17 @@ if ($action === 'delete_agenda') {
 }
 
 /**
- * Sync tasks for a decision point. Called from upsert_decision after
- * the responsible rows are rewritten.
- *
- * For every internal user responsible on the decision WHO HOLDS AN
- * ACTIVE SEAT, upsert a task in the "Own Tasks" (code=OWN) project.
- * The task's primary assignment is that user's seat so it lands in
- * My Work. For users who were on the decision but aren't any more,
- * their existing task is deactivated.
- *
- * Returns silently on any DB error — the decision save stays
- * committed; the task sync is best-effort.
+ * Thin wrapper around meetings_sync_decision_tasks() — keeps the
+ * existing closure name in use further down this file so edits
+ * stay localised. The real implementation lives in
+ * includes/meetings_helpers.php where it's shared with the bulk
+ * import flow.
  */
 $syncDecisionTasks = static function (int $decisionId, array $userIds, int $viewerId): void {
+    meetings_sync_decision_tasks($decisionId, $userIds, $viewerId);
+};
+// --- original inline implementation retained below (unused) ----
+$_unusedInlineSync = static function (int $decisionId, array $userIds, int $viewerId): void {
     try {
         $db = db();
         // Find the Own Tasks project.

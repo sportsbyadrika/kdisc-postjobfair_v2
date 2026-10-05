@@ -276,7 +276,10 @@ render_header('Meetings · ' . $pageTitle, ['main_container_class' => 'container
 render_page_header($pageTitle, [
     'icon' => 'bi-calendar2-week',
     'subtitle' => $existing ? 'Edit fields, participants, agenda, decisions. Saves in one transaction.' : 'Create a new meeting. A reference number is allocated automatically from the division.',
-    'actions' => '<a class="btn btn-light" href="/meetings.php"><i class="bi bi-arrow-left me-1"></i>Back to Meetings</a>',
+    'actions' => ($existing
+            ? '<a class="btn btn-outline-success" href="/meeting_bulk_import.php?id=' . (int) $existing['id'] . '"><i class="bi bi-file-earmark-arrow-up me-1"></i>Bulk upload minutes</a>'
+            : '')
+        . '<a class="btn btn-light ms-2" href="/meetings.php"><i class="bi bi-arrow-left me-1"></i>Back to Meetings</a>',
 ]);
 ?>
 

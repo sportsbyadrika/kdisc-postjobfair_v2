@@ -311,3 +311,93 @@ function meetings_status_tone(string $status): string
         default      => 'info',
     };
 }
+
+/**
+ * Sync "Own Tasks" rows for a decision point. For every internal
+ * user responsible on the decision who holds an active seat, upsert
+ * a task in the "Own Tasks" (code=OWN) project; the task's primary
+ * assignment is that user's seat so it lands in My Work. Users
+ * previously responsible but no longer get their task deactivated.
+ *
+ * Best-effort — a DB error anywhere in here just rolls back the
+ * nested transaction and returns silently so the caller's own
+ * commit is never undone.
+ */
+function meetings_sync_decision_tasks(int $decisionId, array $userIds, int $viewerId): void
+{
+    try {
+        $db = db();
+        $st = $db->prepare("SELECT id, next_task_number FROM project WHERE code = 'OWN' LIMIT 1");
+        $st->execute();
+        $ownProject = $st->fetch();
+        if ($ownProject === false) return;
+        $ownProjectId = (int) $ownProject['id'];
+
+        $st = $db->prepare('SELECT md.heading, md.description, md.due_date, m.reference_no
+            FROM meeting_decision md
+            INNER JOIN meeting m ON m.id = md.meeting_id
+            WHERE md.id = ?');
+        $st->execute([$decisionId]);
+        $dec = $st->fetch();
+        if ($dec === false) return;
+        $title = '[' . (string) $dec['reference_no'] . '] ' . (string) $dec['heading'];
+        $desc  = (string) ($dec['description'] ?? '');
+        $due   = (string) ($dec['due_date'] ?? '');
+        $due   = ($due !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $due)) ? $due : null;
+
+        $defaultStatus = (int) ($db->query("SELECT id FROM task_status WHERE name = 'Not Started' LIMIT 1")->fetchColumn() ?: 0);
+        if ($defaultStatus === 0) $defaultStatus = (int) ($db->query('SELECT id FROM task_status WHERE is_active = 1 ORDER BY sort_order ASC LIMIT 1')->fetchColumn() ?: 0);
+
+        $st = $db->prepare('SELECT t.id, t.is_active, ta.seat_id, oh.officer_id
+            FROM task t
+            LEFT JOIN task_assignment ta ON ta.task_id = t.id AND ta.role = "primary"
+            LEFT JOIN office_hierarchy_officer_history oh ON oh.node_id = ta.seat_id AND oh.unassigned_at IS NULL
+            WHERE t.meeting_decision_id = ?');
+        $st->execute([$decisionId]);
+        $existingByUser = [];
+        foreach ($st->fetchAll() as $t) {
+            $uid = (int) ($t['officer_id'] ?? 0);
+            if ($uid > 0) $existingByUser[$uid] = (int) $t['id'];
+        }
+
+        $wantedByUser = [];
+        foreach ($userIds as $uid) {
+            $uid = (int) $uid;
+            if ($uid <= 0) continue;
+            $sst = $db->prepare('SELECT node_id FROM office_hierarchy_officer_history WHERE officer_id = ? AND unassigned_at IS NULL ORDER BY id DESC LIMIT 1');
+            $sst->execute([$uid]);
+            $seatId = (int) ($sst->fetchColumn() ?: 0);
+            if ($seatId > 0) $wantedByUser[$uid] = $seatId;
+        }
+
+        foreach ($wantedByUser as $uid => $seatId) {
+            if (isset($existingByUser[$uid])) {
+                $taskId = $existingByUser[$uid];
+                $db->prepare('UPDATE task SET title = ?, description = ?, planned_end = ?, is_active = 1, updated_at = NOW(), updated_by = ? WHERE id = ?')
+                   ->execute([$title, $desc === '' ? null : $desc, $due, $viewerId, $taskId]);
+            } else {
+                $db->query('START TRANSACTION');
+                $lk = $db->prepare('SELECT next_task_number FROM project WHERE id = ? FOR UPDATE');
+                $lk->execute([$ownProjectId]);
+                $nextNum = (int) ($lk->fetchColumn() ?: 1);
+                $db->prepare('INSERT INTO task (project_id, task_number, title, description, status_id, priority, planned_end, meeting_decision_id, is_active, created_at, updated_at, created_by, updated_by, board_order)
+                    VALUES (?, ?, ?, ?, ?, "medium", ?, ?, 1, NOW(), NOW(), ?, ?, ?)')
+                    ->execute([$ownProjectId, $nextNum, $title, $desc === '' ? null : $desc, $defaultStatus, $due, $decisionId, $viewerId, $viewerId, $nextNum * 1000]);
+                $newId = $db->lastInsertId();
+                $db->prepare('UPDATE project SET next_task_number = next_task_number + 1 WHERE id = ?')->execute([$ownProjectId]);
+                $db->prepare('INSERT INTO task_assignment (task_id, seat_id, role, created_at, created_by) VALUES (?, ?, "primary", NOW(), ?)')
+                   ->execute([$newId, $seatId, $viewerId]);
+                $db->query('COMMIT');
+                $existingByUser[$uid] = $newId;
+            }
+        }
+        foreach ($existingByUser as $uid => $taskId) {
+            if (!isset($wantedByUser[$uid])) {
+                $db->prepare('UPDATE task SET is_active = 0, updated_at = NOW(), updated_by = ? WHERE id = ?')
+                   ->execute([$viewerId, $taskId]);
+            }
+        }
+    } catch (Throwable $e) {
+        try { db()->query('ROLLBACK'); } catch (Throwable $r) { /* ignore */ }
+    }
+}
