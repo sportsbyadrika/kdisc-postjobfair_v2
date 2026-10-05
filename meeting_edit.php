@@ -335,16 +335,34 @@ render_page_header($pageTitle, [
             </div>
             <div class="col-md-6">
                 <label class="form-label d-flex justify-content-between align-items-center">
-                    <span>Chairperson (contact)</span>
+                    <span>Chairperson (External User)</span>
                     <span class="d-inline-flex align-items-center gap-2">
-                        <a href="#" class="small" id="chairNewContactBtn"><i class="bi bi-plus-lg"></i> New contact</a>
-                        <button type="button" class="btn btn-sm btn-link p-0" id="chairRefreshBtn" title="Refresh contact list"><i class="bi bi-arrow-clockwise"></i></button>
+                        <a href="#" class="small" id="chairNewContactBtn"><i class="bi bi-plus-lg"></i> New External User</a>
+                        <button type="button" class="btn btn-sm btn-link p-0" id="chairRefreshBtn" title="Refresh External User list"><i class="bi bi-arrow-clockwise"></i></button>
                     </span>
                 </label>
                 <select class="form-select" name="chair_contact_id" id="chairContactSelect">
                     <option value="0">— None —</option>
                     <?php foreach ($contacts as $c): ?>
                         <option value="<?= (int) $c['id'] ?>" <?= (int) $formValues['chair_contact_id'] === (int) $c['id'] ? 'selected' : '' ?>><?= esc((string) $c['name']) ?><?= !empty($c['institution']) ? ' · ' . esc((string) $c['institution']) : '' ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div class="col-md-12">
+                <label class="form-label">Previous meeting <span class="small text-muted">(optional — link to earlier record in the series)</span></label>
+                <select class="form-select" name="previous_meeting_id">
+                    <option value="0">— None —</option>
+                    <?php
+                    try {
+                        $prev = db()->query('SELECT id, reference_no, title FROM meeting WHERE is_active = 1 ORDER BY meeting_date DESC LIMIT 200')->fetchAll();
+                    } catch (Throwable $e) { $prev = []; }
+                    foreach ($prev as $p):
+                        if ($existing && (int) $p['id'] === (int) $existing['id']) continue; // don't allow self-link
+                    ?>
+                        <option value="<?= (int) $p['id'] ?>" <?= (int) $formValues['previous_meeting_id'] === (int) $p['id'] ? 'selected' : '' ?>>
+                            <?= esc((string) $p['reference_no']) ?> · <?= esc((string) $p['title']) ?>
+                        </option>
                     <?php endforeach; ?>
                 </select>
             </div>
@@ -402,21 +420,6 @@ render_page_header($pageTitle, [
             <div class="col-md-3">
                 <label class="form-label">Next meeting time</label>
                 <input type="time" class="form-control" name="next_meeting_time" value="<?= esc(substr((string) $formValues['next_meeting_time'], 0, 5)) ?>">
-            </div>
-            <div class="col-md-6">
-                <label class="form-label">Previous meeting (link to earlier record)</label>
-                <select class="form-select" name="previous_meeting_id">
-                    <option value="0">— None —</option>
-                    <?php
-                    try {
-                        $prev = db()->query('SELECT id, reference_no, title FROM meeting WHERE is_active = 1 ORDER BY meeting_date DESC LIMIT 200')->fetchAll();
-                    } catch (Throwable $e) { $prev = []; }
-                    foreach ($prev as $p): ?>
-                        <option value="<?= (int) $p['id'] ?>" <?= (int) $formValues['previous_meeting_id'] === (int) $p['id'] ? 'selected' : '' ?>>
-                            <?= esc((string) $p['reference_no']) ?> · <?= esc((string) $p['title']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
             </div>
         </div>
         <div class="d-flex justify-content-between align-items-center mb-2 mt-3">
@@ -489,24 +492,48 @@ window.__meetingRef = {
 <!-- =============== Modal templates =============== -->
 <div class="mm-backdrop" id="mmBackdrop" style="display:none;"></div>
 
-<!-- Participant modal -->
-<div class="mm-modal" id="participantModal" style="display:none;">
-    <div class="mm-header"><span><i class="bi bi-people me-1"></i>Participant</span><button type="button" class="btn-close" data-close-modal></button></div>
+<!-- Participant modal — two side-by-side checkbox lists with search, +
+     one shared attendance/role row across every ticked person. -->
+<div class="mm-modal" id="participantModal" style="display:none; width: min(900px, 94vw);">
+    <div class="mm-header"><span><i class="bi bi-people me-1"></i>Participants</span><button type="button" class="btn-close" data-close-modal></button></div>
     <div class="mm-body">
         <input type="hidden" id="pModalIdx" value="">
-        <div class="mb-2"><label class="form-label small">User (from seat)</label><select class="form-select" id="pModalUser"></select></div>
-        <div class="mb-2"><label class="form-label small">Contact (external)</label><select class="form-select" id="pModalContact"></select></div>
-        <div class="row g-2">
-            <div class="col-md-4"><label class="form-label small">Attendance type</label>
-                <select class="form-select" id="pModalMand"><option value="1">Mandatory</option><option value="0">Optional</option></select></div>
-            <div class="col-md-4"><label class="form-label small">Present?</label>
-                <select class="form-select" id="pModalAtt"><option value="">— not yet —</option><option value="1">Present</option><option value="0">Absent</option></select></div>
-            <div class="col-md-4"><label class="form-label small">Role</label>
-                <input class="form-control" id="pModalRole" placeholder="e.g. Guest"></div>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-badge me-1"></i>Users (from seats)</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="pSearchUsers" placeholder="Search users…">
+                <div class="pm-check-list" id="pListUsers"></div>
+                <div class="small text-muted mt-1" id="pListUsersCount"></div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-vcard me-1"></i>External Users</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="pSearchContacts" placeholder="Search external users…">
+                <div class="pm-check-list" id="pListContacts"></div>
+                <div class="small text-muted mt-1" id="pListContactsCount"></div>
+            </div>
+            <div class="col-12">
+                <hr class="my-2">
+                <div class="small text-muted mb-2">The row below applies to <strong>every</strong> ticked person.</div>
+                <div class="row g-2">
+                    <div class="col-md-4"><label class="form-label small">Attendance type</label>
+                        <select class="form-select" id="pModalMand"><option value="1">Mandatory</option><option value="0">Optional</option></select></div>
+                    <div class="col-md-4"><label class="form-label small">Present?</label>
+                        <select class="form-select" id="pModalAtt"><option value="">— not yet —</option><option value="1">Present</option><option value="0">Absent</option></select></div>
+                    <div class="col-md-4"><label class="form-label small">Role</label>
+                        <input class="form-control" id="pModalRole" placeholder="e.g. Guest"></div>
+                </div>
+            </div>
         </div>
     </div>
-    <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="pModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
+    <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="pModalSave"><i class="bi bi-check2 me-1"></i>Save selected</button></div>
 </div>
+<style>
+.pm-check-list { height: 240px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 6px; padding: 6px 10px; }
+.pm-check-list .pm-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.pm-check-list .pm-row label { margin: 0; cursor: pointer; line-height: 1.3; }
+.pm-check-list .pm-row:hover { background: #f8fafc; }
+.pm-check-list .pm-empty { color: #94a3b8; text-align: center; padding: 20px 0; font-size: .85rem; }
+</style>
 
 <!-- Agenda modal -->
 <div class="mm-modal" id="agendaModal" style="display:none;">
@@ -517,7 +544,7 @@ window.__meetingRef = {
         <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="aModalDesc" rows="2"></textarea></div>
         <div class="mb-2"><label class="form-label small">Lead — user</label><select class="form-select" id="aModalLeadUser"></select></div>
         <div class="mb-2"><label class="form-label small">Lead — seat</label><select class="form-select" id="aModalLeadSeat"></select></div>
-        <div class="mb-2"><label class="form-label small">Lead — contact</label><select class="form-select" id="aModalLeadContact"></select></div>
+        <div class="mb-2"><label class="form-label small">Lead — External User</label><select class="form-select" id="aModalLeadContact"></select></div>
     </div>
     <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="aModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
 </div>
@@ -533,7 +560,7 @@ window.__meetingRef = {
         <div class="row g-2">
             <div class="col-md-4"><label class="form-label small">Responsible users</label><select class="form-select" id="dModalUsers" multiple size="6"></select></div>
             <div class="col-md-4"><label class="form-label small">Responsible seats</label><select class="form-select" id="dModalSeats" multiple size="6"></select></div>
-            <div class="col-md-4"><label class="form-label small">Responsible contacts</label><select class="form-select" id="dModalContacts" multiple size="6"></select></div>
+            <div class="col-md-4"><label class="form-label small">Responsible External Users</label><select class="form-select" id="dModalContacts" multiple size="6"></select></div>
         </div>
     </div>
     <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="dModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
@@ -561,9 +588,9 @@ window.__meetingRef = {
     <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="uModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
 </div>
 
-<!-- New contact quick-add modal -->
+<!-- New External User quick-add modal -->
 <div class="mm-modal" id="newContactModal" style="display:none;">
-    <div class="mm-header"><span><i class="bi bi-person-plus me-1"></i>New contact</span><button type="button" class="btn-close" data-close-modal></button></div>
+    <div class="mm-header"><span><i class="bi bi-person-plus me-1"></i>New External User</span><button type="button" class="btn-close" data-close-modal></button></div>
     <div class="mm-body">
         <div class="row g-2">
             <div class="col-md-6"><label class="form-label small">Name *</label><input class="form-control" id="ncName"></div>
@@ -573,7 +600,7 @@ window.__meetingRef = {
             <div class="col-md-3"><label class="form-label small">Email</label><input type="email" class="form-control" id="ncEm"></div>
         </div>
     </div>
-    <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="ncSave"><i class="bi bi-check2 me-1"></i>Save contact</button></div>
+    <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="ncSave"><i class="bi bi-check2 me-1"></i>Save External User</button></div>
 </div>
 
 <style>
@@ -839,16 +866,54 @@ window.__meetingRef = {
     });
 
     // ============ MODAL OPEN / PREFILL ============
+    // Participant modal — multi-select checkbox lists on either side.
+    // When editing an existing row (idx != null) we pre-tick that one
+    // person; when adding fresh (idx == null) the lists come up empty
+    // and the operator can tick any number.
+    const sortByName = (list) => list.slice().sort((a, b) => a.name.localeCompare(b.name));
+    const buildCheckList = (containerId, items, preChecked, prefix) => {
+        const set = new Set((preChecked || []).map(String));
+        const html = items.map(x => {
+            const sub = x.inst ? ` <span class="text-muted small">· ${esc(x.inst)}</span>` : '';
+            const checked = set.has(String(x.id)) ? 'checked' : '';
+            return `<div class="pm-row" data-name="${esc(x.name.toLowerCase() + ' ' + (x.inst || '').toLowerCase())}">
+                <input class="form-check-input" type="checkbox" value="${x.id}" id="${prefix}${x.id}" ${checked}>
+                <label for="${prefix}${x.id}">${esc(x.name)}${sub}</label>
+            </div>`;
+        }).join('') || '<div class="pm-empty">No entries.</div>';
+        document.getElementById(containerId).innerHTML = html;
+    };
+    const filterCheckList = (containerId, countId, needle) => {
+        const n = needle.trim().toLowerCase();
+        let shown = 0, total = 0;
+        document.querySelectorAll(`#${containerId} .pm-row`).forEach(r => {
+            total++;
+            const match = n === '' || (r.getAttribute('data-name') || '').includes(n);
+            r.style.display = match ? '' : 'none';
+            if (match) shown++;
+        });
+        document.getElementById(countId).textContent = total === 0 ? '' : (n === '' ? `${total} total` : `${shown} of ${total} shown`);
+    };
+
     const openParticipant = (idx) => {
         const p = idx == null ? {} : state.participants[idx];
         document.getElementById('pModalIdx').value = idx == null ? '' : idx;
-        document.getElementById('pModalUser').innerHTML    = optionsFor(R.users,        p.user_id    || 0);
-        document.getElementById('pModalContact').innerHTML = optionsFor(contactsPool,   p.contact_id || 0);
+        const preUsers    = p.user_id    ? [p.user_id]    : [];
+        const preContacts = p.contact_id ? [p.contact_id] : [];
+        buildCheckList('pListUsers',    sortByName(R.users),        preUsers,    'pmu_');
+        buildCheckList('pListContacts', sortByName(contactsPool),   preContacts, 'pmc_');
+        document.getElementById('pSearchUsers').value = '';
+        document.getElementById('pSearchContacts').value = '';
+        filterCheckList('pListUsers',    'pListUsersCount',    '');
+        filterCheckList('pListContacts', 'pListContactsCount', '');
         document.getElementById('pModalMand').value = String(p.is_mandatory ?? 1);
         document.getElementById('pModalAtt').value  = p.attended == null ? '' : String(p.attended);
         document.getElementById('pModalRole').value = p.role_label || '';
         openModal('participantModal');
     };
+    // Live search inside each checkbox list.
+    document.getElementById('pSearchUsers')?.addEventListener('input', (e) => filterCheckList('pListUsers', 'pListUsersCount', e.target.value));
+    document.getElementById('pSearchContacts')?.addEventListener('input', (e) => filterCheckList('pListContacts', 'pListContactsCount', e.target.value));
     const openAgenda = (idx) => {
         const a = idx == null ? {} : state.agenda[idx];
         document.getElementById('aModalIdx').value = idx == null ? '' : idx;
@@ -908,18 +973,56 @@ window.__meetingRef = {
         } catch (e) { alert('Save failed: ' + e.message); setStatus('Save error', 'danger'); }
     };
 
-    document.getElementById('pModalSave').addEventListener('click', () => {
+    document.getElementById('pModalSave').addEventListener('click', async () => {
         const idxRaw = document.getElementById('pModalIdx').value;
-        const uid = Number(document.getElementById('pModalUser').value || 0);
-        const cid = Number(document.getElementById('pModalContact').value || 0);
-        if (uid <= 0 && cid <= 0) { alert('Pick a user or a contact.'); return; }
-        const existingId = idxRaw !== '' ? (state.participants[+idxRaw]?.id || 0) : 0;
-        upsertRow('upsert_participant', {
-            id: existingId, user_id: uid, contact_id: cid,
+        const checkedUsers    = Array.from(document.querySelectorAll('#pListUsers input:checked')).map(c => Number(c.value));
+        const checkedContacts = Array.from(document.querySelectorAll('#pListContacts input:checked')).map(c => Number(c.value));
+        if (checkedUsers.length === 0 && checkedContacts.length === 0) { alert('Tick at least one user or external user.'); return; }
+        const common = {
             is_mandatory: document.getElementById('pModalMand').value,
             attended:     document.getElementById('pModalAtt').value,
             role_label:   document.getElementById('pModalRole').value.trim(),
-        }, 'participants', idxRaw);
+        };
+        try {
+            await ensureDraft();
+            setStatus('Saving…', 'info');
+            // Edit mode: upsert the one being edited, then any extras
+            // get added as new rows.
+            const edited = idxRaw !== '' ? state.participants[+idxRaw] : null;
+            let primaryDone = false;
+            const persist = async (user_id, contact_id) => {
+                let targetId = 0;
+                if (edited && !primaryDone) {
+                    const matchesUser    = user_id    > 0 && user_id    === (edited.user_id    || 0);
+                    const matchesContact = contact_id > 0 && contact_id === (edited.contact_id || 0);
+                    if (matchesUser || matchesContact) { targetId = edited.id || 0; primaryDone = true; }
+                }
+                const j = await ajax({ action: 'upsert_participant', meeting_id: meetingId,
+                    id: targetId, user_id, contact_id, ...common });
+                if (!j.ok) throw new Error(j.error || 'save failed');
+                return { id: j.item_id, user_id, contact_id, ...common };
+            };
+            const newRows = [];
+            for (const uid of checkedUsers)    newRows.push(await persist(uid, 0));
+            for (const cid of checkedContacts) newRows.push(await persist(0, cid));
+            if (idxRaw !== '') {
+                // Replace the one being edited (if it got re-upserted),
+                // else drop it and append the new rows.
+                if (primaryDone) {
+                    const editedIdx = newRows.findIndex(r => r.id === edited.id);
+                    state.participants[+idxRaw] = newRows[editedIdx];
+                    newRows.splice(editedIdx, 1);
+                } else {
+                    // The person being edited was NOT re-ticked — delete
+                    // that DB row and continue with newly-added rows.
+                    if (edited.id) await ajax({ action: 'delete_participant', meeting_id: meetingId, id: edited.id });
+                    state.participants.splice(+idxRaw, 1);
+                }
+            }
+            state.participants.push(...newRows);
+            renderAll(); closeAllModals();
+            setStatus('Saved', 'success');
+        } catch (e) { alert('Save failed: ' + e.message); setStatus('Save error', 'danger'); }
     });
     document.getElementById('aModalSave').addEventListener('click', () => {
         const idxRaw = document.getElementById('aModalIdx').value;
