@@ -59,6 +59,23 @@ $agenda = db()->prepare('SELECT a.*, u.name AS lead_user_name, c.name AS lead_co
     WHERE a.meeting_id = ? ORDER BY a.sort_order ASC, a.id ASC');
 $agenda->execute([$id]); $agenda = $agenda->fetchAll();
 
+// Multi-lead rows for every agenda item.
+$agendaLeads = [];
+if ($agenda !== []) {
+    $aids = array_map(static fn($a) => (int) $a['id'], $agenda);
+    try {
+        $ph = implode(',', array_fill(0, count($aids), '?'));
+        $st = db()->prepare("SELECT mal.*, u.name AS user_name, c.name AS contact_name, n.name AS seat_name
+            FROM meeting_agenda_lead mal
+            LEFT JOIN users u   ON u.id = mal.user_id
+            LEFT JOIN contact c ON c.id = mal.contact_id
+            LEFT JOIN office_hierarchy_nodes n ON n.id = mal.seat_id
+            WHERE mal.agenda_id IN ($ph)");
+        $st->execute($aids);
+        foreach ($st->fetchAll() as $r) $agendaLeads[(int) $r['agenda_id']][] = $r;
+    } catch (Throwable $e) { /* table may not exist yet */ }
+}
+
 $decisions = db()->prepare('SELECT * FROM meeting_decision WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC');
 $decisions->execute([$id]); $decisions = $decisions->fetchAll();
 $decRespRows = [];
@@ -158,8 +175,18 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                             <strong><?= esc((string) $a['title']) ?></strong>
                             <?php if (!empty($a['description'])): ?><div class="small text-muted" style="white-space:pre-wrap;"><?= esc((string) $a['description']) ?></div><?php endif; ?>
                             <?php
-                                $lead = $a['lead_user_name'] ?: ($a['lead_contact_name'] ?: $a['lead_seat_name']);
-                                if ($lead) echo '<div class="small text-muted"><i class="bi bi-person-check me-1"></i>Lead: ' . esc((string) $lead) . '</div>';
+                                $leads = $agendaLeads[(int) $a['id']] ?? [];
+                                $leadNames = [];
+                                foreach ($leads as $l) {
+                                    $leadNames[] = (string) ($l['user_name'] ?: ($l['contact_name'] ?: $l['seat_name']));
+                                }
+                                if ($leadNames === []) {
+                                    // Fallback for pre-multi-lead rows.
+                                    $single = $a['lead_user_name'] ?: ($a['lead_contact_name'] ?: $a['lead_seat_name']);
+                                    if ($single) $leadNames[] = (string) $single;
+                                }
+                                $leadNames = array_filter($leadNames);
+                                if ($leadNames !== []) echo '<div class="small text-muted"><i class="bi bi-person-check me-1"></i>Lead: ' . esc(implode(', ', $leadNames)) . '</div>';
                             ?>
                         </li>
                     <?php endforeach; ?>

@@ -65,6 +65,7 @@ try {
 // Preload existing rows for edit.
 $existingParticipants = []; $existingAgenda = []; $existingDecisions = []; $existingNextAgenda = []; $existingUrls = [];
 $existingDecisionResp = []; // decision_id => [ [user_id?, contact_id?, seat_id?], ... ]
+$existingAgendaLeads  = []; // agenda_id => [ [user_id?, seat_id?, contact_id?], ... ]
 if ($existing !== null) {
     $mid = (int) $existing['id'];
     try {
@@ -84,6 +85,14 @@ if ($existing !== null) {
             $st = db()->prepare("SELECT * FROM meeting_decision_responsible WHERE decision_id IN ($ph)");
             $st->execute($ids);
             foreach ($st->fetchAll() as $r) $existingDecisionResp[(int) $r['decision_id']][] = $r;
+        }
+        // Agenda leads (M:N).
+        $aids = array_map(static fn($a) => (int) $a['id'], $existingAgenda);
+        if ($aids !== []) {
+            $ph = implode(',', array_fill(0, count($aids), '?'));
+            $st = db()->prepare("SELECT * FROM meeting_agenda_lead WHERE agenda_id IN ($ph)");
+            $st->execute($aids);
+            foreach ($st->fetchAll() as $r) $existingAgendaLeads[(int) $r['agenda_id']][] = $r;
         }
     } catch (Throwable $e) { /* ignore */ }
 }
@@ -325,8 +334,8 @@ render_page_header($pageTitle, [
             </div>
 
             <div class="col-md-6">
-                <label class="form-label">Chairperson (user)</label>
-                <select class="form-select" name="chair_user_id">
+                <label class="form-label">Chairperson (Internal User)</label>
+                <select class="form-select ts-search" name="chair_user_id" id="chairUserSelect">
                     <option value="0">— None (or use contact) —</option>
                     <?php foreach ($users as $u): ?>
                         <option value="<?= (int) $u['id'] ?>" <?= (int) $formValues['chair_user_id'] === (int) $u['id'] ? 'selected' : '' ?>><?= esc((string) $u['name']) ?></option>
@@ -341,7 +350,7 @@ render_page_header($pageTitle, [
                         <button type="button" class="btn btn-sm btn-link p-0" id="chairRefreshBtn" title="Refresh External User list"><i class="bi bi-arrow-clockwise"></i></button>
                     </span>
                 </label>
-                <select class="form-select" name="chair_contact_id" id="chairContactSelect">
+                <select class="form-select ts-search" name="chair_contact_id" id="chairContactSelect">
                     <option value="0">— None —</option>
                     <?php foreach ($contacts as $c): ?>
                         <option value="<?= (int) $c['id'] ?>" <?= (int) $formValues['chair_contact_id'] === (int) $c['id'] ? 'selected' : '' ?>><?= esc((string) $c['name']) ?><?= !empty($c['institution']) ? ' · ' . esc((string) $c['institution']) : '' ?></option>
@@ -351,7 +360,7 @@ render_page_header($pageTitle, [
 
             <div class="col-md-12">
                 <label class="form-label">Previous meeting <span class="small text-muted">(optional — link to earlier record in the series)</span></label>
-                <select class="form-select" name="previous_meeting_id">
+                <select class="form-select ts-search" name="previous_meeting_id" id="prevMeetingSelect">
                     <option value="0">— None —</option>
                     <?php
                     try {
@@ -464,14 +473,23 @@ window.__meetingRef = {
             'attended' => $p['attended'] === null ? '' : (string) $p['attended'],
             'role_label' => (string) ($p['role_label'] ?? ''),
         ], $existingParticipants)) ?>,
-        agenda: <?= json_encode(array_map(static fn($a) => [
-            'id' => (int) $a['id'],
-            'title' => (string) $a['title'],
-            'description' => (string) ($a['description'] ?? ''),
-            'lead_user_id' => (int) ($a['lead_user_id'] ?? 0),
-            'lead_seat_id' => (int) ($a['lead_seat_id'] ?? 0),
-            'lead_contact_id' => (int) ($a['lead_contact_id'] ?? 0),
-        ], $existingAgenda)) ?>,
+        agenda: <?= json_encode(array_map(static function ($a) use ($existingAgendaLeads) {
+            $leads = $existingAgendaLeads[(int) $a['id']] ?? [];
+            $uIds = array_values(array_filter(array_map(static fn($r) => (int) ($r['user_id']    ?? 0), $leads)));
+            $sIds = array_values(array_filter(array_map(static fn($r) => (int) ($r['seat_id']    ?? 0), $leads)));
+            $cIds = array_values(array_filter(array_map(static fn($r) => (int) ($r['contact_id'] ?? 0), $leads)));
+            // Back-fill from legacy single-id columns for rows that
+            // predate the meeting_agenda_lead table.
+            if ($uIds === [] && (int) ($a['lead_user_id']    ?? 0) > 0) $uIds[] = (int) $a['lead_user_id'];
+            if ($sIds === [] && (int) ($a['lead_seat_id']    ?? 0) > 0) $sIds[] = (int) $a['lead_seat_id'];
+            if ($cIds === [] && (int) ($a['lead_contact_id'] ?? 0) > 0) $cIds[] = (int) $a['lead_contact_id'];
+            return [
+                'id' => (int) $a['id'],
+                'title' => (string) $a['title'],
+                'description' => (string) ($a['description'] ?? ''),
+                'user_ids' => $uIds, 'seat_ids' => $sIds, 'contact_ids' => $cIds,
+            ];
+        }, $existingAgenda)) ?>,
         decisions: <?= json_encode(array_map(static function ($d) use ($existingDecisionResp) {
             $rs = $existingDecisionResp[(int) $d['id']] ?? [];
             return [
@@ -500,8 +518,8 @@ window.__meetingRef = {
         <input type="hidden" id="pModalIdx" value="">
         <div class="row g-3">
             <div class="col-md-6">
-                <label class="form-label small fw-semibold"><i class="bi bi-person-badge me-1"></i>Users (from seats)</label>
-                <input type="text" class="form-control form-control-sm mb-2" id="pSearchUsers" placeholder="Search users…">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-badge me-1"></i>Internal Users (from seats)</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="pSearchUsers" placeholder="Search internal users…">
                 <div class="pm-check-list" id="pListUsers"></div>
                 <div class="small text-muted mt-1" id="pListUsersCount"></div>
             </div>
@@ -535,16 +553,34 @@ window.__meetingRef = {
 .pm-check-list .pm-empty { color: #94a3b8; text-align: center; padding: 20px 0; font-size: .85rem; }
 </style>
 
-<!-- Agenda modal -->
-<div class="mm-modal" id="agendaModal" style="display:none;">
+<!-- Agenda modal — three checkbox lists for leads (multi-select). -->
+<div class="mm-modal" id="agendaModal" style="display:none; width: min(960px, 94vw);">
     <div class="mm-header"><span><i class="bi bi-list-ol me-1"></i>Agenda item</span><button type="button" class="btn-close" data-close-modal></button></div>
     <div class="mm-body">
         <input type="hidden" id="aModalIdx" value="">
         <div class="mb-2"><label class="form-label small">Title *</label><input class="form-control" id="aModalTitle"></div>
-        <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="aModalDesc" rows="2"></textarea></div>
-        <div class="mb-2"><label class="form-label small">Lead — user</label><select class="form-select" id="aModalLeadUser"></select></div>
-        <div class="mb-2"><label class="form-label small">Lead — seat</label><select class="form-select" id="aModalLeadSeat"></select></div>
-        <div class="mb-2"><label class="form-label small">Lead — External User</label><select class="form-select" id="aModalLeadContact"></select></div>
+        <div class="mb-3"><label class="form-label small">Description</label><textarea class="form-control" id="aModalDesc" rows="2"></textarea></div>
+        <div class="small text-muted mb-2">Leads can span any mix of Internal Users, Seats, and External Users — tick as many as apply.</div>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-badge me-1"></i>Internal Users</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="aSearchUsers" placeholder="Search internal users…">
+                <div class="pm-check-list" id="aListUsers"></div>
+                <div class="small text-muted mt-1" id="aListUsersCount"></div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-workspace me-1"></i>Seats</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="aSearchSeats" placeholder="Search seats…">
+                <div class="pm-check-list" id="aListSeats"></div>
+                <div class="small text-muted mt-1" id="aListSeatsCount"></div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold"><i class="bi bi-person-vcard me-1"></i>External Users</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="aSearchContacts" placeholder="Search external users…">
+                <div class="pm-check-list" id="aListContacts"></div>
+                <div class="small text-muted mt-1" id="aListContactsCount"></div>
+            </div>
+        </div>
     </div>
     <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="aModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
 </div>
@@ -558,7 +594,7 @@ window.__meetingRef = {
         <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="dModalDesc" rows="3"></textarea></div>
         <div class="mb-2"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
         <div class="row g-2">
-            <div class="col-md-4"><label class="form-label small">Responsible users</label><select class="form-select" id="dModalUsers" multiple size="6"></select></div>
+            <div class="col-md-4"><label class="form-label small">Responsible Internal Users</label><select class="form-select" id="dModalUsers" multiple size="6"></select></div>
             <div class="col-md-4"><label class="form-label small">Responsible seats</label><select class="form-select" id="dModalSeats" multiple size="6"></select></div>
             <div class="col-md-4"><label class="form-label small">Responsible External Users</label><select class="form-select" id="dModalContacts" multiple size="6"></select></div>
         </div>
@@ -772,20 +808,31 @@ window.__meetingRef = {
     const renderAgenda = () => {
         const tbody = document.querySelector('#agendaTable tbody');
         tbody.innerHTML = state.agenda.map((a, i) => {
-            const lead = nameOf(R.users, a.lead_user_id) || nameOf(R.seats, a.lead_seat_id) || nameOf(contactsPool, a.lead_contact_id) || '';
-            return `<tr><td>${i+1}</td><td>${esc(a.title)}</td><td class="small text-muted">${esc((a.description || '').slice(0, 100))}</td><td class="small">${esc(lead)}</td>
+            const leads = [
+                ...((a.user_ids    || []).map(id => nameOf(R.users,       id))),
+                ...((a.seat_ids    || []).map(id => nameOf(R.seats,       id))),
+                ...((a.contact_ids || []).map(id => nameOf(contactsPool,  id))),
+            ].filter(Boolean).map(esc).join(', ');
+            return `<tr><td>${i+1}</td><td>${esc(a.title)}</td><td class="small text-muted">${esc((a.description || '').slice(0, 100))}</td><td class="small">${leads}</td>
                 <td class="text-end">
                     <button type="button" class="btn btn-sm btn-outline-primary" data-edit-agenda="${i}"><i class="bi bi-pencil"></i></button>
                     <button type="button" class="btn btn-sm btn-outline-danger"  data-del-agenda="${i}"><i class="bi bi-x"></i></button>
                 </td></tr>`;
         }).join('') || '<tr><td colspan="5" class="text-center text-muted small py-2">No agenda items yet.</td></tr>';
+        // Hidden inputs for the big Save-meeting fallback — keep the
+        // legacy single-value fields so the server-side wholesale
+        // rewrite still works, now derived from the first ticked
+        // entry of each list.
         const hidden = document.getElementById('agendaHidden');
         hidden.innerHTML = state.agenda.map((a, i) => {
+            const u = (a.user_ids    || [])[0] || 0;
+            const s = (a.seat_ids    || [])[0] || 0;
+            const c = (a.contact_ids || [])[0] || 0;
             return `<input type="hidden" name="agenda[${i}][title]"           value="${esc(a.title || '')}">
                     <input type="hidden" name="agenda[${i}][description]"     value="${esc(a.description || '')}">
-                    <input type="hidden" name="agenda[${i}][lead_user_id]"    value="${a.lead_user_id || 0}">
-                    <input type="hidden" name="agenda[${i}][lead_seat_id]"    value="${a.lead_seat_id || 0}">
-                    <input type="hidden" name="agenda[${i}][lead_contact_id]" value="${a.lead_contact_id || 0}">`;
+                    <input type="hidden" name="agenda[${i}][lead_user_id]"    value="${u}">
+                    <input type="hidden" name="agenda[${i}][lead_seat_id]"    value="${s}">
+                    <input type="hidden" name="agenda[${i}][lead_contact_id]" value="${c}">`;
         }).join('');
     };
     const renderDecisions = () => {
@@ -919,11 +966,20 @@ window.__meetingRef = {
         document.getElementById('aModalIdx').value = idx == null ? '' : idx;
         document.getElementById('aModalTitle').value = a.title || '';
         document.getElementById('aModalDesc').value  = a.description || '';
-        document.getElementById('aModalLeadUser').innerHTML    = optionsFor(R.users,       a.lead_user_id    || 0);
-        document.getElementById('aModalLeadSeat').innerHTML    = optionsFor(R.seats,       a.lead_seat_id    || 0);
-        document.getElementById('aModalLeadContact').innerHTML = optionsFor(contactsPool,  a.lead_contact_id || 0);
+        buildCheckList('aListUsers',    sortByName(R.users),       a.user_ids    || [], 'alu_');
+        buildCheckList('aListSeats',    sortByName(R.seats),       a.seat_ids    || [], 'als_');
+        buildCheckList('aListContacts', sortByName(contactsPool),  a.contact_ids || [], 'alc_');
+        document.getElementById('aSearchUsers').value = '';
+        document.getElementById('aSearchSeats').value = '';
+        document.getElementById('aSearchContacts').value = '';
+        filterCheckList('aListUsers',    'aListUsersCount',    '');
+        filterCheckList('aListSeats',    'aListSeatsCount',    '');
+        filterCheckList('aListContacts', 'aListContactsCount', '');
         openModal('agendaModal');
     };
+    document.getElementById('aSearchUsers')?.addEventListener('input', (e) => filterCheckList('aListUsers',    'aListUsersCount',    e.target.value));
+    document.getElementById('aSearchSeats')?.addEventListener('input', (e) => filterCheckList('aListSeats',    'aListSeatsCount',    e.target.value));
+    document.getElementById('aSearchContacts')?.addEventListener('input', (e) => filterCheckList('aListContacts', 'aListContactsCount', e.target.value));
     const openDecision = (idx) => {
         const d = idx == null ? {} : state.decisions[idx];
         document.getElementById('dModalIdx').value = idx == null ? '' : idx;
@@ -1029,11 +1085,12 @@ window.__meetingRef = {
         const title = document.getElementById('aModalTitle').value.trim();
         if (title === '') { alert('Title required.'); return; }
         const existingId = idxRaw !== '' ? (state.agenda[+idxRaw]?.id || 0) : 0;
+        const user_ids    = Array.from(document.querySelectorAll('#aListUsers input:checked')).map(c => Number(c.value));
+        const seat_ids    = Array.from(document.querySelectorAll('#aListSeats input:checked')).map(c => Number(c.value));
+        const contact_ids = Array.from(document.querySelectorAll('#aListContacts input:checked')).map(c => Number(c.value));
         upsertRow('upsert_agenda', {
             id: existingId, title, description: document.getElementById('aModalDesc').value.trim(),
-            lead_user_id:    Number(document.getElementById('aModalLeadUser').value || 0),
-            lead_seat_id:    Number(document.getElementById('aModalLeadSeat').value || 0),
-            lead_contact_id: Number(document.getElementById('aModalLeadContact').value || 0),
+            user_ids, seat_ids, contact_ids,
         }, 'agenda', idxRaw);
     });
     document.getElementById('dModalSave').addEventListener('click', () => {
@@ -1076,6 +1133,18 @@ window.__meetingRef = {
         sel.innerHTML = '<option value="0">— None —</option>' + contactsPool.map(c =>
             `<option value="${c.id}">${esc(c.name + (c.inst || c.institution ? ' · ' + (c.inst || c.institution) : ''))}</option>`).join('');
         sel.value = currentVal;
+        // If TomSelect wrapped this select, sync its internal option
+        // store so the newly-added row is actually in its dropdown.
+        if (sel.tomselect) {
+            sel.tomselect.clearOptions();
+            sel.tomselect.addOption({value: '0', text: '— None —'});
+            contactsPool.forEach(c => sel.tomselect.addOption({
+                value: String(c.id),
+                text: c.name + (c.inst || c.institution ? ' · ' + (c.inst || c.institution) : ''),
+            }));
+            sel.tomselect.refreshOptions(false);
+            sel.tomselect.setValue(currentVal, true);
+        }
     };
     document.getElementById('chairNewContactBtn')?.addEventListener('click', (ev) => { ev.preventDefault(); openModal('newContactModal'); });
     document.getElementById('chairRefreshBtn')?.addEventListener('click', async () => {
@@ -1105,7 +1174,11 @@ window.__meetingRef = {
             const c = json.contact;
             contactsPool.push({ id: c.id, name: c.name, inst: c.institution || '' });
             rebuildChairSelect('chairContactSelect');
-            document.getElementById('chairContactSelect').value = c.id;
+            const chair = document.getElementById('chairContactSelect');
+            chair.value = c.id;
+            if (chair.tomselect) chair.tomselect.setValue(String(c.id), false);
+            // Nudge the auto-save pipeline so the new chair persists.
+            chair.dispatchEvent(new Event('change', { bubbles: true }));
             // Clear the modal fields.
             ['ncName','ncInst','ncDes','ncMob','ncEm'].forEach(id => document.getElementById(id).value = '');
             renderAll();
@@ -1116,6 +1189,27 @@ window.__meetingRef = {
     // Initial render (preset already applied to state above).
     renderAll();
 })();
+</script>
+
+<!-- TomSelect for searchable single-selects on the main form. One
+     helper per select — each one hooks in on top of the existing
+     native select without touching its name/value contract, so the
+     auto-save flow keeps working against the same field names. -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tom-select/2.3.1/css/tom-select.bootstrap5.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tom-select/2.3.1/js/tom-select.complete.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    if (typeof TomSelect === 'undefined') return;
+    document.querySelectorAll('.ts-search').forEach(sel => {
+        try {
+            new TomSelect(sel, {
+                allowEmptyOption: true,
+                maxOptions: 2000,
+                plugins: ['dropdown_input'],
+            });
+        } catch (e) { console.warn('TomSelect init failed on', sel.id, e); }
+    });
+});
 </script>
 
 <?php render_footer(); ?>
