@@ -270,11 +270,12 @@ function render_header(string $title, array $options = []): void
                             <?php /* ============ Module: Administration ============ */ ?>
                             <?php if ($canAdminMod || is_manage_admin($user)): ?>
                                 <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['users.php','role_groups.php','reports.php','office_hierarchy.php','office_hierarchy_trash.php','dashboard_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['users.php','role_groups.php','reports.php','office_hierarchy.php','office_hierarchy_trash.php','teams.php','dashboard_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
                                     <ul class="dropdown-menu">
                                         <li><h6 class="dropdown-header">Users &amp; access</h6></li>
                                         <li><a class="dropdown-item ps-4" href="/users.php"><i class="bi bi-people me-2"></i>Users</a></li>
                                         <li><a class="dropdown-item ps-4" href="/role_groups.php"><i class="bi bi-collection me-2"></i>Role Groups</a></li>
+                                        <li><a class="dropdown-item ps-4" href="/teams.php"><i class="bi bi-people me-2"></i>Teams</a></li>
                                         <li><hr class="dropdown-divider"></li>
                                         <li><h6 class="dropdown-header">Masters</h6></li>
                                         <li><a class="dropdown-item ps-4" href="/office_hierarchy.php"><i class="bi bi-diagram-3 me-2"></i>Office Hierarchy</a></li>

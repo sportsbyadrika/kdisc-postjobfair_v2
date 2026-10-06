@@ -27,6 +27,7 @@ require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/meetings_helpers.php';
 require_once __DIR__ . '/includes/task_tracker_helpers.php';
+require_once __DIR__ . '/includes/teams_helpers.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -40,6 +41,7 @@ require_auth();
 $viewer   = current_user() ?? [];
 $viewerId = (int) ($viewer['id'] ?? 0);
 meetings_bootstrap();
+teams_bootstrap();
 task_tracker_bootstrap();
 $isAdminAll = is_manage_admin($viewer) || user_can_admin_module($viewerId, 'meetings');
 
@@ -304,23 +306,34 @@ if ($action === 'upsert_decision') {
     $userIds    = array_values(array_filter(array_map('intval', (array) ($_POST['user_ids']    ?? []))));
     $seatIds    = array_values(array_filter(array_map('intval', (array) ($_POST['seat_ids']    ?? []))));
     $contactIds = array_values(array_filter(array_map('intval', (array) ($_POST['contact_ids'] ?? []))));
+    $teamIds    = array_values(array_filter(array_map('intval', (array) ($_POST['team_ids']    ?? []))));
     $createOwn    = isset($_POST['create_own_tasks']) ? (int) $_POST['create_own_tasks'] : 1;
     $statusPriv   = isset($_POST['status_private'])   ? (int) $_POST['status_private']   : 0;
+    $fanOut       = isset($_POST['fan_out_teams'])    ? (int) $_POST['fan_out_teams']    : 0;
     // Columns may be absent on older installs; detect once per request.
-    static $decColsChecked = false, $hasDecFlags = false;
+    static $decColsChecked = false, $hasDecFlags = false, $hasFanOut = false, $hasTeamId = false;
     if (!$decColsChecked) {
         try {
             $cols = [];
             foreach (db()->query('SHOW COLUMNS FROM meeting_decision')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
             $hasDecFlags = isset($cols['create_own_tasks']) && isset($cols['status_private']);
-        } catch (Throwable $e) { $hasDecFlags = false; }
+            $hasFanOut   = isset($cols['fan_out_teams']);
+        } catch (Throwable $e) { $hasDecFlags = false; $hasFanOut = false; }
+        try {
+            $cols2 = [];
+            foreach (db()->query('SHOW COLUMNS FROM meeting_decision_responsible')->fetchAll() as $c) $cols2[strtolower((string) $c['Field'])] = true;
+            $hasTeamId = isset($cols2['team_id']);
+        } catch (Throwable $e) { $hasTeamId = false; }
         $decColsChecked = true;
     }
 
     db()->query('START TRANSACTION');
     try {
         if ($id > 0) {
-            if ($hasDecFlags) {
+            if ($hasDecFlags && $hasFanOut) {
+                db()->prepare('UPDATE meeting_decision SET heading = ?, description = ?, due_date = ?, create_own_tasks = ?, status_private = ?, fan_out_teams = ? WHERE id = ? AND meeting_id = ?')
+                    ->execute([$heading, $desc, $due, $createOwn ? 1 : 0, $statusPriv ? 1 : 0, $fanOut ? 1 : 0, $id, $meetingId]);
+            } elseif ($hasDecFlags) {
                 db()->prepare('UPDATE meeting_decision SET heading = ?, description = ?, due_date = ?, create_own_tasks = ?, status_private = ? WHERE id = ? AND meeting_id = ?')
                     ->execute([$heading, $desc, $due, $createOwn ? 1 : 0, $statusPriv ? 1 : 0, $id, $meetingId]);
             } else {
@@ -331,7 +344,10 @@ if ($action === 'upsert_decision') {
             $st = db()->prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM meeting_decision WHERE meeting_id = ?');
             $st->execute([$meetingId]);
             $newSort = (int) ($st->fetchColumn() ?: 1);
-            if ($hasDecFlags) {
+            if ($hasDecFlags && $hasFanOut) {
+                db()->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date, create_own_tasks, status_private, fan_out_teams) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+                    ->execute([$meetingId, $newSort, $heading, $desc, $due, $createOwn ? 1 : 0, $statusPriv ? 1 : 0, $fanOut ? 1 : 0]);
+            } elseif ($hasDecFlags) {
                 db()->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date, create_own_tasks, status_private) VALUES (?, ?, ?, ?, ?, ?, ?)')
                     ->execute([$meetingId, $newSort, $heading, $desc, $due, $createOwn ? 1 : 0, $statusPriv ? 1 : 0]);
             } else {
@@ -340,18 +356,28 @@ if ($action === 'upsert_decision') {
             }
             $id = db()->lastInsertId();
         }
-        // Rewrite responsibilities.
+        // Rewrite responsibilities. Teams are stored only when the
+        // team_id column exists; otherwise we silently drop them.
         db()->prepare('DELETE FROM meeting_decision_responsible WHERE decision_id = ?')->execute([$id]);
-        $insR = db()->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
-        foreach ($userIds    as $x) $insR->execute([$id, $x, null, null]);
-        foreach ($seatIds    as $x) $insR->execute([$id, null, null, $x]);
-        foreach ($contactIds as $x) $insR->execute([$id, null, $x, null]);
+        if ($hasTeamId) {
+            $insR = db()->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id, team_id) VALUES (?, ?, ?, ?, ?)');
+            foreach ($userIds    as $x) $insR->execute([$id, $x, null, null, null]);
+            foreach ($seatIds    as $x) $insR->execute([$id, null, null, $x, null]);
+            foreach ($contactIds as $x) $insR->execute([$id, null, $x, null, null]);
+            foreach ($teamIds    as $x) $insR->execute([$id, null, null, null, $x]);
+        } else {
+            $insR = db()->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
+            foreach ($userIds    as $x) $insR->execute([$id, $x, null, null]);
+            foreach ($seatIds    as $x) $insR->execute([$id, null, null, $x]);
+            foreach ($contactIds as $x) $insR->execute([$id, null, $x, null]);
+        }
         db()->query('COMMIT');
-        // Sync Own Tasks only if the operator ticked the box. When
-        // the box is off we deactivate every task we previously
-        // spawned so the hidden-from-Own-Tasks promise is honoured.
+        // Sync Own Tasks only if the operator ticked the box. The sync
+        // call reads the full user list from the DB — direct users plus
+        // team-expanded users (team head unless fan_out_teams is set).
         if ($createOwn) {
-            $syncDecisionTasks((int) $id, $userIds, $viewerId);
+            $allUserIds = meetings_decision_target_user_ids((int) $id);
+            $syncDecisionTasks((int) $id, $allUserIds, $viewerId);
         } else {
             try {
                 db()->prepare('UPDATE task SET is_active = 0, updated_at = NOW(), updated_by = ? WHERE meeting_decision_id = ?')

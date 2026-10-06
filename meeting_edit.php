@@ -19,11 +19,16 @@ require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/meetings_helpers.php';
+require_once __DIR__ . '/includes/teams_helpers.php';
 require_auth();
 
 $viewer   = current_user() ?? [];
 $viewerId = (int) ($viewer['id'] ?? 0);
 meetings_bootstrap();
+teams_bootstrap();
+$teams = teams_list_active();
+$teamsHasTeamId = teams_responsible_has_team_id();
+$teamsHasFanOut = teams_decision_has_fan_out();
 
 $isAdminAll = is_manage_admin($viewer) || user_can_admin_module($viewerId, 'meetings');
 
@@ -218,23 +223,58 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
             ]);
         }
 
-        // Decisions + M:N responsibility
-        $insD = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date) VALUES (?, ?, ?, ?, ?)');
-        $insR = $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
+        // Decisions + M:N responsibility. The decision carries two
+        // flag columns + a fan_out_teams toggle that may or may not
+        // exist on older installs — detect once and pick SQL
+        // accordingly. The responsibility table also has an optional
+        // team_id column we populate when available.
+        $hasDecFlagsSave = false; $hasFanOutSave = false; $hasRespTeamSave = false;
+        try {
+            $colsD = [];
+            foreach ($db->query('SHOW COLUMNS FROM meeting_decision')->fetchAll() as $c) $colsD[strtolower((string) $c['Field'])] = true;
+            $hasDecFlagsSave = isset($colsD['create_own_tasks']) && isset($colsD['status_private']);
+            $hasFanOutSave   = isset($colsD['fan_out_teams']);
+        } catch (Throwable $e) { /* ignore */ }
+        try {
+            $colsR = [];
+            foreach ($db->query('SHOW COLUMNS FROM meeting_decision_responsible')->fetchAll() as $c) $colsR[strtolower((string) $c['Field'])] = true;
+            $hasRespTeamSave = isset($colsR['team_id']);
+        } catch (Throwable $e) { /* ignore */ }
+
+        if ($hasDecFlagsSave && $hasFanOutSave) {
+            $insD = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date, create_own_tasks, status_private, fan_out_teams) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        } elseif ($hasDecFlagsSave) {
+            $insD = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date, create_own_tasks, status_private) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        } else {
+            $insD = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date) VALUES (?, ?, ?, ?, ?)');
+        }
+        $insR = $hasRespTeamSave
+            ? $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id, team_id) VALUES (?, ?, ?, ?, ?)')
+            : $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
         $order = 0;
         foreach ((array) ($_POST['decision'] ?? []) as $row) {
             $h = trim((string) ($row['heading'] ?? ''));
             if ($h === '') continue;
             $due = trim((string) ($row['due_date'] ?? ''));
-            $insD->execute([
-                $id, ++$order, $h,
-                trim((string) ($row['description'] ?? '')) ?: null,
-                ($due !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $due)) ? $due : null,
-            ]);
+            $createOwnF = isset($row['create_own_tasks']) ? (int) $row['create_own_tasks'] : 1;
+            $statusPrivF = isset($row['status_private']) ? (int) $row['status_private'] : 0;
+            $fanOutF    = isset($row['fan_out_teams']) ? (int) $row['fan_out_teams'] : 0;
+            $params = [$id, ++$order, $h, trim((string) ($row['description'] ?? '')) ?: null,
+                ($due !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $due)) ? $due : null];
+            if ($hasDecFlagsSave) { $params[] = $createOwnF ? 1 : 0; $params[] = $statusPrivF ? 1 : 0; }
+            if ($hasDecFlagsSave && $hasFanOutSave) { $params[] = $fanOutF ? 1 : 0; }
+            $insD->execute($params);
             $newDecId = $db->lastInsertId();
-            foreach ((array) ($row['user_ids'] ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, (int) $x, null, null]);
-            foreach ((array) ($row['seat_ids'] ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, null, null, (int) $x]);
-            foreach ((array) ($row['contact_ids'] ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, null, (int) $x, null]);
+            if ($hasRespTeamSave) {
+                foreach ((array) ($row['user_ids']    ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, (int) $x, null, null, null]);
+                foreach ((array) ($row['seat_ids']    ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, null, null, (int) $x, null]);
+                foreach ((array) ($row['contact_ids'] ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, null, (int) $x, null, null]);
+                foreach ((array) ($row['team_ids']    ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, null, null, null, (int) $x]);
+            } else {
+                foreach ((array) ($row['user_ids']    ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, (int) $x, null, null]);
+                foreach ((array) ($row['seat_ids']    ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, null, null, (int) $x]);
+                foreach ((array) ($row['contact_ids'] ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, null, (int) $x, null]);
+            }
         }
 
         // Next-meeting agenda
@@ -466,6 +506,9 @@ window.__meetingRef = {
     users:    <?= json_encode(array_map(static fn($u) => ['id' => (int) $u['id'], 'name' => (string) $u['name']], $users), JSON_UNESCAPED_UNICODE) ?>,
     contacts: <?= json_encode(array_map(static fn($c) => ['id' => (int) $c['id'], 'name' => (string) $c['name'], 'inst' => (string) ($c['institution'] ?? '')], $contacts), JSON_UNESCAPED_UNICODE) ?>,
     seats:    <?= json_encode(array_map(static fn($s) => ['id' => (int) $s['id'], 'name' => (string) $s['name'] . (empty($s['seat_number']) ? '' : ' (' . $s['seat_number'] . ')')], $seats), JSON_UNESCAPED_UNICODE) ?>,
+    teams:    <?= json_encode(array_map(static fn($t) => ['id' => (int) $t['id'], 'name' => (string) $t['name'], 'head_name' => (string) ($t['head_name'] ?? ''), 'member_count' => count($t['members'] ?? [])], $teams), JSON_UNESCAPED_UNICODE) ?>,
+    teams_enabled: <?= $teamsHasTeamId ? 'true' : 'false' ?>,
+    fan_out_enabled: <?= $teamsHasFanOut ? 'true' : 'false' ?>,
     meeting_id: <?= (int) ($existing['id'] ?? 0) ?>,
     preset: {
         participants: <?= json_encode(array_map(static fn($p) => [
@@ -502,9 +545,11 @@ window.__meetingRef = {
                 'due_date' => substr((string) ($d['due_date'] ?? ''), 0, 10),
                 'create_own_tasks' => isset($d['create_own_tasks']) ? (int) $d['create_own_tasks'] : 1,
                 'status_private'   => isset($d['status_private'])   ? (int) $d['status_private']   : 0,
+                'fan_out_teams'    => isset($d['fan_out_teams'])    ? (int) $d['fan_out_teams']    : 0,
                 'user_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['user_id'] ?? 0), $rs))),
                 'seat_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['seat_id'] ?? 0), $rs))),
                 'contact_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['contact_id'] ?? 0), $rs))),
+                'team_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['team_id'] ?? 0), $rs))),
             ];
         }, $existingDecisions)) ?>,
         next_agenda: <?= json_encode(array_map(static fn($n) => ['id' => (int) $n['id'], 'title' => (string) $n['title'], 'description' => (string) ($n['description'] ?? '')], $existingNextAgenda)) ?>,
@@ -591,46 +636,58 @@ window.__meetingRef = {
 </div>
 
 <!-- Decision modal -->
-<div class="mm-modal" id="decisionModal" style="display:none; width: min(960px, 94vw);">
+<div class="mm-modal" id="decisionModal" style="display:none; width: min(1140px, 96vw);">
     <div class="mm-header"><span><i class="bi bi-check2-square me-1"></i>Decision point</span><button type="button" class="btn-close" data-close-modal></button></div>
     <div class="mm-body">
         <input type="hidden" id="dModalIdx" value="">
         <div class="mb-2"><label class="form-label small">Heading *</label><input class="form-control" id="dModalHead"></div>
         <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="dModalDesc" rows="3"></textarea></div>
         <div class="row g-2 mb-3 align-items-end">
-            <div class="col-md-4"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
-            <div class="col-md-4">
+            <div class="col-md-3"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
+            <div class="col-md-3">
                 <div class="form-check">
                     <input class="form-check-input" type="checkbox" id="dModalCreateOwn" checked>
                     <label class="form-check-label small" for="dModalCreateOwn"><strong>Show in Own Tasks</strong> under Project Management</label>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="form-check">
                     <input class="form-check-input" type="checkbox" id="dModalPrivate">
                     <label class="form-check-label small" for="dModalPrivate"><strong>Show status only to the owner</strong> (hidden from heads/others)</label>
                 </div>
             </div>
+            <div class="col-md-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="dModalFanOut">
+                    <label class="form-check-label small" for="dModalFanOut"><strong>Fan out team tasks</strong> — create a task for every team member (default: team head only)</label>
+                </div>
+            </div>
         </div>
-        <div class="small text-muted mb-2">Pick the people responsible. When <em>Show in Own Tasks</em> is on, each Internal User who holds a seat gets their <strong>own</strong> task row so every owner tracks their own status.</div>
+        <div class="small text-muted mb-2">Pick the people responsible. When <em>Show in Own Tasks</em> is on, each Internal User who holds a seat gets their <strong>own</strong> task row. For teams, the task lands on the team head's seat; tick <em>Fan out</em> to spawn one task per member instead.</div>
         <div class="row g-3">
-            <div class="col-md-4">
+            <div class="col-md-6 col-lg-3">
                 <label class="form-label small fw-semibold"><i class="bi bi-people me-1"></i>Participants <span class="text-muted small">(this meeting)</span></label>
                 <input type="text" class="form-control form-control-sm mb-2" id="dSearchParts" placeholder="Search participants…">
                 <div class="pm-check-list" id="dListParts"></div>
                 <div class="small text-muted mt-1" id="dListPartsCount"></div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-6 col-lg-3">
                 <label class="form-label small fw-semibold"><i class="bi bi-person-badge me-1"></i>Other Internal Users</label>
                 <input type="text" class="form-control form-control-sm mb-2" id="dSearchUsers" placeholder="Search internal users…">
                 <div class="pm-check-list" id="dListUsers"></div>
                 <div class="small text-muted mt-1" id="dListUsersCount"></div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-6 col-lg-3">
                 <label class="form-label small fw-semibold"><i class="bi bi-person-vcard me-1"></i>Other External Users</label>
                 <input type="text" class="form-control form-control-sm mb-2" id="dSearchContacts" placeholder="Search external users…">
                 <div class="pm-check-list" id="dListContacts"></div>
                 <div class="small text-muted mt-1" id="dListContactsCount"></div>
+            </div>
+            <div class="col-md-6 col-lg-3" id="dTeamsCol">
+                <label class="form-label small fw-semibold"><i class="bi bi-people-fill me-1"></i>Teams</label>
+                <input type="text" class="form-control form-control-sm mb-2" id="dSearchTeams" placeholder="Search teams…">
+                <div class="pm-check-list" id="dListTeams"></div>
+                <div class="small text-muted mt-1" id="dListTeamsCount"></div>
             </div>
         </div>
     </div>
@@ -877,6 +934,10 @@ window.__meetingRef = {
                 ...(d.user_ids || []).map(id => nameOf(R.users, id)),
                 ...(d.seat_ids || []).map(id => nameOf(R.seats, id)),
                 ...(d.contact_ids || []).map(id => nameOf(contactsPool, id)),
+                ...(d.team_ids || []).map(id => {
+                    const t = (R.teams || []).find(x => x.id === id);
+                    return t ? ('Team: ' + t.name) : '';
+                }),
             ].filter(Boolean).map(esc).join(', ');
             return `<tr><td>${i+1}</td><td>${esc(d.heading)}</td><td class="small text-muted">${esc((d.description || '').slice(0, 100))}</td><td class="small">${esc(d.due_date || '')}</td><td class="small">${responsibles}</td>
                 <td class="text-end">
@@ -889,9 +950,16 @@ window.__meetingRef = {
             const users   = (d.user_ids    || []).map(id => `<input type="hidden" name="decision[${i}][user_ids][]"    value="${id}">`).join('');
             const seats   = (d.seat_ids    || []).map(id => `<input type="hidden" name="decision[${i}][seat_ids][]"    value="${id}">`).join('');
             const conts   = (d.contact_ids || []).map(id => `<input type="hidden" name="decision[${i}][contact_ids][]" value="${id}">`).join('');
+            const teams   = (d.team_ids    || []).map(id => `<input type="hidden" name="decision[${i}][team_ids][]"    value="${id}">`).join('');
+            const createOwn = Number(d.create_own_tasks == null ? 1 : d.create_own_tasks) === 1 ? 1 : 0;
+            const priv      = Number(d.status_private || 0) === 1 ? 1 : 0;
+            const fanOut    = Number(d.fan_out_teams || 0) === 1 ? 1 : 0;
             return `<input type="hidden" name="decision[${i}][heading]"     value="${esc(d.heading || '')}">
                     <input type="hidden" name="decision[${i}][description]" value="${esc(d.description || '')}">
-                    <input type="hidden" name="decision[${i}][due_date]"    value="${d.due_date || ''}">${users}${seats}${conts}`;
+                    <input type="hidden" name="decision[${i}][due_date]"    value="${d.due_date || ''}">
+                    <input type="hidden" name="decision[${i}][create_own_tasks]" value="${createOwn}">
+                    <input type="hidden" name="decision[${i}][status_private]"   value="${priv}">
+                    <input type="hidden" name="decision[${i}][fan_out_teams]"    value="${fanOut}">${users}${seats}${conts}${teams}`;
         }).join('');
     };
     const renderNextAgenda = () => {
@@ -1052,7 +1120,8 @@ window.__meetingRef = {
         document.getElementById('dModalDue').value  = d.due_date || '';
         document.getElementById('dModalCreateOwn').checked = d.create_own_tasks == null ? true : Number(d.create_own_tasks) === 1;
         document.getElementById('dModalPrivate').checked   = Number(d.status_private || 0) === 1;
-        // Three-column layout, same shape as the agenda modal.
+        document.getElementById('dModalFanOut').checked    = Number(d.fan_out_teams || 0) === 1;
+        // Four-column layout (participants / internal / external / teams).
         const partPool = sortByName(buildParticipantPool());
         const prePart = [];
         (d.user_ids    || []).forEach(id => prePart.push('u' + id));
@@ -1064,6 +1133,20 @@ window.__meetingRef = {
         const otherContacts = sortByName(contactsPool).filter(c => !participantContactIds.has(c.id));
         buildCheckList('dListUsers',    otherUsers,    d.user_ids    || [], 'dru_');
         buildCheckList('dListContacts', otherContacts, d.contact_ids || [], 'drc_');
+        // Teams column — hidden gracefully when the hosted DB lacks the
+        // meeting_decision_responsible.team_id column.
+        const teamsCol = document.getElementById('dTeamsCol');
+        if (teamsCol) teamsCol.style.display = R.teams_enabled ? '' : 'none';
+        document.getElementById('dModalFanOut').closest('.col-md-3').style.display = R.fan_out_enabled ? '' : 'none';
+        if (R.teams_enabled) {
+            const teamPool = sortByName((R.teams || []).map(t => ({
+                id: t.id,
+                name: t.name + (t.head_name ? ' · head: ' + t.head_name : '') + (t.member_count ? ' · ' + t.member_count + ' members' : ''),
+            })));
+            buildCheckList('dListTeams', teamPool, d.team_ids || [], 'drt_');
+            document.getElementById('dSearchTeams').value = '';
+            filterCheckList('dListTeams', 'dListTeamsCount', '');
+        }
         document.getElementById('dSearchParts').value    = '';
         document.getElementById('dSearchUsers').value    = '';
         document.getElementById('dSearchContacts').value = '';
@@ -1075,6 +1158,7 @@ window.__meetingRef = {
     document.getElementById('dSearchParts')?.addEventListener('input', (e) => filterCheckList('dListParts',    'dListPartsCount',    e.target.value));
     document.getElementById('dSearchUsers')?.addEventListener('input', (e) => filterCheckList('dListUsers',    'dListUsersCount',    e.target.value));
     document.getElementById('dSearchContacts')?.addEventListener('input', (e) => filterCheckList('dListContacts', 'dListContactsCount', e.target.value));
+    document.getElementById('dSearchTeams')?.addEventListener('input', (e) => filterCheckList('dListTeams', 'dListTeamsCount', e.target.value));
     const openNext = (idx) => {
         const n = idx == null ? {} : state.next_agenda[idx];
         document.getElementById('nModalIdx').value = idx == null ? '' : idx;
@@ -1192,7 +1276,7 @@ window.__meetingRef = {
         const heading = document.getElementById('dModalHead').value.trim();
         if (heading === '') { alert('Heading required.'); return; }
         const existingId = idxRaw !== '' ? (state.decisions[+idxRaw]?.id || 0) : 0;
-        const userSet = new Set(), contactSet = new Set();
+        const userSet = new Set(), contactSet = new Set(), teamSet = new Set();
         document.querySelectorAll('#dListParts input:checked').forEach(c => {
             const raw = String(c.value);
             if (raw[0] === 'u') userSet.add(Number(raw.slice(1)));
@@ -1200,14 +1284,17 @@ window.__meetingRef = {
         });
         document.querySelectorAll('#dListUsers input:checked').forEach(c => userSet.add(Number(c.value)));
         document.querySelectorAll('#dListContacts input:checked').forEach(c => contactSet.add(Number(c.value)));
+        document.querySelectorAll('#dListTeams input:checked').forEach(c => teamSet.add(Number(c.value)));
         upsertRow('upsert_decision', {
             id: existingId, heading, description: document.getElementById('dModalDesc').value.trim(),
             due_date: document.getElementById('dModalDue').value,
             create_own_tasks: document.getElementById('dModalCreateOwn').checked ? 1 : 0,
             status_private:   document.getElementById('dModalPrivate').checked   ? 1 : 0,
+            fan_out_teams:    document.getElementById('dModalFanOut').checked    ? 1 : 0,
             user_ids: Array.from(userSet).filter(Boolean),
             seat_ids: [], // seat-as-responsibility UI retired
             contact_ids: Array.from(contactSet).filter(Boolean),
+            team_ids: Array.from(teamSet).filter(Boolean),
         }, 'decisions', idxRaw);
     });
     document.getElementById('nModalSave').addEventListener('click', () => {

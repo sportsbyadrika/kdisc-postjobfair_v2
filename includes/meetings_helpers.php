@@ -313,6 +313,52 @@ function meetings_status_tone(string $status): string
 }
 
 /**
+ * Return the full set of internal user IDs that a decision point's
+ * tasks should land on. Combines:
+ *   - user_id rows in meeting_decision_responsible (direct)
+ *   - team_id rows expanded through teams_target_user_ids(), honouring
+ *     the decision's fan_out_teams flag (team head only vs every member).
+ * Returns an empty array when the decision has no responsibilities, or
+ * when the teams schema is absent on this host.
+ */
+function meetings_decision_target_user_ids(int $decisionId): array
+{
+    $out = [];
+    try {
+        $st = db()->prepare('SELECT DISTINCT user_id FROM meeting_decision_responsible WHERE decision_id = ? AND user_id IS NOT NULL');
+        $st->execute([$decisionId]);
+        foreach ($st->fetchAll() as $r) {
+            $uid = (int) ($r['user_id'] ?? 0);
+            if ($uid > 0 && !in_array($uid, $out, true)) $out[] = $uid;
+        }
+    } catch (Throwable $e) { /* ignore */ }
+
+    if (!function_exists('teams_responsible_has_team_id')) return $out;
+    if (!teams_responsible_has_team_id()) return $out;
+
+    $fanOut = false;
+    if (function_exists('teams_decision_has_fan_out') && teams_decision_has_fan_out()) {
+        try {
+            $st = db()->prepare('SELECT fan_out_teams FROM meeting_decision WHERE id = ?');
+            $st->execute([$decisionId]);
+            $fanOut = (int) ($st->fetchColumn() ?: 0) === 1;
+        } catch (Throwable $e) { /* ignore */ }
+    }
+    try {
+        $st = db()->prepare('SELECT DISTINCT team_id FROM meeting_decision_responsible WHERE decision_id = ? AND team_id IS NOT NULL');
+        $st->execute([$decisionId]);
+        foreach ($st->fetchAll() as $r) {
+            $tid = (int) ($r['team_id'] ?? 0);
+            if ($tid <= 0) continue;
+            foreach (teams_target_user_ids($tid, $fanOut) as $uid) {
+                if (!in_array((int) $uid, $out, true)) $out[] = (int) $uid;
+            }
+        }
+    } catch (Throwable $e) { /* ignore */ }
+    return $out;
+}
+
+/**
  * Sync "Own Tasks" rows for a decision point. For every internal
  * user responsible on the decision who holds an active seat, upsert
  * a task in the "Own Tasks" (code=OWN) project; the task's primary
