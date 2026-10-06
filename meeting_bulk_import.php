@@ -34,6 +34,7 @@ require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/meetings_helpers.php';
 require_once __DIR__ . '/includes/task_tracker_helpers.php';
+require_once __DIR__ . '/includes/teams_helpers.php';
 require_once __DIR__ . '/includes/xlsx_writer.php';
 require_auth();
 
@@ -41,6 +42,9 @@ $viewer   = current_user() ?? [];
 $viewerId = (int) ($viewer['id'] ?? 0);
 meetings_bootstrap();
 task_tracker_bootstrap();
+teams_bootstrap();
+$teamsHasTeamCol = teams_responsible_has_team_id();
+$teamsHasFanOutCol = teams_decision_has_fan_out();
 
 $isAdminAll = is_manage_admin($viewer) || user_can_admin_module($viewerId, 'meetings');
 
@@ -67,15 +71,17 @@ $sessionKey = 'meeting_bulk_preview_' . $meetingId;
 if (($_GET['template'] ?? '') === '1') {
     $today = date('d/m/Y');
     xlsx_send('meeting_minutes_template.xlsx', 'Minutes',
-        ['Type (Agenda / Decision / Next Agenda)', 'Heading/Title', 'Description', 'Due Date (DD/MM/YYYY)', 'Internal Users (comma-separated names)', 'External Users (comma-separated names)', 'Show in Own Tasks (Y/N)', 'Private Status (Y/N)'],
+        ['Type (Agenda / Decision / Next Agenda)', 'Heading/Title', 'Description', 'Due Date (DD/MM/YYYY)', 'Internal Users (comma-separated names)', 'External Users (comma-separated names)', 'Show in Own Tasks (Y/N)', 'Private Status (Y/N)', 'Teams (comma-separated team names)', 'Fan out team tasks (Y/N)'],
         [
-            ['Agenda',      'Welcome address',           'Opening remarks by the chair', '', '', '', '', ''],
-            ['Agenda',      'Review of previous minutes', 'Walk through the action items from the last meeting', '', 'Admin', '', '', ''],
-            ['Decision',    'Finalise contractor list',  'Approve the three contractors shortlisted by the panel', $today, 'Alice Kumar, Bob Rao', '', 'Y', 'N'],
-            ['Decision',    'Private HR matter',         'Confidential discussion', $today, 'Alice Kumar', '', 'Y', 'Y'],
-            ['Next Agenda', 'Budget utilisation review', 'Carry forward to the next meeting', '', '', '', '', ''],
-            ['Next Agenda', 'Vendor onboarding update',  'Status report from procurement',   '', '', '', '', ''],
-            ['', '', '', '', '', '', '', ''],
+            ['Agenda',      'Welcome address',           'Opening remarks by the chair', '', '', '', '', '', '', ''],
+            ['Agenda',      'Review of previous minutes', 'Walk through the action items from the last meeting', '', 'Admin', '', '', '', '', ''],
+            ['Decision',    'Finalise contractor list',  'Approve the three contractors shortlisted by the panel', $today, 'Alice Kumar, Bob Rao', '', 'Y', 'N', '', ''],
+            ['Decision',    'Private HR matter',         'Confidential discussion', $today, 'Alice Kumar', '', 'Y', 'Y', '', ''],
+            ['Decision',    'Rollout plan review',       'Weekly review assigned to a team',           $today, '', '', 'Y', 'N', 'Procurement team', 'N'],
+            ['Decision',    'Field inspection',          'Everyone in the field team gets a task',     $today, '', '', 'Y', 'N', 'Field team', 'Y'],
+            ['Next Agenda', 'Budget utilisation review', 'Carry forward to the next meeting',           '', '', '', '', '', '', ''],
+            ['Next Agenda', 'Vendor onboarding update',  'Status report from procurement',               '', '', '', '', '', '', ''],
+            ['', '', '', '', '', '', '', '', '', ''],
         ]);
 }
 
@@ -92,6 +98,12 @@ try {
         $contacts[strtolower(trim((string) $c['name']))][] = ['id' => (int) $c['id'], 'inst' => (string) ($c['institution'] ?? '')];
     }
 } catch (Throwable $e) { /* ignore */ }
+$teamsLookup = [];
+try {
+    foreach (db()->query('SELECT id, name FROM team WHERE is_active = 1 ORDER BY name ASC')->fetchAll() as $t) {
+        $teamsLookup[strtolower(trim((string) $t['name']))][] = (int) $t['id'];
+    }
+} catch (Throwable $e) { /* teams table may not exist on legacy installs */ }
 
 $resolveNames = static function (string $csv, array $pool): array {
     $out = []; $warnings = [];
@@ -149,7 +161,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'preview') {
             } else {
                 $header = $rows[0];
                 if (count($header) < 8) {
-                    $flashMessage = 'Header row must have 8 columns in this order: Type · Heading/Title · Description · Due Date · Internal Users · External Users · Show in Own Tasks · Private Status.';
+                    $flashMessage = 'Header row must have at least 8 columns in this order: Type · Heading/Title · Description · Due Date · Internal Users · External Users · Show in Own Tasks · Private Status (optionally followed by Teams · Fan out team tasks).';
                     $flashType = 'danger';
                 } else {
                     $preview = [];
@@ -157,7 +169,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'preview') {
                     foreach (array_slice($rows, 1) as $r) {
                         $rowNo++;
                         if (count(array_filter($r, static fn($c) => trim((string) $c) !== '')) === 0) continue;
-                        $r = array_pad($r, 8, '');
+                        $r = array_pad($r, 10, '');
                         $type   = $normType((string) $r[0]);
                         $head   = trim((string) $r[1]);
                         $desc   = trim((string) $r[2]);
@@ -166,6 +178,8 @@ if (is_post() && ($_POST['action'] ?? '') === 'preview') {
                         $extCsv = trim((string) $r[5]);
                         $own    = strtoupper(trim((string) $r[6]));
                         $priv   = strtoupper(trim((string) $r[7]));
+                        $teamCsv= trim((string) ($r[8] ?? ''));
+                        $fanRaw = strtoupper(trim((string) ($r[9] ?? '')));
 
                         $errors = [];
                         if ($type === null) $errors[] = 'Type must be "Agenda", "Decision" or "Next Agenda".';
@@ -176,6 +190,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'preview') {
                         $due = null;
                         $ri = ['ids' => [], 'warnings' => []];
                         $re = ['ids' => [], 'warnings' => []];
+                        $rt = ['ids' => [], 'warnings' => []];
                         if ($type !== 'next_agenda') {
                             $due = $parseDate($dueRaw);
                             if ($due === false) $errors[] = 'Due Date "' . $dueRaw . '" is not valid (use DD/MM/YYYY).';
@@ -183,6 +198,11 @@ if (is_post() && ($_POST['action'] ?? '') === 'preview') {
                             $re = $resolveNames($extCsv, $contacts);
                             if ($ri['warnings'] !== []) $errors[] = 'Internal User not found: ' . implode('; ', $ri['warnings']);
                             if ($re['warnings'] !== []) $errors[] = 'External User not found: ' . implode('; ', $re['warnings']);
+                            if ($teamCsv !== '') {
+                                $rt = $resolveNames($teamCsv, $teamsLookup);
+                                if (!$teamsHasTeamCol) $errors[] = 'Teams column present but teams schema not installed on this host.';
+                                if ($rt['warnings'] !== []) $errors[] = 'Team not found: ' . implode('; ', $rt['warnings']);
+                            }
                         }
 
                         $preview[] = [
@@ -193,10 +213,13 @@ if (is_post() && ($_POST['action'] ?? '') === 'preview') {
                             'due_date'    => $due === false ? null : $due,
                             'int_user_ids'=> $ri['ids'],
                             'ext_user_ids'=> $re['ids'],
+                            'team_ids'    => $rt['ids'],
                             'create_own'  => $type === 'decision' ? ($own === 'N' || $own === 'NO' ? 0 : 1) : 1,
                             'private'     => $type === 'decision' ? ($priv === 'Y' || $priv === 'YES' ? 1 : 0) : 0,
+                            'fan_out'     => $type === 'decision' ? ($fanRaw === 'Y' || $fanRaw === 'YES' ? 1 : 0) : 0,
                             'raw_int'     => $type === 'next_agenda' ? '' : $intCsv,
                             'raw_ext'     => $type === 'next_agenda' ? '' : $extCsv,
+                            'raw_team'    => $type === 'next_agenda' ? '' : $teamCsv,
                             'errors'      => $errors,
                         ];
                     }
@@ -230,20 +253,34 @@ if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
             $dSort = (int) ($st->fetchColumn() ?: 0);
             $st = $db->prepare('SELECT COALESCE(MAX(sort_order), 0) AS n FROM meeting_next_agenda WHERE meeting_id = ?'); $st->execute([$meetingId]);
             $nSort = (int) ($st->fetchColumn() ?: 0);
-            // Does the decision table have the flag columns?
-            $hasFlags = false;
+            // Does the decision table have the flag + fan-out columns?
+            $hasFlags = false; $hasFanOut = false;
             try {
                 $cols = [];
                 foreach ($db->query('SHOW COLUMNS FROM meeting_decision')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
-                $hasFlags = isset($cols['create_own_tasks']) && isset($cols['status_private']);
+                $hasFlags  = isset($cols['create_own_tasks']) && isset($cols['status_private']);
+                $hasFanOut = isset($cols['fan_out_teams']);
+            } catch (Throwable $e) { /* ignore */ }
+            // And the responsible table — does it carry team_id?
+            $hasRespTeam = false;
+            try {
+                $cols2 = [];
+                foreach ($db->query('SHOW COLUMNS FROM meeting_decision_responsible')->fetchAll() as $c) $cols2[strtolower((string) $c['Field'])] = true;
+                $hasRespTeam = isset($cols2['team_id']);
             } catch (Throwable $e) { /* ignore */ }
 
             $insAgenda = $db->prepare('INSERT INTO meeting_agenda (meeting_id, sort_order, title, description) VALUES (?, ?, ?, ?)');
             $insALead  = $db->prepare('INSERT INTO meeting_agenda_lead (agenda_id, user_id, seat_id, contact_id) VALUES (?, ?, ?, ?)');
-            $insDec    = $hasFlags
-                ? $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date, create_own_tasks, status_private) VALUES (?, ?, ?, ?, ?, ?, ?)')
-                : $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date) VALUES (?, ?, ?, ?, ?)');
-            $insDResp  = $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
+            if ($hasFlags && $hasFanOut) {
+                $insDec = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date, create_own_tasks, status_private, fan_out_teams) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+            } elseif ($hasFlags) {
+                $insDec = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date, create_own_tasks, status_private) VALUES (?, ?, ?, ?, ?, ?, ?)');
+            } else {
+                $insDec = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date) VALUES (?, ?, ?, ?, ?)');
+            }
+            $insDResp  = $hasRespTeam
+                ? $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id, team_id) VALUES (?, ?, ?, ?, ?)')
+                : $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
             $insNext   = $db->prepare('INSERT INTO meeting_next_agenda (meeting_id, sort_order, title, description) VALUES (?, ?, ?, ?)');
 
             foreach ($preview as $row) {
@@ -262,11 +299,22 @@ if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
                     $dSort++;
                     $params = [$meetingId, $dSort, $row['head'], $row['desc'] === '' ? null : $row['desc'], $row['due_date']];
                     if ($hasFlags) { $params[] = $row['create_own']; $params[] = $row['private']; }
+                    if ($hasFlags && $hasFanOut) { $params[] = (int) ($row['fan_out'] ?? 0); }
                     $insDec->execute($params);
                     $newId = $db->lastInsertId();
-                    foreach ($row['int_user_ids'] as $uid) $insDResp->execute([$newId, $uid, null, null]);
-                    foreach ($row['ext_user_ids'] as $cid) $insDResp->execute([$newId, null, $cid, null]);
-                    if ($row['create_own']) $newDecisionIds[$newId] = $row['int_user_ids'];
+                    if ($hasRespTeam) {
+                        foreach ($row['int_user_ids'] as $uid) $insDResp->execute([$newId, $uid, null, null, null]);
+                        foreach ($row['ext_user_ids'] as $cid) $insDResp->execute([$newId, null, $cid, null, null]);
+                        foreach (($row['team_ids'] ?? []) as $tid) $insDResp->execute([$newId, null, null, null, $tid]);
+                    } else {
+                        foreach ($row['int_user_ids'] as $uid) $insDResp->execute([$newId, $uid, null, null]);
+                        foreach ($row['ext_user_ids'] as $cid) $insDResp->execute([$newId, null, $cid, null]);
+                    }
+                    // Mark for sync. We pass only the row's direct
+                    // user IDs here; the sync call later asks
+                    // meetings_decision_target_user_ids() for the
+                    // team-expanded set anyway.
+                    if ($row['create_own']) $newDecisionIds[$newId] = true;
                     $inserted++;
                 } elseif ($row['type'] === 'next_agenda') {
                     $nSort++;
@@ -279,9 +327,11 @@ if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
 
             // Fire Own-Tasks sync for each newly-created decision
             // outside the transaction so a sync failure doesn't
-            // undo the committed decision rows.
-            foreach ($newDecisionIds as $decId => $uids) {
-                meetings_sync_decision_tasks((int) $decId, (array) $uids, $viewerId);
+            // undo the committed decision rows. The target user list
+            // honours team membership and fan-out automatically.
+            foreach (array_keys($newDecisionIds) as $decId) {
+                $uids = meetings_decision_target_user_ids((int) $decId);
+                meetings_sync_decision_tasks((int) $decId, $uids, $viewerId);
             }
 
             $_SESSION['meeting_view_flash'] = ['msg' => 'Imported ' . $inserted . ' row(s); skipped ' . $skipped . ' row(s) with errors.', 'type' => 'success'];
@@ -305,21 +355,25 @@ foreach ($preview as &$r) {
     if (($r['type'] ?? '') === 'next_agenda') continue;
     $riRaw = (string) ($r['raw_int'] ?? '');
     $reRaw = (string) ($r['raw_ext'] ?? '');
+    $rtRaw = (string) ($r['raw_team'] ?? '');
     $ri = $resolveNames($riRaw, $users);
     $re = $resolveNames($reRaw, $contacts);
+    $rt = $rtRaw !== '' ? $resolveNames($rtRaw, $teamsLookup) : ['ids' => [], 'warnings' => []];
     $r['int_user_ids'] = $ri['ids'];
     $r['ext_user_ids'] = $re['ids'];
+    $r['team_ids']     = $rt['ids'];
     // Drop old name-not-found errors, re-add them from the live resolve.
-    $r['errors'] = array_values(array_filter($r['errors'], static fn($e) => strpos($e, 'User not found') === false));
+    $r['errors'] = array_values(array_filter($r['errors'], static fn($e) => strpos($e, 'User not found') === false && strpos($e, 'Team not found') === false));
     if ($ri['warnings'] !== []) $r['errors'][] = 'Internal User not found: ' . implode('; ', $ri['warnings']);
     if ($re['warnings'] !== []) $r['errors'][] = 'External User not found: ' . implode('; ', $re['warnings']);
+    if ($rt['warnings'] !== []) $r['errors'][] = 'Team not found: ' . implode('; ', $rt['warnings']);
 }
 unset($r);
 $_SESSION[$sessionKey] = $preview;
 
 // Collect the unique list of unmatched names so we can show add-row
 // shortcuts in the UI below.
-$missingInternal = []; $missingExternal = [];
+$missingInternal = []; $missingExternal = []; $missingTeams = [];
 foreach ($preview as $r) {
     foreach (preg_split('/[,;]/', (string) ($r['raw_int'] ?? '')) as $n) {
         $n = trim($n);
@@ -328,6 +382,10 @@ foreach ($preview as $r) {
     foreach (preg_split('/[,;]/', (string) ($r['raw_ext'] ?? '')) as $n) {
         $n = trim($n);
         if ($n !== '' && !isset($contacts[strtolower($n)]) && !in_array($n, $missingExternal, true)) $missingExternal[] = $n;
+    }
+    foreach (preg_split('/[,;]/', (string) ($r['raw_team'] ?? '')) as $n) {
+        $n = trim($n);
+        if ($n !== '' && !isset($teamsLookup[strtolower($n)]) && !in_array($n, $missingTeams, true)) $missingTeams[] = $n;
     }
 }
 
@@ -359,12 +417,12 @@ render_page_header('Bulk upload minutes · ' . ($meeting['reference_no'] ?? ''),
         </div>
     </div>
     <div class="card-footer d-flex justify-content-between align-items-center">
-        <div class="small text-muted">Expected header row: <code>Type · Heading/Title · Description · Due Date · Internal Users · External Users · Show in Own Tasks · Private Status</code>. Type is one of <code>Agenda</code>, <code>Decision</code>, <code>Next Agenda</code>.</div>
+        <div class="small text-muted">Expected header row: <code>Type · Heading/Title · Description · Due Date · Internal Users · External Users · Show in Own Tasks · Private Status</code> &mdash; and optionally <code>Teams · Fan out team tasks</code>. Type is one of <code>Agenda</code>, <code>Decision</code>, <code>Next Agenda</code>.</div>
         <button class="btn btn-primary"><i class="bi bi-upload me-1"></i>Preview</button>
     </div>
 </form>
 
-<?php if ($missingExternal !== [] || $missingInternal !== []): ?>
+<?php if ($missingExternal !== [] || $missingInternal !== [] || $missingTeams !== []): ?>
 <div class="card mb-3 border-warning">
     <div class="card-header bg-warning-subtle"><i class="bi bi-exclamation-triangle text-warning me-1"></i>Names in the file that do not match the database</div>
     <div class="card-body">
@@ -381,9 +439,17 @@ render_page_header('Bulk upload minutes · ' . ($meeting['reference_no'] ?? ''),
         <?php endif; ?>
         <?php if ($missingInternal !== []): ?>
         <div class="mb-2 small text-muted">These Internal User names are not in the Users master. An administrator needs to create them from the <a href="/users.php" target="_blank" rel="noopener">Users</a> page (reset their password after creating), then this preview will re-validate on reload.</div>
-        <div class="d-flex flex-wrap gap-2">
+        <div class="d-flex flex-wrap gap-2 mb-3">
             <?php foreach ($missingInternal as $n): ?>
                 <span class="badge bg-light text-dark border p-2"><i class="bi bi-person-x text-danger me-1"></i><?= esc($n) ?></span>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+        <?php if ($missingTeams !== []): ?>
+        <div class="mb-2 small text-muted">These Team names are not in the Teams master. An administrator can define them on the <a href="/teams.php" target="_blank" rel="noopener">Teams</a> page (pick a team head and members), then this preview will re-validate on reload.</div>
+        <div class="d-flex flex-wrap gap-2">
+            <?php foreach ($missingTeams as $n): ?>
+                <span class="badge bg-light text-dark border p-2"><i class="bi bi-people-fill text-danger me-1"></i><?= esc($n) ?></span>
             <?php endforeach; ?>
         </div>
         <?php endif; ?>
@@ -403,7 +469,7 @@ render_page_header('Bulk upload minutes · ' . ($meeting['reference_no'] ?? ''),
     <div class="table-responsive">
         <table class="table table-sm align-middle mb-0">
             <thead>
-                <tr><th>Row</th><th>Type</th><th>Heading / Title</th><th>Description</th><th>Due</th><th>Internal</th><th>External</th><th>Own Tasks</th><th>Private</th><th>Errors</th></tr>
+                <tr><th>Row</th><th>Type</th><th>Heading / Title</th><th>Description</th><th>Due</th><th>Internal</th><th>External</th><th>Teams</th><th>Own</th><th>Private</th><th>Fan&nbsp;out</th><th>Errors</th></tr>
             </thead>
             <tbody>
                 <?php foreach ($preview as $r):
@@ -421,8 +487,10 @@ render_page_header('Bulk upload minutes · ' . ($meeting['reference_no'] ?? ''),
                         <td class="small"><?= $isNext ? '<span class="text-muted">—</span>' : esc((string) ($r['due_date'] ?? '')) ?></td>
                         <td class="small"><?= $isNext ? '<span class="text-muted">—</span>' : esc((string) ($r['raw_int'] ?? '')) ?></td>
                         <td class="small"><?= $isNext ? '<span class="text-muted">—</span>' : esc((string) ($r['raw_ext'] ?? '')) ?></td>
+                        <td class="small"><?= $isNext ? '<span class="text-muted">—</span>' : esc((string) ($r['raw_team'] ?? '')) ?></td>
                         <td class="small"><?= $type === 'decision' ? ((int) $r['create_own'] === 1 ? 'Yes' : 'No') : '—' ?></td>
                         <td class="small"><?= $type === 'decision' ? ((int) $r['private'] === 1 ? 'Yes' : 'No') : '—' ?></td>
+                        <td class="small"><?= $type === 'decision' ? ((int) ($r['fan_out'] ?? 0) === 1 ? 'Yes' : 'No') : '—' ?></td>
                         <td class="small text-danger">
                             <?php foreach ($r['errors'] as $e): ?><div><?= esc($e) ?></div><?php endforeach; ?>
                         </td>

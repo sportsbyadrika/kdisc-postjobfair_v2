@@ -105,11 +105,21 @@ $decRespRows = [];
 if ($decisions !== []) {
     $ids = array_map(static fn($d) => (int) $d['id'], $decisions);
     $ph  = implode(',', array_fill(0, count($ids), '?'));
-    $r = db()->prepare("SELECT mdr.*, u.name AS user_name, c.name AS contact_name, n.name AS seat_name
+    // team_id column may not exist on hosted DBs where ALTER failed —
+    // probe before referencing it so the query doesn't blow up.
+    $hasTeamCol = false;
+    try {
+        foreach (db()->query('SHOW COLUMNS FROM meeting_decision_responsible')->fetchAll() as $c) {
+            if (strtolower((string) $c['Field']) === 'team_id') { $hasTeamCol = true; break; }
+        }
+    } catch (Throwable $e) { /* ignore */ }
+    $teamSelect = $hasTeamCol ? ', t.name AS team_name, t.head_user_id AS team_head_id, uh.name AS team_head_name' : ', NULL AS team_name, NULL AS team_head_id, NULL AS team_head_name';
+    $teamJoin   = $hasTeamCol ? ' LEFT JOIN team t ON t.id = mdr.team_id LEFT JOIN users uh ON uh.id = t.head_user_id' : '';
+    $r = db()->prepare("SELECT mdr.*, u.name AS user_name, c.name AS contact_name, n.name AS seat_name$teamSelect
         FROM meeting_decision_responsible mdr
         LEFT JOIN users u ON u.id = mdr.user_id
         LEFT JOIN contact c ON c.id = mdr.contact_id
-        LEFT JOIN office_hierarchy_nodes n ON n.id = mdr.seat_id
+        LEFT JOIN office_hierarchy_nodes n ON n.id = mdr.seat_id$teamJoin
         WHERE mdr.decision_id IN ($ph)");
     $r->execute($ids);
     foreach ($r->fetchAll() as $x) $decRespRows[(int) $x['decision_id']][] = $x;
@@ -229,9 +239,20 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                         <?php if (!empty($d['due_date'])): ?><div class="small text-muted">Due: <?= esc($fmtDate($d['due_date'])) ?></div><?php endif; ?>
                         <?php $rs = $decRespRows[(int) $d['id']] ?? []; if ($rs !== []): ?>
                             <div class="small mt-1">Responsible:
-                                <?php foreach ($rs as $r): $label = $r['user_name'] ?: ($r['contact_name'] ?: $r['seat_name']); ?>
+                                <?php foreach ($rs as $r):
+                                    if (!empty($r['team_name'])) {
+                                        $suffix = !empty($r['team_head_name']) ? ' · head: ' . $r['team_head_name'] : '';
+                                        echo '<span class="badge text-bg-info-subtle border me-1" title="Team"><i class="bi bi-people-fill me-1"></i>Team: ' . esc((string) $r['team_name']) . esc($suffix) . '</span>';
+                                        continue;
+                                    }
+                                    $label = $r['user_name'] ?: ($r['contact_name'] ?: $r['seat_name']);
+                                    if ($label === null || $label === '') continue;
+                                ?>
                                     <span class="badge text-bg-light border me-1"><?= esc((string) $label) ?></span>
                                 <?php endforeach; ?>
+                                <?php if ((int) ($d['fan_out_teams'] ?? 0) === 1): ?>
+                                    <span class="badge text-bg-secondary ms-1" title="One task per team member"><i class="bi bi-arrows-fullscreen me-1"></i>fanned out</span>
+                                <?php endif; ?>
                             </div>
                         <?php endif; ?>
                         <?php
