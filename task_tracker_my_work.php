@@ -28,25 +28,53 @@ if (!in_array($filter, ['all', 'primary', 'secondary'], true)) $filter = 'all';
 $seats = $scope['seat_ids'];
 $rows  = [];
 
-if ($seats !== []) {
-    $placeholders = implode(',', array_fill(0, count($seats), '?'));
-    $roleClause   = $filter === 'primary'   ? "AND ta.role = 'primary'"
-                  : ($filter === 'secondary' ? "AND ta.role = 'secondary'" : '');
+// task_assignment.user_id lets a meeting decision land on a user who
+// doesn't hold any seat yet. The My Work query matches either path.
+$hasUserAssignCol = task_tracker_column_exists('task_assignment', 'user_id');
+
+if ($seats !== [] || $hasUserAssignCol) {
+    $roleClause = $filter === 'primary'   ? "AND ta.role = 'primary'"
+                : ($filter === 'secondary' ? "AND ta.role = 'secondary'" : '');
+    // Build the "mine" predicate — seat IN list, user_id match, or both.
+    $mineParts = []; $params = [];
+    if ($seats !== []) {
+        $ph = implode(',', array_fill(0, count($seats), '?'));
+        $mineParts[] = "ta.seat_id IN ($ph)";
+        $params = array_merge($params, $seats);
+    }
+    if ($hasUserAssignCol) {
+        $mineParts[] = 'ta.user_id = ?';
+        $params[] = $viewerId;
+    }
+    $mine = '(' . implode(' OR ', $mineParts) . ')';
+    // Mirror for the my_role subquery.
+    $mineSubParts = []; $subParams = [];
+    if ($seats !== []) {
+        $ph2 = implode(',', array_fill(0, count($seats), '?'));
+        $mineSubParts[] = "ta2.seat_id IN ($ph2)";
+        $subParams = array_merge($subParams, $seats);
+    }
+    if ($hasUserAssignCol) {
+        $mineSubParts[] = 'ta2.user_id = ?';
+        $subParams[] = $viewerId;
+    }
+    $mineSub = '(' . implode(' OR ', $mineSubParts) . ')';
     $sql = "SELECT DISTINCT t.*, p.code AS project_code, p.name AS project_name,
             s.name AS status_name, s.colour_token AS status_colour, s.sort_order AS status_sort,
             s.is_terminal, s.category AS status_category,
             (SELECT ta2.role FROM task_assignment ta2
-                WHERE ta2.task_id = t.id AND ta2.seat_id IN ($placeholders)
+                WHERE ta2.task_id = t.id AND $mineSub
                 ORDER BY (ta2.role='primary') DESC LIMIT 1) AS my_role
         FROM task t
-        INNER JOIN task_assignment ta ON ta.task_id = t.id AND ta.seat_id IN ($placeholders) $roleClause
+        INNER JOIN task_assignment ta ON ta.task_id = t.id AND $mine $roleClause
         INNER JOIN project p     ON p.id = t.project_id
         LEFT JOIN task_status s  ON s.id = t.status_id
         WHERE t.is_active = 1 AND p.is_active = 1
         ORDER BY s.sort_order ASC, s.id ASC, t.planned_end IS NULL, t.planned_end ASC, t.task_number ASC";
-    $params = array_merge($seats, $seats);
+    // Params order: outer subquery (ta2) first, then the main join (ta).
+    $allParams = array_merge($subParams, $params);
     $stmt = db()->prepare($sql);
-    $stmt->execute($params);
+    $stmt->execute($allParams);
     $rows = $stmt->fetchAll();
 }
 
@@ -86,12 +114,12 @@ render_page_header('My Work', [
     </div>
 </div>
 
-<?php if ($seats === []): ?>
+<?php if ($seats === [] && $rows === []): ?>
     <div class="alert alert-info">
         <i class="bi bi-info-circle me-1"></i>You do not currently hold any seat in the office hierarchy — My Work is scoped to seat assignments. Ask an administrator to assign you to a seat, or use the Kanban board via <a href="/task_tracker_projects.php">Projects</a>.
     </div>
 <?php elseif ($rows === []): ?>
-    <div class="empty-state"><i class="bi bi-inbox"></i>No tasks are assigned to your seats yet.</div>
+    <div class="empty-state"><i class="bi bi-inbox"></i>No tasks are assigned to you yet.</div>
 <?php else: ?>
     <div class="row g-3">
         <?php foreach ($byStatus as $sid => $bucket):
