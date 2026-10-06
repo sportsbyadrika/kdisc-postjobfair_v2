@@ -12,6 +12,7 @@ function role_label(string $role): string
         'district_pmu' => 'District PMU',
         'state_pmu' => 'State PMU',
         'edms' => 'EDMS',
+        'kdisc_hq' => 'KDISC HQ',
         default => ucwords(str_replace('_', ' ', $role)),
     };
 }
