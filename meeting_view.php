@@ -237,6 +237,7 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                         <strong><?= esc((string) $d['heading']) ?></strong>
                         <?php if (!empty($d['description'])): ?><div class="small" style="white-space:pre-wrap;"><?= esc((string) $d['description']) ?></div><?php endif; ?>
                         <?php if (!empty($d['due_date'])): ?><div class="small text-muted">Due: <?= esc($fmtDate($d['due_date'])) ?></div><?php endif; ?>
+                        <?php if (!empty($d['remarks'])): ?><div class="small text-muted mt-1" style="white-space:pre-wrap;"><em>Remarks:</em> <?= esc((string) $d['remarks']) ?></div><?php endif; ?>
                         <?php $rs = $decRespRows[(int) $d['id']] ?? []; if ($rs !== []): ?>
                             <div class="small mt-1">Responsible:
                                 <?php foreach ($rs as $r):

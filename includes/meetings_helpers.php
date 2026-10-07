@@ -193,6 +193,13 @@ function meetings_bootstrap(): void
             if (!isset($cols['status_private'])) {
                 $db->query('ALTER TABLE meeting_decision ADD COLUMN status_private TINYINT(1) NOT NULL DEFAULT 0 AFTER create_own_tasks');
             }
+            // Free-text remarks captured in the bulk-entry grid alongside
+            // heading / description / due date. Visible on the full
+            // decision modal and the meeting view too so the field is
+            // not entry-only.
+            if (!isset($cols['remarks'])) {
+                $db->query('ALTER TABLE meeting_decision ADD COLUMN remarks TEXT NULL AFTER due_date');
+            }
         } catch (Throwable $e) { /* ALTER refused — decision modal still works without the toggles */ }
 
         // Seed the MoM PDF branding keys so the settings page always
@@ -207,6 +214,25 @@ function meetings_bootstrap(): void
             $seed->execute([$k, $v]);
         }
     } catch (Throwable $e) { /* DB user lacks CREATE — module still returns empty everywhere */ }
+}
+
+/**
+ * SHOW-COLUMNS cache for a single column lookup. Used by the bulk-entry
+ * grid + the AJAX layer to decide whether optional columns (remarks,
+ * fan_out_teams, etc.) exist on this host. Failures are tolerated and
+ * treated as "column missing" so the page still renders.
+ */
+function meetings_column_exists(string $table, string $column): bool
+{
+    static $cache = [];
+    $key = strtolower($table . '.' . $column);
+    if (array_key_exists($key, $cache)) return $cache[$key];
+    try {
+        foreach (db()->query('SHOW COLUMNS FROM ' . $table)->fetchAll() as $c) {
+            if (strtolower((string) $c['Field']) === strtolower($column)) return $cache[$key] = true;
+        }
+    } catch (Throwable $e) { /* table missing */ }
+    return $cache[$key] = false;
 }
 
 function meetings_setting(string $key, string $default = ''): string
