@@ -202,6 +202,21 @@ function meetings_bootstrap(): void
             }
         } catch (Throwable $e) { /* ALTER refused — decision modal still works without the toggles */ }
 
+        // Chairperson approval. A completed meeting is still a draft
+        // for everyone-but-creator/chair until the chair clicks
+        // Approve; decision points + next-meeting agenda stay hidden
+        // and Own-Tasks rows don't surface in My Work. Idempotent.
+        try {
+            $cols = [];
+            foreach ($db->query('SHOW COLUMNS FROM meeting')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
+            if (!isset($cols['approved_at'])) {
+                $db->query('ALTER TABLE meeting ADD COLUMN approved_at DATETIME NULL AFTER status');
+            }
+            if (!isset($cols['approved_by'])) {
+                $db->query('ALTER TABLE meeting ADD COLUMN approved_by INT NULL AFTER approved_at');
+            }
+        } catch (Throwable $e) { /* ALTER refused — approval gates reduce to always-visible */ }
+
         // Seed the MoM PDF branding keys so the settings page always
         // renders every row even on a fresh install.
         $seed = $db->prepare('INSERT IGNORE INTO meeting_setting (setting_key, setting_value, updated_at) VALUES (?, ?, NOW())');
@@ -336,6 +351,54 @@ function meetings_status_tone(string $status): string
         'inprogress' => 'primary',
         default      => 'info',
     };
+}
+
+/**
+ * Who can edit a meeting: the creator, the (internal) chairperson, or
+ * a Meetings-module admin. Fallback for admin stays — a chair who's
+ * left the org shouldn't lock everyone else out.
+ */
+function meetings_can_edit(array $meeting, array $viewer): bool
+{
+    $vid = (int) ($viewer['id'] ?? 0);
+    if ($vid <= 0) return false;
+    if ((int) ($meeting['created_by']    ?? 0) === $vid) return true;
+    if ((int) ($meeting['chair_user_id'] ?? 0) === $vid) return true;
+    if (is_manage_admin($viewer)) return true;
+    if (function_exists('user_can_admin_module') && user_can_admin_module($vid, 'meetings')) return true;
+    return false;
+}
+
+/**
+ * Can this viewer approve the meeting right now? Needs status
+ * (effective) = completed, meeting not already approved, viewer is
+ * the chair (admin may approve as a fallback when there's no
+ * internal chair).
+ */
+function meetings_can_approve(array $meeting, array $viewer): bool
+{
+    $vid = (int) ($viewer['id'] ?? 0);
+    if ($vid <= 0) return false;
+    if (!empty($meeting['approved_at'])) return false; // already approved
+    if (meetings_effective_status($meeting) !== 'completed') return false;
+    $chairId = (int) ($meeting['chair_user_id'] ?? 0);
+    if ($chairId > 0 && $chairId === $vid) return true;
+    // Admin fallback — only when no internal chair is set, so the
+    // chair's authority isn't quietly overridden.
+    if ($chairId === 0 && (is_manage_admin($viewer) || (function_exists('user_can_admin_module') && user_can_admin_module($vid, 'meetings')))) return true;
+    return false;
+}
+
+/**
+ * Is the meeting outcome (decisions + next-meeting agenda) visible to
+ * this viewer? Pre-approval, it is restricted to editors
+ * (creator / chair / admin). Post-approval everyone with access to
+ * the meeting record sees it.
+ */
+function meetings_outcome_visible(array $meeting, array $viewer): bool
+{
+    if (!empty($meeting['approved_at'])) return true;
+    return meetings_can_edit($meeting, $viewer);
 }
 
 /**

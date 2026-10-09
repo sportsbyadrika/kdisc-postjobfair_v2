@@ -50,14 +50,15 @@ if (!csrf_check()) $sendError('CSRF check failed.', 403);
 
 $action = (string) ($_POST['action'] ?? '');
 
-// Helper: check + load meeting, enforce writer permission.
-$requireEditable = static function (int $meetingId) use ($viewerId, $isAdminAll, $sendError) {
+// Helper: check + load meeting, enforce writer permission (creator,
+// (internal) chairperson, or admin).
+$requireEditable = static function (int $meetingId) use ($viewer, $sendError) {
     if ($meetingId <= 0) $sendError('Missing meeting_id.');
     $st = db()->prepare('SELECT * FROM meeting WHERE id = ? LIMIT 1');
     $st->execute([$meetingId]);
     $m = $st->fetch();
     if ($m === false) $sendError('Meeting not found.', 404);
-    if (!$isAdminAll && (int) ($m['created_by'] ?? 0) !== $viewerId) $sendError('Not permitted.', 403);
+    if (!meetings_can_edit($m, $viewer)) $sendError('Not permitted.', 403);
     return $m;
 };
 

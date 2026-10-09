@@ -41,12 +41,11 @@ $st = db()->prepare('SELECT * FROM meeting WHERE id = ? LIMIT 1');
 $st->execute([$meetingId]);
 $meeting = $st->fetch();
 if ($meeting === false) { header('Location: /meetings.php'); exit; }
-$isCreator = (int) $meeting['created_by'] === $viewerId;
-if (!$isCreator && !$isAdminAll) {
+if (!meetings_can_edit($meeting, $viewer)) {
     http_response_code(403);
     render_header('Access denied');
     render_page_header('Access denied', ['icon' => 'bi-shield-lock']);
-    echo '<div class="alert alert-danger">Only the meeting creator or a Meetings admin can bulk-edit this meeting.</div>';
+    echo '<div class="alert alert-danger">Only the meeting creator, the chairperson, or a Meetings admin can bulk-edit this meeting.</div>';
     render_footer(); exit;
 }
 

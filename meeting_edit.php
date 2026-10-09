@@ -39,12 +39,14 @@ if ($id > 0) {
     $stmt->execute([$id]);
     $existing = $stmt->fetch() ?: null;
     if ($existing !== null) {
-        $isCreator = $viewerId === (int) $existing['created_by'];
-        if (!$isCreator && !$isAdminAll) {
+        // Edit = creator, (internal) chairperson, or admin. Chair gets
+        // edit rights so they can massage decision wording before
+        // approving.
+        if (!meetings_can_edit($existing, $viewer)) {
             http_response_code(403);
             render_header('Access denied');
             render_page_header('Access denied', ['icon' => 'bi-shield-lock']);
-            echo '<div class="alert alert-danger">Only the meeting creator or a Meetings admin can edit this row.</div>';
+            echo '<div class="alert alert-danger">Only the meeting creator, the chairperson, or a Meetings admin can edit this row.</div>';
             render_footer(); exit;
         }
     } else { $id = 0; }

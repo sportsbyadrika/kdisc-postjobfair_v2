@@ -20,6 +20,7 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/task_tracker_helpers.php';
+require_once __DIR__ . '/includes/meetings_helpers.php';
 require_task_tracker_access();
 task_tracker_bootstrap();
 
@@ -34,7 +35,10 @@ $stmt = db()->prepare('SELECT t.*, p.name AS project_name, p.code AS project_cod
         s.name AS status_name, s.colour_token AS status_colour, s.category AS status_category, s.is_terminal,
         pt.title AS parent_title, pt.task_number AS parent_task_number,
         md.heading AS source_decision_heading, md.meeting_id AS source_meeting_id,
-        mtg.reference_no AS source_meeting_ref, mtg.title AS source_meeting_title
+        mtg.reference_no AS source_meeting_ref, mtg.title AS source_meeting_title,
+        mtg.approved_at AS source_meeting_approved_at,
+        mtg.created_by AS source_meeting_created_by,
+        mtg.chair_user_id AS source_meeting_chair_user_id
     FROM task t
     INNER JOIN project p ON p.id = t.project_id
     LEFT JOIN task_status s ON s.id = t.status_id
@@ -51,6 +55,27 @@ if ($task === false) {
     echo '<div class="alert alert-warning">This task does not exist or was deactivated.</div>';
     render_footer();
     exit;
+}
+
+// Meeting-decision tasks are hidden until the chairperson approves
+// the source meeting, except for the meeting's editors (creator /
+// chair / admin). This is the direct-URL gate; My Work filters at
+// the query level.
+if ((int) ($task['meeting_decision_id'] ?? 0) > 0 && empty($task['source_meeting_approved_at'])) {
+    $meetingShim = [
+        'created_by'    => (int) ($task['source_meeting_created_by']    ?? 0),
+        'chair_user_id' => (int) ($task['source_meeting_chair_user_id'] ?? 0),
+    ];
+    if (!meetings_can_edit($meetingShim, $viewer)) {
+        render_header('Pending chairperson approval');
+        render_page_header('Pending chairperson approval', [
+            'icon' => 'bi-shield-exclamation',
+            'actions' => '<a class="btn btn-light" href="/task_tracker_my_work.php"><i class="bi bi-arrow-left me-1"></i>Back to My Work</a>',
+        ]);
+        echo '<div class="alert alert-warning"><i class="bi bi-hourglass-split me-1"></i>This task was created from a meeting decision point that has not yet been approved by the chairperson. It will become visible once the meeting is approved.</div>';
+        render_footer();
+        exit;
+    }
 }
 
 $projectId = (int) $task['project_id'];

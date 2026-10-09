@@ -39,6 +39,20 @@ $stmt->execute([$id]);
 $meeting = $stmt->fetch();
 if ($meeting === false) { http_response_code(404); echo 'Not found'; exit; }
 
+// Minutes carry the decision points — hidden until the chair approves.
+// Editors see them regardless.
+$viewer = current_user() ?? [];
+if (!meetings_outcome_visible($meeting, $viewer)) {
+    http_response_code(403);
+    echo '<!doctype html><meta charset="utf-8"><title>Pending approval</title>'
+       . '<div style="font-family: system-ui, sans-serif; padding: 2rem; max-width: 640px;">'
+       . '<h2 style="margin-top: 0;">Pending chairperson approval</h2>'
+       . '<p>Minutes of Meeting are hidden until the chairperson approves this meeting. Please check back after approval.</p>'
+       . '<p><a href="/meeting_view.php?id=' . (int) $id . '">Back to meeting</a></p>'
+       . '</div>';
+    exit;
+}
+
 $fmtDate = static fn($s) => $s === null || $s === '' ? '' : date('d/m/Y', strtotime((string) $s));
 $fmtTime = static fn($s) => $s === null || $s === '' ? '' : substr((string) $s, 0, 5);
 $esc     = static fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
