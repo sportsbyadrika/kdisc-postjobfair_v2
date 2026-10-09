@@ -193,6 +193,13 @@ function meetings_bootstrap(): void
             if (!isset($cols['status_private'])) {
                 $db->query('ALTER TABLE meeting_decision ADD COLUMN status_private TINYINT(1) NOT NULL DEFAULT 0 AFTER create_own_tasks');
             }
+            // Free-text remarks captured in the bulk-entry grid alongside
+            // heading / description / due date. Visible on the full
+            // decision modal and the meeting view too so the field is
+            // not entry-only.
+            if (!isset($cols['remarks'])) {
+                $db->query('ALTER TABLE meeting_decision ADD COLUMN remarks TEXT NULL AFTER due_date');
+            }
         } catch (Throwable $e) { /* ALTER refused — decision modal still works without the toggles */ }
 
         // Seed the MoM PDF branding keys so the settings page always
@@ -207,6 +214,25 @@ function meetings_bootstrap(): void
             $seed->execute([$k, $v]);
         }
     } catch (Throwable $e) { /* DB user lacks CREATE — module still returns empty everywhere */ }
+}
+
+/**
+ * SHOW-COLUMNS cache for a single column lookup. Used by the bulk-entry
+ * grid + the AJAX layer to decide whether optional columns (remarks,
+ * fan_out_teams, etc.) exist on this host. Failures are tolerated and
+ * treated as "column missing" so the page still renders.
+ */
+function meetings_column_exists(string $table, string $column): bool
+{
+    static $cache = [];
+    $key = strtolower($table . '.' . $column);
+    if (array_key_exists($key, $cache)) return $cache[$key];
+    try {
+        foreach (db()->query('SHOW COLUMNS FROM ' . $table)->fetchAll() as $c) {
+            if (strtolower((string) $c['Field']) === strtolower($column)) return $cache[$key] = true;
+        }
+    } catch (Throwable $e) { /* table missing */ }
+    return $cache[$key] = false;
 }
 
 function meetings_setting(string $key, string $default = ''): string
@@ -394,18 +420,41 @@ function meetings_sync_decision_tasks(int $decisionId, array $userIds, int $view
         $defaultStatus = (int) ($db->query("SELECT id FROM task_status WHERE name = 'Not Started' LIMIT 1")->fetchColumn() ?: 0);
         if ($defaultStatus === 0) $defaultStatus = (int) ($db->query('SELECT id FROM task_status WHERE is_active = 1 ORDER BY sort_order ASC LIMIT 1')->fetchColumn() ?: 0);
 
-        $st = $db->prepare('SELECT t.id, t.is_active, ta.seat_id, oh.officer_id
+        // Does task_assignment carry user_id? Set once we probe the
+        // schema; if the column is missing on this host, seatless users
+        // still get a task row but no assignment — admins will see it,
+        // and reassigning a seat later surfaces it via My Work.
+        $hasUserCol = function_exists('task_tracker_column_exists')
+            ? task_tracker_column_exists('task_assignment', 'user_id')
+            : false;
+
+        // Existing-by-user map: covers both seat-held assignments (via
+        // the officer history join) and direct user_id assignments.
+        $existingByUser = [];
+        $st = $db->prepare('SELECT t.id, ta.seat_id, oh.officer_id
             FROM task t
             LEFT JOIN task_assignment ta ON ta.task_id = t.id AND ta.role = "primary"
             LEFT JOIN office_hierarchy_officer_history oh ON oh.node_id = ta.seat_id AND oh.unassigned_at IS NULL
             WHERE t.meeting_decision_id = ?');
         $st->execute([$decisionId]);
-        $existingByUser = [];
         foreach ($st->fetchAll() as $t) {
             $uid = (int) ($t['officer_id'] ?? 0);
-            if ($uid > 0) $existingByUser[$uid] = (int) $t['id'];
+            if ($uid > 0 && !isset($existingByUser[$uid])) $existingByUser[$uid] = (int) $t['id'];
+        }
+        if ($hasUserCol) {
+            $st = $db->prepare('SELECT t.id, ta.user_id
+                FROM task t
+                INNER JOIN task_assignment ta ON ta.task_id = t.id AND ta.role = "primary"
+                WHERE t.meeting_decision_id = ? AND ta.user_id IS NOT NULL');
+            $st->execute([$decisionId]);
+            foreach ($st->fetchAll() as $t) {
+                $uid = (int) ($t['user_id'] ?? 0);
+                if ($uid > 0 && !isset($existingByUser[$uid])) $existingByUser[$uid] = (int) $t['id'];
+            }
         }
 
+        // Wanted-by-user: seat if the user holds one, else 0 so the
+        // insert path knows to fall back to a user_id assignment.
         $wantedByUser = [];
         foreach ($userIds as $uid) {
             $uid = (int) $uid;
@@ -413,7 +462,7 @@ function meetings_sync_decision_tasks(int $decisionId, array $userIds, int $view
             $sst = $db->prepare('SELECT node_id FROM office_hierarchy_officer_history WHERE officer_id = ? AND unassigned_at IS NULL ORDER BY id DESC LIMIT 1');
             $sst->execute([$uid]);
             $seatId = (int) ($sst->fetchColumn() ?: 0);
-            if ($seatId > 0) $wantedByUser[$uid] = $seatId;
+            $wantedByUser[$uid] = $seatId; // 0 = seatless, assign direct
         }
 
         foreach ($wantedByUser as $uid => $seatId) {
@@ -431,8 +480,26 @@ function meetings_sync_decision_tasks(int $decisionId, array $userIds, int $view
                     ->execute([$ownProjectId, $nextNum, $title, $desc === '' ? null : $desc, $defaultStatus, $due, $decisionId, $viewerId, $viewerId, $nextNum * 1000]);
                 $newId = $db->lastInsertId();
                 $db->prepare('UPDATE project SET next_task_number = next_task_number + 1 WHERE id = ?')->execute([$ownProjectId]);
-                $db->prepare('INSERT INTO task_assignment (task_id, seat_id, role, created_at, created_by) VALUES (?, ?, "primary", NOW(), ?)')
-                   ->execute([$newId, $seatId, $viewerId]);
+                if ($seatId > 0) {
+                    // Preferred — seat-primary assignment, so the task
+                    // follows the seat if the officer rotates.
+                    if ($hasUserCol) {
+                        $db->prepare('INSERT INTO task_assignment (task_id, seat_id, user_id, role, created_at, created_by) VALUES (?, ?, NULL, "primary", NOW(), ?)')
+                           ->execute([$newId, $seatId, $viewerId]);
+                    } else {
+                        $db->prepare('INSERT INTO task_assignment (task_id, seat_id, role, created_at, created_by) VALUES (?, ?, "primary", NOW(), ?)')
+                           ->execute([$newId, $seatId, $viewerId]);
+                    }
+                } elseif ($hasUserCol) {
+                    // Fallback — seatless user. seat_id = 0 is a sentinel
+                    // My Work ignores; the user_id row is what matches.
+                    $db->prepare('INSERT INTO task_assignment (task_id, seat_id, user_id, role, created_at, created_by) VALUES (?, 0, ?, "primary", NOW(), ?)')
+                       ->execute([$newId, $uid, $viewerId]);
+                }
+                // If !$hasUserCol and no seat: the task row is created
+                // but has no assignment. The seatless owner won't see
+                // it in My Work until an admin assigns them a seat and
+                // the decision point is re-saved.
                 $db->query('COMMIT');
                 $existingByUser[$uid] = $newId;
             }

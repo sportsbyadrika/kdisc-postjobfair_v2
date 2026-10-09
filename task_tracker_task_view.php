@@ -59,17 +59,38 @@ $projectId = (int) $task['project_id'];
 // in PHP to find the Section / Division. This handles the optional
 // Sub Section level between Section and Seat — an SQL join can't do
 // that because it hardcodes a fixed number of levels.
-$astmt = db()->prepare("SELECT ta.role, ta.seat_id, n.name AS seat_name, n.seat_number,
-        n.parent_id AS immediate_parent_id,
-        u.id AS officer_id, u.name AS officer_name, u.avatar_colour
+// Assignments resolve either through a seat (preferred — follows the
+// chair when it rotates) or directly against a user, which is how a
+// meeting decision lands on an internal user who holds no seat yet.
+$hasUserAssignCol = task_tracker_column_exists('task_assignment', 'user_id');
+$astmt = db()->prepare("SELECT ta.role, ta.seat_id,
+        " . ($hasUserAssignCol ? 'ta.user_id AS direct_user_id,' : '0 AS direct_user_id,') . "
+        n.name AS seat_name, n.seat_number, n.parent_id AS immediate_parent_id,
+        u.id AS officer_id, u.name AS officer_name, u.avatar_colour,
+        " . ($hasUserAssignCol
+            ? 'ud.name AS direct_user_name, ud.avatar_colour AS direct_user_avatar'
+            : 'NULL AS direct_user_name, NULL AS direct_user_avatar') . "
     FROM task_assignment ta
-    INNER JOIN office_hierarchy_nodes n ON n.id = ta.seat_id
+    LEFT JOIN office_hierarchy_nodes n ON n.id = ta.seat_id AND ta.seat_id > 0
     LEFT JOIN office_hierarchy_officer_history h ON h.node_id = n.id AND h.unassigned_at IS NULL
     LEFT JOIN users u ON u.id = h.officer_id
+    " . ($hasUserAssignCol ? 'LEFT JOIN users ud ON ud.id = ta.user_id' : '') . "
     WHERE ta.task_id = ?
     ORDER BY (ta.role = 'primary') DESC, ta.id ASC");
 $astmt->execute([$taskId]);
 $assignments = $astmt->fetchAll();
+// For a direct-user assignment, mirror the user's details into the
+// officer_* columns so the rest of the view (which was written for
+// seat-held assignments) renders without special-casing.
+foreach ($assignments as $i => $a) {
+    $duid = (int) ($a['direct_user_id'] ?? 0);
+    if ($duid > 0 && (int) ($a['officer_id'] ?? 0) === 0) {
+        $assignments[$i]['officer_id']     = $duid;
+        $assignments[$i]['officer_name']   = (string) ($a['direct_user_name'] ?? '');
+        $assignments[$i]['avatar_colour']  = (string) ($a['direct_user_avatar'] ?? '');
+        $assignments[$i]['seat_name']      = $assignments[$i]['seat_name'] ?: '(no seat — direct assignment)';
+    }
+}
 
 $nodeCache = [];
 $fetchNode = static function (int $id) use (&$nodeCache): ?array {
@@ -106,6 +127,7 @@ $permTask = array_merge((array) $task, [
     'primary_seat_id'     => (int) ($primary['seat_id']     ?? 0),
     'primary_section_id'  => (int) ($primary['section_id']  ?? 0),
     'primary_division_id' => (int) ($primary['division_id'] ?? 0),
+    'primary_user_id'     => (int) ($primary['direct_user_id'] ?? 0),
 ]);
 $canEdit = can_edit_task($viewerId, $permTask);
 

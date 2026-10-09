@@ -228,12 +228,13 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
         // exist on older installs — detect once and pick SQL
         // accordingly. The responsibility table also has an optional
         // team_id column we populate when available.
-        $hasDecFlagsSave = false; $hasFanOutSave = false; $hasRespTeamSave = false;
+        $hasDecFlagsSave = false; $hasFanOutSave = false; $hasRespTeamSave = false; $hasRemarksSave = false;
         try {
             $colsD = [];
             foreach ($db->query('SHOW COLUMNS FROM meeting_decision')->fetchAll() as $c) $colsD[strtolower((string) $c['Field'])] = true;
             $hasDecFlagsSave = isset($colsD['create_own_tasks']) && isset($colsD['status_private']);
             $hasFanOutSave   = isset($colsD['fan_out_teams']);
+            $hasRemarksSave  = isset($colsD['remarks']);
         } catch (Throwable $e) { /* ignore */ }
         try {
             $colsR = [];
@@ -265,6 +266,11 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
             if ($hasDecFlagsSave && $hasFanOutSave) { $params[] = $fanOutF ? 1 : 0; }
             $insD->execute($params);
             $newDecId = $db->lastInsertId();
+            if ($hasRemarksSave) {
+                $remarksRaw = trim((string) ($row['remarks'] ?? ''));
+                $db->prepare('UPDATE meeting_decision SET remarks = ? WHERE id = ?')
+                    ->execute([$remarksRaw === '' ? null : $remarksRaw, $newDecId]);
+            }
             if ($hasRespTeamSave) {
                 foreach ((array) ($row['user_ids']    ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, (int) $x, null, null, null]);
                 foreach ((array) ($row['seat_ids']    ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, null, null, (int) $x, null]);
@@ -402,15 +408,28 @@ render_page_header($pageTitle, [
             </div>
 
             <div class="col-md-12">
-                <label class="form-label">Previous meeting <span class="small text-muted">(optional — link to earlier record in the series)</span></label>
+                <label class="form-label d-flex justify-content-between align-items-center">
+                    <span>Previous meeting <span class="small text-muted">(optional — link to earlier record in the series)</span></span>
+                    <?php if ($existing): ?>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="importPrevBtn" disabled>
+                            <i class="bi bi-arrow-down-circle me-1"></i>Import from previous
+                        </button>
+                    <?php endif; ?>
+                </label>
                 <select class="form-select ts-search" name="previous_meeting_id" id="prevMeetingSelect">
                     <option value="0">— None —</option>
                     <?php
                     try {
-                        $prev = db()->query('SELECT id, reference_no, title FROM meeting WHERE is_active = 1 ORDER BY meeting_date DESC LIMIT 200')->fetchAll();
+                        $prev = db()->query('SELECT id, reference_no, title, meeting_date FROM meeting WHERE is_active = 1 ORDER BY meeting_date DESC LIMIT 200')->fetchAll();
                     } catch (Throwable $e) { $prev = []; }
+                    $prevMap = [];
                     foreach ($prev as $p):
                         if ($existing && (int) $p['id'] === (int) $existing['id']) continue; // don't allow self-link
+                        $prevMap[(int) $p['id']] = [
+                            'reference_no' => (string) $p['reference_no'],
+                            'title'        => (string) $p['title'],
+                            'meeting_date' => (string) ($p['meeting_date'] ?? ''),
+                        ];
                     ?>
                         <option value="<?= (int) $p['id'] ?>" <?= (int) $formValues['previous_meeting_id'] === (int) $p['id'] ? 'selected' : '' ?>>
                             <?= esc((string) $p['reference_no']) ?> · <?= esc((string) $p['title']) ?>
@@ -443,7 +462,20 @@ render_page_header($pageTitle, [
         <hr class="my-4">
         <div class="d-flex justify-content-between align-items-center mb-2">
             <h6 class="text-uppercase small text-muted mb-0"><i class="bi bi-list-ol me-1"></i>Agenda</h6>
+            <?php if ($existing): ?>
+            <div class="dropdown">
+                <button type="button" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-plus-lg me-1"></i>Add agenda
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="/meeting_grid.php?id=<?= (int) $existing['id'] ?>&type=agenda" target="_blank"><i class="bi bi-grid-3x3-gap me-2"></i>Agenda bulk entry <span class="small text-muted">(spreadsheet, new tab)</span></a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="#" data-open-modal="agendaModal"><i class="bi bi-plus-lg me-2"></i>Add single agenda item</a></li>
+                </ul>
+            </div>
+            <?php else: ?>
             <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="agendaModal"><i class="bi bi-plus-lg me-1"></i>Add agenda item</button>
+            <?php endif; ?>
         </div>
         <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="agendaTable">
             <thead><tr><th style="width:4%;">#</th><th>Title</th><th>Description</th><th>Lead</th><th class="text-end">Action</th></tr></thead>
@@ -454,7 +486,20 @@ render_page_header($pageTitle, [
         <hr class="my-4">
         <div class="d-flex justify-content-between align-items-center mb-2">
             <h6 class="text-uppercase small text-muted mb-0"><i class="bi bi-check2-square me-1"></i>Decision points</h6>
+            <?php if ($existing): ?>
+            <div class="dropdown">
+                <button type="button" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-plus-lg me-1"></i>Add decision
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="/meeting_grid.php?id=<?= (int) $existing['id'] ?>&type=decision" target="_blank"><i class="bi bi-grid-3x3-gap me-2"></i>Decision points bulk entry <span class="small text-muted">(spreadsheet, new tab)</span></a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="#" data-open-modal="decisionModal"><i class="bi bi-plus-lg me-2"></i>Add single decision</a></li>
+                </ul>
+            </div>
+            <?php else: ?>
             <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="decisionModal"><i class="bi bi-plus-lg me-1"></i>Add decision</button>
+            <?php endif; ?>
         </div>
         <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="decisionTable">
             <thead><tr><th style="width:4%;">#</th><th>Heading</th><th>Description</th><th>Due</th><th>Responsible</th><th class="text-end">Action</th></tr></thead>
@@ -476,7 +521,20 @@ render_page_header($pageTitle, [
         </div>
         <div class="d-flex justify-content-between align-items-center mb-2 mt-3">
             <span class="small fw-semibold">Next-meeting agenda</span>
+            <?php if ($existing): ?>
+            <div class="dropdown">
+                <button type="button" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-plus-lg me-1"></i>Add next-meeting agenda
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="/meeting_grid.php?id=<?= (int) $existing['id'] ?>&type=next_agenda" target="_blank"><i class="bi bi-grid-3x3-gap me-2"></i>Next-meeting agenda bulk entry <span class="small text-muted">(spreadsheet, new tab)</span></a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="#" data-open-modal="nextAgendaModal"><i class="bi bi-plus-lg me-2"></i>Add single next-meeting agenda</a></li>
+                </ul>
+            </div>
+            <?php else: ?>
             <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="nextAgendaModal"><i class="bi bi-plus-lg me-1"></i>Add next-meeting agenda</button>
+            <?php endif; ?>
         </div>
         <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="nextAgendaTable">
             <thead><tr><th style="width:4%;">#</th><th>Title</th><th>Description</th><th class="text-end">Action</th></tr></thead>
@@ -509,6 +567,7 @@ window.__meetingRef = {
     teams:    <?= json_encode(array_map(static fn($t) => ['id' => (int) $t['id'], 'name' => (string) $t['name'], 'head_name' => (string) ($t['head_name'] ?? ''), 'member_count' => count($t['members'] ?? [])], $teams), JSON_UNESCAPED_UNICODE) ?>,
     teams_enabled: <?= $teamsHasTeamId ? 'true' : 'false' ?>,
     fan_out_enabled: <?= $teamsHasFanOut ? 'true' : 'false' ?>,
+    prev_meta: <?= json_encode($prevMap ?? [], JSON_UNESCAPED_UNICODE) ?>,
     meeting_id: <?= (int) ($existing['id'] ?? 0) ?>,
     preset: {
         participants: <?= json_encode(array_map(static fn($p) => [
@@ -546,6 +605,7 @@ window.__meetingRef = {
                 'create_own_tasks' => isset($d['create_own_tasks']) ? (int) $d['create_own_tasks'] : 1,
                 'status_private'   => isset($d['status_private'])   ? (int) $d['status_private']   : 0,
                 'fan_out_teams'    => isset($d['fan_out_teams'])    ? (int) $d['fan_out_teams']    : 0,
+                'remarks'          => (string) ($d['remarks'] ?? ''),
                 'user_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['user_id'] ?? 0), $rs))),
                 'seat_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['seat_id'] ?? 0), $rs))),
                 'contact_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['contact_id'] ?? 0), $rs))),
@@ -642,6 +702,7 @@ window.__meetingRef = {
         <input type="hidden" id="dModalIdx" value="">
         <div class="mb-2"><label class="form-label small">Heading *</label><input class="form-control" id="dModalHead"></div>
         <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="dModalDesc" rows="3"></textarea></div>
+        <div class="mb-2"><label class="form-label small">Remarks <span class="text-muted">(optional)</span></label><textarea class="form-control" id="dModalRemarks" rows="2" placeholder="Internal notes about this decision (not sent to anyone)."></textarea></div>
         <div class="row g-2 mb-3 align-items-end">
             <div class="col-md-3"><label class="form-label small">Due date</label><input type="date" class="form-control" id="dModalDue"></div>
             <div class="col-md-3">
@@ -957,6 +1018,7 @@ window.__meetingRef = {
             return `<input type="hidden" name="decision[${i}][heading]"     value="${esc(d.heading || '')}">
                     <input type="hidden" name="decision[${i}][description]" value="${esc(d.description || '')}">
                     <input type="hidden" name="decision[${i}][due_date]"    value="${d.due_date || ''}">
+                    <input type="hidden" name="decision[${i}][remarks]"     value="${esc(d.remarks || '')}">
                     <input type="hidden" name="decision[${i}][create_own_tasks]" value="${createOwn}">
                     <input type="hidden" name="decision[${i}][status_private]"   value="${priv}">
                     <input type="hidden" name="decision[${i}][fan_out_teams]"    value="${fanOut}">${users}${seats}${conts}${teams}`;
@@ -1002,17 +1064,18 @@ window.__meetingRef = {
         state[listName].splice(idx, 1);
         renderAll();
     };
+    const confirmDelete = (label) => confirm('Delete this ' + label + '? This cannot be undone.');
     document.addEventListener('click', (ev) => {
         const eP = ev.target.closest('[data-edit-participant]'); if (eP) return openParticipant(+eP.dataset.editParticipant);
-        const dP = ev.target.closest('[data-del-participant]');  if (dP) { const i = +dP.dataset.delParticipant; return deleteRow('delete_participant', state.participants[i]?.id || 0, 'participants', i); }
+        const dP = ev.target.closest('[data-del-participant]');  if (dP) { if (!confirmDelete('participant')) return; const i = +dP.dataset.delParticipant; return deleteRow('delete_participant', state.participants[i]?.id || 0, 'participants', i); }
         const eA = ev.target.closest('[data-edit-agenda]'); if (eA) return openAgenda(+eA.dataset.editAgenda);
-        const dA = ev.target.closest('[data-del-agenda]');  if (dA) { const i = +dA.dataset.delAgenda; return deleteRow('delete_agenda', state.agenda[i]?.id || 0, 'agenda', i); }
+        const dA = ev.target.closest('[data-del-agenda]');  if (dA) { if (!confirmDelete('agenda item')) return; const i = +dA.dataset.delAgenda; return deleteRow('delete_agenda', state.agenda[i]?.id || 0, 'agenda', i); }
         const eD = ev.target.closest('[data-edit-decision]'); if (eD) return openDecision(+eD.dataset.editDecision);
-        const dD = ev.target.closest('[data-del-decision]');  if (dD) { const i = +dD.dataset.delDecision; return deleteRow('delete_decision', state.decisions[i]?.id || 0, 'decisions', i); }
+        const dD = ev.target.closest('[data-del-decision]');  if (dD) { if (!confirmDelete('decision point')) return; const i = +dD.dataset.delDecision; return deleteRow('delete_decision', state.decisions[i]?.id || 0, 'decisions', i); }
         const eN = ev.target.closest('[data-edit-next]'); if (eN) return openNext(+eN.dataset.editNext);
-        const dN = ev.target.closest('[data-del-next]');  if (dN) { const i = +dN.dataset.delNext; return deleteRow('delete_next_agenda', state.next_agenda[i]?.id || 0, 'next_agenda', i); }
+        const dN = ev.target.closest('[data-del-next]');  if (dN) { if (!confirmDelete('next-meeting agenda item')) return; const i = +dN.dataset.delNext; return deleteRow('delete_next_agenda', state.next_agenda[i]?.id || 0, 'next_agenda', i); }
         const eU = ev.target.closest('[data-edit-url]'); if (eU) return openUrl(+eU.dataset.editUrl);
-        const dU = ev.target.closest('[data-del-url]');  if (dU) { const i = +dU.dataset.delUrl; return deleteRow('delete_url', state.urls[i]?.id || 0, 'urls', i); }
+        const dU = ev.target.closest('[data-del-url]');  if (dU) { if (!confirmDelete('attachment URL')) return; const i = +dU.dataset.delUrl; return deleteRow('delete_url', state.urls[i]?.id || 0, 'urls', i); }
     });
 
     // ============ MODAL OPEN / PREFILL ============
@@ -1118,6 +1181,7 @@ window.__meetingRef = {
         document.getElementById('dModalHead').value = d.heading || '';
         document.getElementById('dModalDesc').value = d.description || '';
         document.getElementById('dModalDue').value  = d.due_date || '';
+        document.getElementById('dModalRemarks').value = d.remarks || '';
         document.getElementById('dModalCreateOwn').checked = d.create_own_tasks == null ? true : Number(d.create_own_tasks) === 1;
         document.getElementById('dModalPrivate').checked   = Number(d.status_private || 0) === 1;
         document.getElementById('dModalFanOut').checked    = Number(d.fan_out_teams || 0) === 1;
@@ -1174,11 +1238,11 @@ window.__meetingRef = {
         openModal('urlModal');
     };
     // Open buttons that DON'T carry data-open-modal need custom open calls
-    document.querySelectorAll('[data-open-modal="participantModal"]').forEach(b => b.addEventListener('click', () => openParticipant(null)));
-    document.querySelectorAll('[data-open-modal="agendaModal"]').forEach(b => b.addEventListener('click', () => openAgenda(null)));
-    document.querySelectorAll('[data-open-modal="decisionModal"]').forEach(b => b.addEventListener('click', () => openDecision(null)));
-    document.querySelectorAll('[data-open-modal="nextAgendaModal"]').forEach(b => b.addEventListener('click', () => openNext(null)));
-    document.querySelectorAll('[data-open-modal="urlModal"]').forEach(b => b.addEventListener('click', () => openUrl(null)));
+    document.querySelectorAll('[data-open-modal="participantModal"]').forEach(b => b.addEventListener('click', (e) => { e.preventDefault(); openParticipant(null); }));
+    document.querySelectorAll('[data-open-modal="agendaModal"]').forEach(b => b.addEventListener('click', (e) => { e.preventDefault(); openAgenda(null); }));
+    document.querySelectorAll('[data-open-modal="decisionModal"]').forEach(b => b.addEventListener('click', (e) => { e.preventDefault(); openDecision(null); }));
+    document.querySelectorAll('[data-open-modal="nextAgendaModal"]').forEach(b => b.addEventListener('click', (e) => { e.preventDefault(); openNext(null); }));
+    document.querySelectorAll('[data-open-modal="urlModal"]').forEach(b => b.addEventListener('click', (e) => { e.preventDefault(); openUrl(null); }));
 
     // ============ MODAL SAVE ============
     const collectMulti = (el) => Array.from(el.selectedOptions).map(o => Number(o.value)).filter(Boolean);
@@ -1288,6 +1352,7 @@ window.__meetingRef = {
         upsertRow('upsert_decision', {
             id: existingId, heading, description: document.getElementById('dModalDesc').value.trim(),
             due_date: document.getElementById('dModalDue').value,
+            remarks: document.getElementById('dModalRemarks').value.trim(),
             create_own_tasks: document.getElementById('dModalCreateOwn').checked ? 1 : 0,
             status_private:   document.getElementById('dModalPrivate').checked   ? 1 : 0,
             fan_out_teams:    document.getElementById('dModalFanOut').checked    ? 1 : 0,
@@ -1402,5 +1467,90 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 </script>
+
+<?php if ($existing): ?>
+<!-- Import-from-previous modal (Bootstrap) -->
+<div class="modal fade" id="importPrevModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-arrow-down-circle text-primary me-1"></i>Import from previous meeting</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="card bg-light mb-3">
+          <div class="card-body py-2">
+            <div class="small text-muted">Source meeting</div>
+            <div class="fw-semibold" id="ipHeaderRef">—</div>
+            <div class="small text-muted" id="ipHeaderMeta">—</div>
+          </div>
+        </div>
+        <div class="small text-muted mb-2">Tick what you want to copy into <strong><?= esc((string) $existing['reference_no']) ?></strong>. Only the text fields are copied — responsibility, teams, participants and attachments are not carried over.</div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="ipDec" value="1" checked>
+          <label class="form-check-label" for="ipDec"><strong>Decision points</strong> <span class="small text-muted">(heading, description, due date, remarks)</span></label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="ipNext" value="1">
+          <label class="form-check-label" for="ipNext"><strong>Next-meeting agenda</strong> <span class="small text-muted">(title, description)</span></label>
+        </div>
+        <div class="small text-muted mt-3">Imported rows are appended to the end of the current meeting's lists. The source meeting is not modified.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="ipImportBtn"><i class="bi bi-arrow-down-circle me-1"></i>Import</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+    const btn    = document.getElementById('importPrevBtn');
+    const sel    = document.getElementById('prevMeetingSelect');
+    const modalEl = document.getElementById('importPrevModal');
+    if (!btn || !sel || !modalEl || !window.bootstrap?.Modal) return;
+    const refMap = window.__meetingRef.prev_meta || {};
+    const modal  = new bootstrap.Modal(modalEl);
+    const sync = () => { btn.disabled = !(Number(sel.value) > 0); };
+    sel.addEventListener('change', sync); sync();
+    btn.addEventListener('click', () => {
+        const pid = Number(sel.value);
+        if (pid <= 0) return;
+        const meta = refMap[pid] || refMap[String(pid)] || null;
+        document.getElementById('ipHeaderRef').textContent  = meta ? (meta.reference_no + ' · ' + meta.title) : ('Meeting #' + pid);
+        document.getElementById('ipHeaderMeta').textContent = meta && meta.meeting_date ? ('Date: ' + meta.meeting_date) : '';
+        document.getElementById('ipDec').checked  = true;
+        document.getElementById('ipNext').checked = false;
+        modal.show();
+    });
+    document.getElementById('ipImportBtn').addEventListener('click', async function () {
+        const pid = Number(sel.value);
+        if (pid <= 0) return;
+        const dec  = document.getElementById('ipDec').checked ? 1 : 0;
+        const nxt  = document.getElementById('ipNext').checked ? 1 : 0;
+        if (!dec && !nxt) { alert('Pick at least one section to import.'); return; }
+        this.disabled = true; this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importing…';
+        const fd = new FormData();
+        fd.append('action', 'import_from_previous');
+        fd.append('meeting_id', String(<?= (int) $existing['id'] ?>));
+        fd.append('source_meeting_id', String(pid));
+        fd.append('import_decisions', String(dec));
+        fd.append('import_next_agenda', String(nxt));
+        fd.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+        try {
+            const r = await fetch('/meeting_ajax.php', { method: 'POST', body: fd, credentials: 'same-origin' });
+            const j = await r.json();
+            if (!j.ok) throw new Error(j.error || 'Import failed');
+            // Full reload so the server-rendered preset arrays pick up
+            // the new rows, keeping the Save-side wholesale rewrite happy.
+            location.reload();
+        } catch (e) {
+            alert('Import failed: ' + e.message);
+            this.disabled = false; this.innerHTML = '<i class="bi bi-arrow-down-circle me-1"></i>Import';
+        }
+    });
+})();
+</script>
+<?php endif; ?>
 
 <?php render_footer(); ?>

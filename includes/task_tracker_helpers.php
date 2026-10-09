@@ -293,6 +293,17 @@ function task_tracker_bootstrap(): void
     task_tracker__add_column_if_missing($db, 'task', 'meeting_decision_id',
         "ALTER TABLE task ADD COLUMN meeting_decision_id INT NULL AFTER progress_pct, ADD KEY idx_meeting_decision (meeting_decision_id)");
 
+    // Direct-user assignment. Normally task_assignment points at a seat,
+    // but meeting decision points can land on an internal user who
+    // doesn't hold any seat yet (brand-new user, or someone outside the
+    // hierarchy). We fall back to a user_id row with seat_id = 0 so the
+    // My Work query can still find it. The existing UNIQUE
+    // (task_id, seat_id, role) key is unaffected because each decision
+    // creates a dedicated task row per user, so (task_id, 0, 'primary')
+    // never collides with itself.
+    task_tracker__add_column_if_missing($db, 'task_assignment', 'user_id',
+        "ALTER TABLE task_assignment ADD COLUMN user_id INT NULL AFTER seat_id, ADD KEY idx_user (user_id)");
+
     // "Own Tasks" container project — a system row that holds every
     // decision-point task across the install. One shared row keeps
     // the schema clean; My Work still filters by the viewer's seats
@@ -552,7 +563,10 @@ function can_view_task(int $viewerId, ?array $task = null): bool
     $primarySeat  = (int) ($task['primary_seat_id']  ?? 0);
     $primarySection  = (int) ($task['primary_section_id']  ?? 0);
     $primaryDivision = (int) ($task['primary_division_id'] ?? 0);
+    $primaryUser     = (int) ($task['primary_user_id']     ?? 0);
     if ($primarySeat > 0 && in_array($primarySeat, $scope['seat_ids'], true)) return true;
+    // Direct user assignment (used for meeting decisions on seatless users).
+    if ($primaryUser > 0 && $primaryUser === $viewerId) return true;
     if ($scope['level'] === 'division_head' && $primaryDivision > 0 && in_array($primaryDivision, $scope['division_ids'], true)) return true;
     if ($scope['level'] === 'section_head'  && $primarySection  > 0 && in_array($primarySection,  $scope['section_ids'],  true)) return true;
     return false;
@@ -566,10 +580,14 @@ function can_edit_task(int $viewerId, ?array $task = null): bool
     if (in_array($scope['level'], ['admin', 'office_head', 'division_head', 'section_head'], true)) {
         return can_view_task($viewerId, $task);
     }
-    // Staff can edit their own tasks (primary seat).
+    // Staff can edit their own tasks — matched by primary seat, or by
+    // direct user_id when the task was spawned from a meeting decision
+    // for a user who holds no seat.
     if ($task !== null) {
         $primary = (int) ($task['primary_seat_id'] ?? 0);
         if ($primary > 0 && in_array($primary, $scope['seat_ids'], true)) return true;
+        $primaryUser = (int) ($task['primary_user_id'] ?? 0);
+        if ($primaryUser > 0 && $primaryUser === $viewerId) return true;
     }
     return false;
 }

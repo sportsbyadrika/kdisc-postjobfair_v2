@@ -154,6 +154,10 @@ if ($action === 'upsert_agenda') {
     $title = trim((string) ($_POST['title'] ?? ''));
     if ($title === '') $sendError('Title required.');
     $desc = trim((string) ($_POST['description'] ?? '')) ?: null;
+    // Grid-mode saves only touch the title/description columns and
+    // leave the modal-set lead rows alone. The modal, in contrast,
+    // rewrites the whole lead set wholesale.
+    $gridMode = ((string) ($_POST['grid'] ?? '')) === '1';
     // Multi-lead: user_ids[] / seat_ids[] / contact_ids[]. For
     // backward compatibility we also populate the legacy single-id
     // columns with the first entry from each list so older display
@@ -168,8 +172,13 @@ if ($action === 'upsert_agenda') {
     db()->query('START TRANSACTION');
     try {
         if ($id > 0) {
-            db()->prepare('UPDATE meeting_agenda SET title = ?, description = ?, lead_user_id = ?, lead_seat_id = ?, lead_contact_id = ? WHERE id = ? AND meeting_id = ?')
-                ->execute([$title, $desc, $firstUser, $firstSeat, $firstContact, $id, $meetingId]);
+            if ($gridMode) {
+                db()->prepare('UPDATE meeting_agenda SET title = ?, description = ? WHERE id = ? AND meeting_id = ?')
+                    ->execute([$title, $desc, $id, $meetingId]);
+            } else {
+                db()->prepare('UPDATE meeting_agenda SET title = ?, description = ?, lead_user_id = ?, lead_seat_id = ?, lead_contact_id = ? WHERE id = ? AND meeting_id = ?')
+                    ->execute([$title, $desc, $firstUser, $firstSeat, $firstContact, $id, $meetingId]);
+            }
         } else {
             $st = db()->prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM meeting_agenda WHERE meeting_id = ?');
             $st->execute([$meetingId]);
@@ -178,12 +187,14 @@ if ($action === 'upsert_agenda') {
                 ->execute([$meetingId, $newSort, $title, $desc, $firstUser, $firstSeat, $firstContact]);
             $id = db()->lastInsertId();
         }
-        // Rewrite the many-to-many lead set.
-        db()->prepare('DELETE FROM meeting_agenda_lead WHERE agenda_id = ?')->execute([$id]);
-        $insL = db()->prepare('INSERT INTO meeting_agenda_lead (agenda_id, user_id, seat_id, contact_id) VALUES (?, ?, ?, ?)');
-        foreach ($userIds    as $x) $insL->execute([$id, $x, null, null]);
-        foreach ($seatIds    as $x) $insL->execute([$id, null, $x, null]);
-        foreach ($contactIds as $x) $insL->execute([$id, null, null, $x]);
+        if (!$gridMode) {
+            // Rewrite the many-to-many lead set.
+            db()->prepare('DELETE FROM meeting_agenda_lead WHERE agenda_id = ?')->execute([$id]);
+            $insL = db()->prepare('INSERT INTO meeting_agenda_lead (agenda_id, user_id, seat_id, contact_id) VALUES (?, ?, ?, ?)');
+            foreach ($userIds    as $x) $insL->execute([$id, $x, null, null]);
+            foreach ($seatIds    as $x) $insL->execute([$id, null, $x, null]);
+            foreach ($contactIds as $x) $insL->execute([$id, null, null, $x]);
+        }
         db()->query('COMMIT');
         echo json_encode(['ok' => true, 'item_id' => $id]); exit;
     } catch (Throwable $e) {
@@ -310,6 +321,16 @@ if ($action === 'upsert_decision') {
     $createOwn    = isset($_POST['create_own_tasks']) ? (int) $_POST['create_own_tasks'] : 1;
     $statusPriv   = isset($_POST['status_private'])   ? (int) $_POST['status_private']   : 0;
     $fanOut       = isset($_POST['fan_out_teams'])    ? (int) $_POST['fan_out_teams']    : 0;
+    $remarks      = array_key_exists('remarks', $_POST) ? (trim((string) $_POST['remarks']) ?: null) : null;
+    $hasRemarksCol = meetings_column_exists('meeting_decision', 'remarks');
+    // Preserve existing remarks if the caller omitted the field entirely
+    // (modal save without touching the remarks column, etc.).
+    $touchRemarks  = $hasRemarksCol && array_key_exists('remarks', $_POST);
+    // Grid-mode saves only touch heading/description/due/remarks and
+    // leave the modal-set responsibility rows alone. The modal, by
+    // contrast, rewrites the whole responsibility set + fires the
+    // Own-Tasks sync.
+    $gridMode     = ((string) ($_POST['grid'] ?? '')) === '1';
     // Columns may be absent on older installs; detect once per request.
     static $decColsChecked = false, $hasDecFlags = false, $hasFanOut = false, $hasTeamId = false;
     if (!$decColsChecked) {
@@ -340,6 +361,10 @@ if ($action === 'upsert_decision') {
                 db()->prepare('UPDATE meeting_decision SET heading = ?, description = ?, due_date = ? WHERE id = ? AND meeting_id = ?')
                     ->execute([$heading, $desc, $due, $id, $meetingId]);
             }
+            if ($touchRemarks) {
+                db()->prepare('UPDATE meeting_decision SET remarks = ? WHERE id = ? AND meeting_id = ?')
+                    ->execute([$remarks, $id, $meetingId]);
+            }
         } else {
             $st = db()->prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM meeting_decision WHERE meeting_id = ?');
             $st->execute([$meetingId]);
@@ -355,30 +380,36 @@ if ($action === 'upsert_decision') {
                     ->execute([$meetingId, $newSort, $heading, $desc, $due]);
             }
             $id = db()->lastInsertId();
+            if ($touchRemarks) {
+                db()->prepare('UPDATE meeting_decision SET remarks = ? WHERE id = ?')
+                    ->execute([$remarks, $id]);
+            }
         }
-        // Rewrite responsibilities. Teams are stored only when the
-        // team_id column exists; otherwise we silently drop them.
-        db()->prepare('DELETE FROM meeting_decision_responsible WHERE decision_id = ?')->execute([$id]);
-        if ($hasTeamId) {
-            $insR = db()->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id, team_id) VALUES (?, ?, ?, ?, ?)');
-            foreach ($userIds    as $x) $insR->execute([$id, $x, null, null, null]);
-            foreach ($seatIds    as $x) $insR->execute([$id, null, null, $x, null]);
-            foreach ($contactIds as $x) $insR->execute([$id, null, $x, null, null]);
-            foreach ($teamIds    as $x) $insR->execute([$id, null, null, null, $x]);
-        } else {
-            $insR = db()->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
-            foreach ($userIds    as $x) $insR->execute([$id, $x, null, null]);
-            foreach ($seatIds    as $x) $insR->execute([$id, null, null, $x]);
-            foreach ($contactIds as $x) $insR->execute([$id, null, $x, null]);
+        if (!$gridMode) {
+            // Rewrite responsibilities. Teams are stored only when the
+            // team_id column exists; otherwise we silently drop them.
+            db()->prepare('DELETE FROM meeting_decision_responsible WHERE decision_id = ?')->execute([$id]);
+            if ($hasTeamId) {
+                $insR = db()->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id, team_id) VALUES (?, ?, ?, ?, ?)');
+                foreach ($userIds    as $x) $insR->execute([$id, $x, null, null, null]);
+                foreach ($seatIds    as $x) $insR->execute([$id, null, null, $x, null]);
+                foreach ($contactIds as $x) $insR->execute([$id, null, $x, null, null]);
+                foreach ($teamIds    as $x) $insR->execute([$id, null, null, null, $x]);
+            } else {
+                $insR = db()->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
+                foreach ($userIds    as $x) $insR->execute([$id, $x, null, null]);
+                foreach ($seatIds    as $x) $insR->execute([$id, null, null, $x]);
+                foreach ($contactIds as $x) $insR->execute([$id, null, $x, null]);
+            }
         }
         db()->query('COMMIT');
-        // Sync Own Tasks only if the operator ticked the box. The sync
-        // call reads the full user list from the DB — direct users plus
-        // team-expanded users (team head unless fan_out_teams is set).
-        if ($createOwn) {
+        // Sync Own Tasks only if the operator ticked the box AND this
+        // was a modal save — grid saves don't touch responsibility, so
+        // nothing has changed to re-sync.
+        if (!$gridMode && $createOwn) {
             $allUserIds = meetings_decision_target_user_ids((int) $id);
             $syncDecisionTasks((int) $id, $allUserIds, $viewerId);
-        } else {
+        } elseif (!$gridMode && !$createOwn) {
             try {
                 db()->prepare('UPDATE task SET is_active = 0, updated_at = NOW(), updated_by = ? WHERE meeting_decision_id = ?')
                     ->execute([$viewerId, $id]);
@@ -446,6 +477,77 @@ if ($action === 'delete_url') {
     $id = (int) ($_POST['id'] ?? 0);
     db()->prepare('DELETE FROM meeting_url WHERE id = ? AND meeting_id = ?')->execute([$id, $meetingId]);
     echo json_encode(['ok' => true]); exit;
+}
+
+/**
+ * Copy decision points and / or next-meeting-agenda rows from an
+ * earlier meeting into this one. Text fields only — responsibility,
+ * teams, participants, URLs and own-task sync are deliberately NOT
+ * carried over, because the operator typically wants to re-assign
+ * them for the new meeting. Rows are appended to the end of the
+ * current lists.
+ */
+if ($action === 'import_from_previous') {
+    $sourceId     = (int) ($_POST['source_meeting_id'] ?? 0);
+    $importDec    = ((string) ($_POST['import_decisions']   ?? '')) === '1';
+    $importNext   = ((string) ($_POST['import_next_agenda'] ?? '')) === '1';
+    if ($sourceId <= 0 || $sourceId === $meetingId) $sendError('Pick a different source meeting.');
+    if (!$importDec && !$importNext) $sendError('Nothing selected to import.');
+
+    // Confirm the source exists; the caller is already auth'd + has
+    // edit rights on the target meeting (checked above).
+    $st = db()->prepare('SELECT id FROM meeting WHERE id = ? LIMIT 1');
+    $st->execute([$sourceId]);
+    if ($st->fetch() === false) $sendError('Source meeting not found.', 404);
+
+    $hasRemarksCol = meetings_column_exists('meeting_decision', 'remarks');
+    $imported = ['decisions' => 0, 'next_agenda' => 0];
+    db()->query('START TRANSACTION');
+    try {
+        if ($importDec) {
+            $cols = 'heading, description, due_date' . ($hasRemarksCol ? ', remarks' : '');
+            $src = db()->prepare("SELECT $cols FROM meeting_decision WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC");
+            $src->execute([$sourceId]);
+            $rows = $src->fetchAll();
+            if ($rows !== []) {
+                $st = db()->prepare('SELECT COALESCE(MAX(sort_order), 0) AS n FROM meeting_decision WHERE meeting_id = ?');
+                $st->execute([$meetingId]);
+                $order = (int) ($st->fetchColumn() ?: 0);
+                $ins = db()->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date) VALUES (?, ?, ?, ?, ?)');
+                $updRemarks = $hasRemarksCol ? db()->prepare('UPDATE meeting_decision SET remarks = ? WHERE id = ?') : null;
+                foreach ($rows as $r) {
+                    $order++;
+                    $ins->execute([$meetingId, $order, $r['heading'], $r['description'], $r['due_date']]);
+                    if ($hasRemarksCol) {
+                        $newId = db()->lastInsertId();
+                        $updRemarks->execute([$r['remarks'] ?? null, $newId]);
+                    }
+                    $imported['decisions']++;
+                }
+            }
+        }
+        if ($importNext) {
+            $src = db()->prepare('SELECT title, description FROM meeting_next_agenda WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC');
+            $src->execute([$sourceId]);
+            $rows = $src->fetchAll();
+            if ($rows !== []) {
+                $st = db()->prepare('SELECT COALESCE(MAX(sort_order), 0) AS n FROM meeting_next_agenda WHERE meeting_id = ?');
+                $st->execute([$meetingId]);
+                $order = (int) ($st->fetchColumn() ?: 0);
+                $ins = db()->prepare('INSERT INTO meeting_next_agenda (meeting_id, sort_order, title, description) VALUES (?, ?, ?, ?)');
+                foreach ($rows as $r) {
+                    $order++;
+                    $ins->execute([$meetingId, $order, $r['title'], $r['description']]);
+                    $imported['next_agenda']++;
+                }
+            }
+        }
+        db()->query('COMMIT');
+    } catch (Throwable $e) {
+        try { db()->query('ROLLBACK'); } catch (Throwable $r) { /* ignore */ }
+        $sendError('Import failed: ' . $e->getMessage(), 500);
+    }
+    echo json_encode(['ok' => true, 'imported' => $imported]); exit;
 }
 
 $sendError('Unknown action: ' . $action, 400);
