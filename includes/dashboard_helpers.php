@@ -30,6 +30,7 @@ function dashboard_all_cards(): array
         ['code' => 'meetings',          'label' => 'Meetings',                'description' => 'Meeting count card + mini calendar.'],
         ['code' => 'projects_status',   'label' => 'Projects · Status',       'description' => 'Active / Completed project counts + task risk buckets (overdue / due / safe / not started).'],
         ['code' => 'office_stats',      'label' => 'Office Hierarchy · Summary', 'description' => 'Division / Section / Sub Section / Seat counts.'],
+        ['code' => 'loi_jobs',          'label' => 'LOI & Jobs',              'description' => 'Active Employers / Active Jobs / Mobilisations in progress / Interviews this week.'],
     ];
 }
 
@@ -150,6 +151,7 @@ function dashboard_all_menus(): array
         ['code' => 'meetings',           'label' => 'Meetings',             'description' => 'All meetings, New meeting, Contacts master, MoM report settings.'],
         ['code' => 'demand_side',        'label' => 'Demand Side',          'description' => 'Employers, assignments, uploads, stats, settings.'],
         ['code' => 'pmu_assets',         'label' => 'PMU Assets',           'description' => 'District profiles + asset registers + district masters.'],
+        ['code' => 'loi_jobs',           'label' => 'LOI & Jobs',           'description' => 'Employers, job roles, interviews, mobilisation & reports.'],
     ];
 }
 
