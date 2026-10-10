@@ -136,6 +136,82 @@ function dashboard_card_visible(string $code): bool
 }
 
 /**
+ * Top-nav menu groups the admin can hide globally. Codes here match
+ * the group's module slug so the mapping to layout.php is obvious.
+ * Administration is intentionally omitted — if it were hideable, an
+ * admin could lock everyone (including themselves) out of these
+ * settings without a direct-URL recovery.
+ */
+function dashboard_all_menus(): array
+{
+    return [
+        ['code' => 'job_fair',           'label' => 'Job Fair · CRM',       'description' => 'Candidates, assignments, phone directory, reports — the CRM module.'],
+        ['code' => 'project_management', 'label' => 'Project Management',   'description' => 'Projects, My Work, Kanban, Project Status, Reports, Financial Year master.'],
+        ['code' => 'meetings',           'label' => 'Meetings',             'description' => 'All meetings, New meeting, Contacts master, MoM report settings.'],
+        ['code' => 'demand_side',        'label' => 'Demand Side',          'description' => 'Employers, assignments, uploads, stats, settings.'],
+        ['code' => 'pmu_assets',         'label' => 'PMU Assets',           'description' => 'District profiles + asset registers + district masters.'],
+    ];
+}
+
+function dashboard_menus_bootstrap(): void
+{
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    try {
+        $db = db();
+        $db->query("CREATE TABLE IF NOT EXISTS dashboard_menu_visibility (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            menu_code VARCHAR(64) NOT NULL,
+            is_visible TINYINT(1) NOT NULL DEFAULT 1,
+            updated_at DATETIME NULL,
+            updated_by INT NULL,
+            UNIQUE KEY unique_code (menu_code)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // Seed every known group as visible. Re-runs are no-ops via
+        // INSERT IGNORE so an admin's later toggle doesn't get reset.
+        $seed = $db->prepare('INSERT IGNORE INTO dashboard_menu_visibility (menu_code, is_visible, updated_at) VALUES (?, 1, NOW())');
+        foreach (dashboard_all_menus() as $m) $seed->execute([$m['code']]);
+    } catch (Throwable $e) { /* CREATE refused — helper falls back to always-visible */ }
+}
+
+/**
+ * Return the menu list decorated with the current visibility flag.
+ * Rows missing from the DB are treated as visible — the same safe
+ * default dashboard_card_visible() uses.
+ */
+function dashboard_menus_decorated(): array
+{
+    $all = dashboard_all_menus();
+    $meta = [];
+    try {
+        foreach (db()->query('SELECT menu_code, is_visible FROM dashboard_menu_visibility')->fetchAll() as $r) {
+            $meta[(string) $r['menu_code']] = (int) $r['is_visible'] === 1;
+        }
+    } catch (Throwable $e) { /* table absent */ }
+    $out = [];
+    foreach ($all as $m) {
+        $out[] = $m + ['is_visible' => $meta[$m['code']] ?? true];
+    }
+    return $out;
+}
+
+function dashboard_menu_visible(string $code): bool
+{
+    static $cache = null;
+    if ($cache === null) {
+        $cache = [];
+        try {
+            foreach (db()->query('SELECT menu_code, is_visible FROM dashboard_menu_visibility')->fetchAll() as $r) {
+                $cache[(string) $r['menu_code']] = (int) $r['is_visible'] === 1;
+            }
+        } catch (Throwable $e) { /* table not present — everything visible */ }
+    }
+    return $cache[$code] ?? true;
+}
+
+/**
  * Total meetings visible to this viewer today or later. Wrapped in
  * try/catch so the dashboard card renders 0 (not a 500) before the
  * Meetings module ships its schema.
