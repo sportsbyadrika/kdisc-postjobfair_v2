@@ -1034,8 +1034,54 @@ render_header('Dashboard');
     </div>
 </div>
 <?php endif; /* office_stats */ ?>
+<?php $cardBlocks['office_stats'] = ob_get_clean(); ob_start(); ?>
+
 <?php
-    $cardBlocks['office_stats'] = ob_get_clean();
+    if (dashboard_card_visible('loi_jobs')):
+        require_once __DIR__ . '/includes/loi_jobs_helpers.php';
+        loi_jobs_bootstrap();
+        $loiCounts = loi_dashboard_counts();
+?>
+<div class="row g-3 mt-1">
+    <div class="col-12">
+        <h2 class="h5 text-muted mb-2"><i class="bi bi-briefcase me-1"></i>LOI &amp; Jobs</h2>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-primary h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Active Employers</p><p class="stat-value"><?= number_format((int) $loiCounts['active_employers']) ?></p></div>
+                <span class="stat-icon-box tone-primary"><i class="bi bi-building"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-success h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Active Jobs</p><p class="stat-value"><?= number_format((int) $loiCounts['active_jobs']) ?></p></div>
+                <span class="stat-icon-box tone-success"><i class="bi bi-briefcase"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-warning h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Mobilisation in Progress</p><p class="stat-value"><?= number_format((int) $loiCounts['mobilisation_in_prog']) ?></p></div>
+                <span class="stat-icon-box tone-warning"><i class="bi bi-megaphone"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-info h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Interviews This Week</p><p class="stat-value"><?= number_format((int) $loiCounts['interviews_this_week']) ?></p></div>
+                <span class="stat-icon-box tone-info"><i class="bi bi-calendar-week"></i></span>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; /* loi_jobs */ ?>
+<?php
+    $cardBlocks['loi_jobs'] = ob_get_clean();
     // Emit every captured card block in the order the operator
     // arranged them under Dashboard settings.
     foreach (dashboard_ordered_cards() as $orderedCard) {

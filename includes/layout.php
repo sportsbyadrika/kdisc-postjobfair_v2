@@ -132,12 +132,14 @@ function render_header(string $title, array $options = []): void
                                 $canMeetings   = function_exists('user_can_access_module') && user_can_access_module($uid, 'meetings');
                                 $canDemand     = function_exists('user_can_access_module') && user_can_access_module($uid, 'demand_side');
                                 $canPmu        = function_exists('user_can_access_module') && user_can_access_module($uid, 'pmu_assets');
+                                $canLoi        = function_exists('user_can_access_module') && user_can_access_module($uid, 'loi_jobs');
                                 $canAdminMod   = function_exists('user_can_access_module') && user_can_access_module($uid, 'administration');
                                 $isJobFairAdmin  = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'job_fair');
                                 $isProjMgmtAdmin = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'project_management');
                                 $isMeetingsAdmin = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'meetings');
                                 $isDemandAdmin   = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'demand_side');
                                 $isPmuAdmin      = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'pmu_assets');
+                                $isLoiAdmin      = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'loi_jobs');
                                 $isAdminAdmin    = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'administration');
                             ?>
                             <?php /* ============ Module: Job Fair Result ============ */ ?>
@@ -274,6 +276,26 @@ function render_header(string $title, array $options = []): void
                                                 <li><a class="dropdown-item ps-4" href="/district_pmu_settings.php" title="Manage District PMU masters (asset types, subtypes, owning authorities)"><i class="bi bi-diagram-2 me-2"></i>District PMU Masters</a></li>
                                             <?php endif; ?>
                                         <?php endif; ?>
+                                    </ul>
+                                </li>
+                            <?php endif; ?>
+
+                            <?php /* ============ Module: LOI & Jobs ============ */ ?>
+                            <?php if ($menuShow('loi_jobs') && ($canLoi || is_admin($user))): ?>
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['loi_employers.php','loi_employer_view.php','loi_sbu.php','loi_bulk_import.php','loi_reports.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-briefcase me-1"></i>LOI &amp; Jobs</a>
+                                    <ul class="dropdown-menu">
+                                        <li><h6 class="dropdown-header">Transactions</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/loi_employers.php"><i class="bi bi-building me-2"></i>Employers</a></li>
+                                        <?php if ($isLoiAdmin || is_manage_admin($user)): ?>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><h6 class="dropdown-header">Masters</h6></li>
+                                            <li><a class="dropdown-item ps-4" href="/loi_sbu.php"><i class="bi bi-diagram-3 me-2"></i>SBU master</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/loi_bulk_import.php"><i class="bi bi-file-earmark-arrow-up me-2"></i>Bulk import</a></li>
+                                        <?php endif; ?>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><h6 class="dropdown-header">Reports</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/loi_reports.php"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Employer-wise Report</a></li>
                                     </ul>
                                 </li>
                             <?php endif; ?>
