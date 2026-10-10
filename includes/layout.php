@@ -117,6 +117,16 @@ function render_header(string $title, array $options = []): void
                                 // having to touch their grants.
                                 $uid = (int) ($user['id'] ?? 0);
                                 if (function_exists('rbac_bootstrap')) rbac_bootstrap();
+                                // Dashboard-settings controlled visibility — bootstrap
+                                // the menu-visibility table once per request and resolve
+                                // each group lazily. Administration is NOT configurable
+                                // on purpose (safety net for the dashboard-settings page
+                                // itself).
+                                if (function_exists('dashboard_menus_bootstrap')) dashboard_menus_bootstrap();
+                                $menuShow = static function (string $code): bool {
+                                    if (!function_exists('dashboard_menu_visible')) return true;
+                                    return dashboard_menu_visible($code);
+                                };
                                 $canJobFair    = function_exists('user_can_access_module') && user_can_access_module($uid, 'job_fair');
                                 $canProjMgmt   = function_exists('user_can_access_module') && user_can_access_module($uid, 'project_management');
                                 $canMeetings   = function_exists('user_can_access_module') && user_can_access_module($uid, 'meetings');
@@ -131,7 +141,7 @@ function render_header(string $title, array $options = []): void
                                 $isAdminAdmin    = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'administration');
                             ?>
                             <?php /* ============ Module: Job Fair Result ============ */ ?>
-                            <?php if ($canJobFair || (!$isDemandOnly && !$isPmuUser && !$isEdms)): ?>
+                            <?php if ($menuShow('job_fair') && ($canJobFair || (!$isDemandOnly && !$isPmuUser && !$isEdms))): ?>
                                 <li class="nav-item dropdown">
                                     <a class="nav-link dropdown-toggle<?= $isActive(['job_fair_results.php','notifications.php','job_fair_result_upload.php','job_fair_result_full_upload.php','aggregator_offer_letter_upload.php','job_fair_results_export.php','job_fair_conversion_data_export.php','manage_candidate.php','crm_process.php','phone_directory.php','job_fair_masters.php','job_fair_job_titles.php','job_fair_sdpk_centers.php','job_fair_job_stations.php','candidates_master.php','job_fair_reports.php','call_history_report.php','consolidated_report.php','consolidated_report_candidates.php','job_fair_exception_report.php','job_fair_exception_candidates.php','job_station_consolidated_report.php','joined_candidates_report.php','district_discrepancy_report.php','district_candidate_joined_status_report.php','district_future_date_joined_status_report.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clipboard2-data me-1"></i>Job Fair Result</a>
                                     <ul class="dropdown-menu">
@@ -175,7 +185,7 @@ function render_header(string $title, array $options = []): void
                             <?php endif; ?>
 
                             <?php /* ============ Module: Project Management ============ */ ?>
-                            <?php if ($canProjMgmt || (!$isDemandOnly && !$isPmuUser && !$isEdms)): ?>
+                            <?php if ($menuShow('project_management') && ($canProjMgmt || (!$isDemandOnly && !$isPmuUser && !$isEdms))): ?>
                                 <li class="nav-item dropdown">
                                     <a class="nav-link dropdown-toggle<?= $isActive(['task_tracker_my_work.php','task_tracker_projects.php','task_tracker_project_view.php','task_tracker_task.php','task_tracker_task_view.php','task_tracker_reports.php','task_tracker_project_status.php','task_tracker_import.php','task_tracker_status.php','task_tracker_financial_years.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-kanban me-1"></i>Project Management</a>
                                     <ul class="dropdown-menu">
@@ -198,7 +208,7 @@ function render_header(string $title, array $options = []): void
                             <?php endif; ?>
 
                             <?php /* ============ Module: Meetings ============ */ ?>
-                            <?php if ($canMeetings): ?>
+                            <?php if ($menuShow('meetings') && $canMeetings): ?>
                                 <li class="nav-item dropdown">
                                     <a class="nav-link dropdown-toggle<?= $isActive(['meetings.php','meeting_edit.php','meeting_view.php','meeting_mom.php','contacts.php','meeting_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-calendar2-week me-1"></i>Meetings</a>
                                     <ul class="dropdown-menu">
@@ -216,7 +226,7 @@ function render_header(string $title, array $options = []): void
                             <?php endif; ?>
 
                             <?php /* ============ Module: Demand Side ============ */ ?>
-                            <?php if ($canDemand || is_admin($user)): ?>
+                            <?php if ($menuShow('demand_side') && ($canDemand || is_admin($user))): ?>
                                 <li class="nav-item dropdown">
                                     <a class="nav-link dropdown-toggle<?= $isActive(['demand_side_employers.php','demand_side_employer_edit.php','demand_side_upload.php','demand_side_stats.php','demand_side_assignments.php','demand_side_assignment_distribution.php','demand_side_assignment_report.php','demand_side_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-building me-1"></i>Demand Side</a>
                                     <ul class="dropdown-menu">
@@ -241,7 +251,7 @@ function render_header(string $title, array $options = []): void
                             <?php endif; ?>
 
                             <?php /* ============ Module: PMU Assets ============ */ ?>
-                            <?php if ($canPmu || $isPmuUser || $isEdms || is_admin($user)): ?>
+                            <?php if ($menuShow('pmu_assets') && ($canPmu || $isPmuUser || $isEdms || is_admin($user))): ?>
                                 <li class="nav-item dropdown">
                                     <a class="nav-link dropdown-toggle<?= $isActive(['edms_profiles.php','edms_profile_detail.php','edms_submissions.php','edms_submission_detail.php','district_pmu_settings.php','district_pmu_office_profile.php','district_pmu_assets.php','district_pmu_reports.php','district_pmu_report_asset.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-collection me-1"></i>PMU Assets</a>
                                     <ul class="dropdown-menu">

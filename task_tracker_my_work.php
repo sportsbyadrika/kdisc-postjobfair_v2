@@ -59,6 +59,12 @@ if ($seats !== [] || $hasUserAssignCol) {
         $subParams[] = $viewerId;
     }
     $mineSub = '(' . implode(' OR ', $mineSubParts) . ')';
+    // Meeting-decision tasks only surface here AFTER the chairperson
+    // approves the source meeting. Non-meeting tasks (meeting_decision_id
+    // IS NULL) are unaffected. The LEFT JOIN pattern tolerates a host
+    // where the approved_at column was refused by ALTER — the OR branch
+    // then falls through on NULL and nothing is filtered out.
+    $approvalFilter = 't.meeting_decision_id IS NULL OR md_m.approved_at IS NOT NULL';
     $sql = "SELECT DISTINCT t.*, p.code AS project_code, p.name AS project_name,
             s.name AS status_name, s.colour_token AS status_colour, s.sort_order AS status_sort,
             s.is_terminal, s.category AS status_category,
@@ -69,7 +75,10 @@ if ($seats !== [] || $hasUserAssignCol) {
         INNER JOIN task_assignment ta ON ta.task_id = t.id AND $mine $roleClause
         INNER JOIN project p     ON p.id = t.project_id
         LEFT JOIN task_status s  ON s.id = t.status_id
+        LEFT JOIN meeting_decision md_d ON md_d.id = t.meeting_decision_id
+        LEFT JOIN meeting md_m          ON md_m.id = md_d.meeting_id
         WHERE t.is_active = 1 AND p.is_active = 1
+          AND ($approvalFilter)
         ORDER BY s.sort_order ASC, s.id ASC, t.planned_end IS NULL, t.planned_end ASC, t.task_number ASC";
     // Params order: outer subquery (ta2) first, then the main join (ta).
     $allParams = array_merge($subParams, $params);

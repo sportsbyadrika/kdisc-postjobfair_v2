@@ -6,6 +6,7 @@
 
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
+require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/meetings_helpers.php';
 require_auth();
@@ -17,21 +18,50 @@ $isAdminAll = is_manage_admin($viewer) || user_can_admin_module($viewerId, 'meet
 
 $id = (int) ($_GET['id'] ?? 0);
 if ($id <= 0) { header('Location: /meetings.php'); exit; }
+
+// Approve POST — chairperson locks in decision points + next-meeting
+// agenda, which then become visible to everyone with meeting access
+// and surface the Own-Tasks rows in My Work.
+if (is_post() && ($_POST['action'] ?? '') === 'approve_meeting') {
+    csrf_check_or_die();
+    $mid = (int) ($_POST['id'] ?? 0);
+    if ($mid !== $id) { http_response_code(400); echo 'Bad request'; exit; }
+    $st = db()->prepare('SELECT * FROM meeting WHERE id = ? LIMIT 1');
+    $st->execute([$mid]);
+    $m = $st->fetch();
+    if ($m === false) { header('Location: /meetings.php'); exit; }
+    if (!meetings_can_approve($m, $viewer)) {
+        if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+        $_SESSION['meeting_view_flash'] = ['msg' => 'Only the chairperson can approve this meeting (and only once it is completed).', 'type' => 'danger'];
+        header('Location: /meeting_view.php?id=' . $mid); exit;
+    }
+    db()->prepare('UPDATE meeting SET approved_at = NOW(), approved_by = ?, updated_at = NOW(), updated_by = ? WHERE id = ?')
+        ->execute([$viewerId, $viewerId, $mid]);
+    if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+    $_SESSION['meeting_view_flash'] = ['msg' => 'Meeting approved. Decision points and next-meeting agenda are now visible to all participants, and decision-point tasks will show up in each owner\'s Own Tasks.', 'type' => 'success'];
+    header('Location: /meeting_view.php?id=' . $mid); exit;
+}
 $stmt = db()->prepare('SELECT m.*, u.name AS created_by_name,
         cu.name AS chair_user_name, cc.name AS chair_contact_name, cc.institution AS chair_contact_inst,
-        pm.reference_no AS prev_ref, pm.title AS prev_title
+        pm.reference_no AS prev_ref, pm.title AS prev_title,
+        au.name AS approved_by_name
     FROM meeting m
     LEFT JOIN users u ON u.id = m.created_by
     LEFT JOIN users cu ON cu.id = m.chair_user_id
     LEFT JOIN contact cc ON cc.id = m.chair_contact_id
     LEFT JOIN meeting pm ON pm.id = m.previous_meeting_id
+    LEFT JOIN users au ON au.id = m.approved_by
     WHERE m.id = ? LIMIT 1');
 $stmt->execute([$id]);
 $meeting = $stmt->fetch();
 if ($meeting === false) { header('Location: /meetings.php'); exit; }
 
-$isCreator = $viewerId === (int) $meeting['created_by'];
-$canEdit   = $isAdminAll || $isCreator;
+$isCreator      = $viewerId === (int) $meeting['created_by'];
+$isChair        = $viewerId > 0 && $viewerId === (int) ($meeting['chair_user_id'] ?? 0);
+$canEdit        = meetings_can_edit($meeting, $viewer);
+$canApprove     = meetings_can_approve($meeting, $viewer);
+$outcomeVisible = meetings_outcome_visible($meeting, $viewer);
+$isApproved     = !empty($meeting['approved_at']);
 
 if (session_status() !== PHP_SESSION_ACTIVE) session_start();
 $flashMessage = null; $flashType = 'success';
@@ -133,16 +163,52 @@ $status = meetings_effective_status($meeting);
 $tone   = meetings_status_tone($status);
 
 render_header('Meeting · ' . $meeting['reference_no'], ['main_container_class' => 'container-xl']);
+
+// Approve button lives as a tiny inline form inside the page-header
+// actions, so the chair sees it alongside Edit / MoM / Back. The
+// handler at the top of this file enforces the gate again.
+$approveActionHtml = '';
+if ($canApprove) {
+    $csrfInput = '<input type="hidden" name="csrf_token" value="' . esc(csrf_token()) . '">';
+    $approveActionHtml = '<form method="post" class="d-inline" onsubmit="return confirm(\'Approve this meeting? After approval, decision points and the next-meeting agenda become visible to every participant and the Own Tasks rows will appear in each owner\\\'s My Work.\');">'
+        . $csrfInput
+        . '<input type="hidden" name="action" value="approve_meeting">'
+        . '<input type="hidden" name="id" value="' . (int) $id . '">'
+        . '<button type="submit" class="btn btn-warning ms-2"><i class="bi bi-shield-check me-1"></i>Approve meeting</button>'
+        . '</form>';
+}
+
 render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
     'icon'     => 'bi-calendar2-week',
     'subtitle' => 'Meeting details, participants, agenda, decisions.',
     'actions'  => ($canEdit ? '<a class="btn btn-primary" href="/meeting_edit.php?id=' . $id . '"><i class="bi bi-pencil me-1"></i>Edit</a>' : '')
         . '<a class="btn btn-success ms-2" href="/meeting_mom.php?id=' . $id . '" target="_blank"><i class="bi bi-file-earmark-text me-1"></i>MoM (printable)</a>'
+        . $approveActionHtml
         . '<a class="btn btn-light ms-2" href="/meetings.php"><i class="bi bi-arrow-left me-1"></i>Back</a>',
 ]);
 ?>
 
 <?php if ($flashMessage): ?><div class="alert alert-<?= esc($flashType) ?>"><?= esc($flashMessage) ?></div><?php endif; ?>
+
+<?php if ($isApproved): ?>
+    <div class="alert alert-success d-flex align-items-center">
+        <i class="bi bi-shield-check me-2" style="font-size: 1.2rem;"></i>
+        <div>
+            <strong>Approved by chairperson.</strong>
+            Approved on <?= esc(date('d/m/Y H:i', strtotime((string) $meeting['approved_at']))) ?>
+            <?php if (!empty($meeting['approved_by_name'])): ?> by <strong><?= esc((string) $meeting['approved_by_name']) ?></strong><?php endif; ?>.
+            Decision points and the next-meeting agenda are visible to every participant, and tasks appear in each owner's Own Tasks.
+        </div>
+    </div>
+<?php elseif ($status === 'completed'): ?>
+    <div class="alert alert-warning d-flex align-items-center">
+        <i class="bi bi-hourglass-split me-2" style="font-size: 1.2rem;"></i>
+        <div>
+            <strong>Awaiting chairperson approval.</strong>
+            Decision points and the next-meeting agenda are hidden from other participants, and Own-Tasks rows don't surface until the chair<?php if (!empty($meeting['chair_user_name'])): ?> (<strong><?= esc((string) $meeting['chair_user_name']) ?></strong>)<?php endif; ?> approves this meeting.
+        </div>
+    </div>
+<?php endif; ?>
 
 <div class="row g-3">
     <div class="col-lg-8">
@@ -229,9 +295,15 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
         </div>
 
         <div class="card mb-3">
-            <div class="card-header"><i class="bi bi-check2-square me-1"></i>Decision points</div>
+            <div class="card-header"><i class="bi bi-check2-square me-1"></i>Decision points
+                <?php if (!$isApproved): ?><span class="badge text-bg-warning ms-2"><i class="bi bi-hourglass-split me-1"></i>Pending approval</span><?php endif; ?>
+            </div>
             <div class="card-body">
-                <?php if ($decisions === []): ?><span class="text-muted">— none —</span><?php else: ?>
+                <?php if (!$outcomeVisible): ?>
+                    <div class="text-muted">
+                        <i class="bi bi-lock me-1"></i>Decision points are hidden until the chairperson approves this meeting.
+                    </div>
+                <?php elseif ($decisions === []): ?><span class="text-muted">— none —</span><?php else: ?>
                 <?php foreach ($decisions as $d): ?>
                     <div class="border-bottom pb-2 mb-2">
                         <strong><?= esc((string) $d['heading']) ?></strong>
@@ -290,12 +362,16 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
 
         <?php if (!empty($meeting['next_meeting_date']) || $nextAg !== []): ?>
         <div class="card mb-3">
-            <div class="card-header"><i class="bi bi-calendar-plus me-1"></i>Next meeting</div>
+            <div class="card-header"><i class="bi bi-calendar-plus me-1"></i>Next meeting
+                <?php if (!$isApproved && $nextAg !== []): ?><span class="badge text-bg-warning ms-2"><i class="bi bi-hourglass-split me-1"></i>Pending approval</span><?php endif; ?>
+            </div>
             <div class="card-body">
                 <?php if (!empty($meeting['next_meeting_date'])): ?>
                     <div class="mb-2"><strong>Date:</strong> <?= esc($fmtDate($meeting['next_meeting_date'])) ?><?php if (!empty($meeting['next_meeting_time'])): ?> · <?= esc($fmtTime($meeting['next_meeting_time'])) ?><?php endif; ?></div>
                 <?php endif; ?>
-                <?php if ($nextAg !== []): ?>
+                <?php if ($nextAg !== [] && !$outcomeVisible): ?>
+                    <div class="text-muted small"><i class="bi bi-lock me-1"></i>Next-meeting agenda is hidden until the chairperson approves this meeting.</div>
+                <?php elseif ($nextAg !== []): ?>
                     <div class="small text-muted mb-1">Agenda</div>
                     <ul class="mb-0">
                         <?php foreach ($nextAg as $n): ?>
