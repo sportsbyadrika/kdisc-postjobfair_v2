@@ -13,11 +13,14 @@ require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/loi_jobs_helpers.php';
+require_once __DIR__ . '/includes/india_locations_helpers.php';
 require_auth();
 
 $viewer   = current_user() ?? [];
 $viewerId = (int) ($viewer['id'] ?? 0);
 loi_jobs_bootstrap();
+india_locations_bootstrap();
+$stateRows = india_states_list();
 
 if (!user_can_access_module($viewerId, 'loi_jobs') && !is_admin($viewer)) {
     http_response_code(403);
@@ -50,8 +53,9 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     $name = trim((string) ($_POST['name'] ?? ''));
     if ($name === '') $flashAndBack('Employer name is required.', 'danger');
     $sbuId    = (int) ($_POST['sbu_id'] ?? 0);
-    $district = trim((string) ($_POST['district'] ?? ''));
+    $addr     = trim((string) ($_POST['address_of_communication'] ?? ''));
     $state    = trim((string) ($_POST['state'] ?? ''));
+    $district = trim((string) ($_POST['district'] ?? ''));
     $cnum     = trim((string) ($_POST['contact_number'] ?? ''));
     $cmail    = trim((string) ($_POST['contact_email'] ?? ''));
     $hrName   = trim((string) ($_POST['hr_manager_name'] ?? ''));
@@ -69,7 +73,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     try {
         if ($id > 0) {
             db()->prepare('UPDATE loi_employer SET
-                    sbu_id = ?, name = ?, district = ?, state = ?,
+                    sbu_id = ?, name = ?, address_of_communication = ?, state = ?, district = ?,
                     contact_number = ?, contact_email = ?,
                     hr_manager_name = ?, hr_manager_mobile = ?, hr_manager_email = ?,
                     sector = ?, loi_received = ?, loi_received_date = ?,
@@ -78,7 +82,8 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 WHERE id = ?')
                 ->execute([
                     $sbuId > 0 ? $sbuId : null, $name,
-                    $district === '' ? null : $district, $state === '' ? null : $state,
+                    $addr === '' ? null : $addr,
+                    $state === '' ? null : $state, $district === '' ? null : $district,
                     $cnum === '' ? null : $cnum, $cmail === '' ? null : $cmail,
                     $hrName === '' ? null : $hrName, $hrMob === '' ? null : $hrMob, $hrMail === '' ? null : $hrMail,
                     $sector === '' ? null : $sector, $loiRecv, $loiDate,
@@ -88,15 +93,16 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
             $flashAndBack('Employer updated.', 'success', $id);
         } else {
             db()->prepare('INSERT INTO loi_employer
-                (sbu_id, name, district, state, contact_number, contact_email,
+                (sbu_id, name, address_of_communication, state, district, contact_number, contact_email,
                  hr_manager_name, hr_manager_mobile, hr_manager_email,
                  sector, loi_received, loi_received_date,
                  registered_in_dwms, jobs_added_in_dwms, notes,
                  is_active, created_at, updated_at, created_by, updated_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)')
                 ->execute([
                     $sbuId > 0 ? $sbuId : null, $name,
-                    $district === '' ? null : $district, $state === '' ? null : $state,
+                    $addr === '' ? null : $addr,
+                    $state === '' ? null : $state, $district === '' ? null : $district,
                     $cnum === '' ? null : $cnum, $cmail === '' ? null : $cmail,
                     $hrName === '' ? null : $hrName, $hrMob === '' ? null : $hrMob, $hrMail === '' ? null : $hrMail,
                     $sector === '' ? null : $sector, $loiRecv, $loiDate,
@@ -241,8 +247,9 @@ render_page_header('LOI & Jobs · Employers', [
                         'id'                 => (int) $r['id'],
                         'sbu_id'             => (int) ($r['sbu_id'] ?? 0),
                         'name'               => (string) $r['name'],
-                        'district'           => (string) ($r['district'] ?? ''),
+                        'address_of_communication' => (string) ($r['address_of_communication'] ?? ''),
                         'state'              => (string) ($r['state'] ?? ''),
+                        'district'           => (string) ($r['district'] ?? ''),
                         'contact_number'     => (string) ($r['contact_number'] ?? ''),
                         'contact_email'      => (string) ($r['contact_email'] ?? ''),
                         'hr_manager_name'    => (string) ($r['hr_manager_name'] ?? ''),
@@ -340,13 +347,33 @@ render_page_header('LOI & Jobs · Employers', [
                             <input type="text" class="form-control" id="eModalSector" name="sector" maxlength="120">
                         </div>
 
+                        <div class="col-md-12">
+                            <label class="form-label">Address of communication</label>
+                            <textarea class="form-control" id="eModalAddr" name="address_of_communication" rows="2" placeholder="Full postal address used for official correspondence"></textarea>
+                        </div>
+
                         <div class="col-md-4">
-                            <label class="form-label">District</label>
-                            <input type="text" class="form-control" id="eModalDist" name="district" maxlength="120">
+                            <label class="form-label">State / UT</label>
+                            <select class="form-select" id="eModalState" name="state">
+                                <option value="">— select state / UT —</option>
+                                <?php
+                                $lastKind = null;
+                                foreach ($stateRows as $s):
+                                    if ($lastKind !== null && $lastKind !== $s['kind']) {
+                                        echo '<option disabled>──────────</option>';
+                                    }
+                                    $lastKind = $s['kind'];
+                                ?>
+                                    <option value="<?= esc((string) $s['name']) ?>"><?= esc((string) $s['name']) ?><?= $s['kind'] === 'ut' ? ' (UT)' : '' ?></option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
                         <div class="col-md-4">
-                            <label class="form-label">State</label>
-                            <input type="text" class="form-control" id="eModalState" name="state" maxlength="80">
+                            <label class="form-label">District</label>
+                            <select class="form-select" id="eModalDist" name="district">
+                                <option value="">— select a state first —</option>
+                            </select>
+                            <div class="small text-muted" id="eModalDistHint" style="display:none;"></div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label">Contact number</label>
@@ -418,21 +445,67 @@ render_page_header('LOI & Jobs · Employers', [
     const modalEl = document.getElementById('empModal');
     const setV = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
     const setC = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+    const stateSel = document.getElementById('eModalState');
+    const distSel  = document.getElementById('eModalDist');
+    const hint     = document.getElementById('eModalDistHint');
+
+    // Load districts for a state via AJAX, then (optionally) select
+    // the given district value. Returns a promise so the edit flow
+    // can wait before pre-selecting.
+    const loadDistricts = (stateName, preselectDistrict) => {
+        if (!distSel) return Promise.resolve();
+        distSel.innerHTML = '<option value="">— loading… —</option>';
+        hint.style.display = 'none'; hint.textContent = '';
+        if (!stateName) {
+            distSel.innerHTML = '<option value="">— select a state first —</option>';
+            return Promise.resolve();
+        }
+        return fetch('/loi_locations_ajax.php?action=districts&state=' + encodeURIComponent(stateName), { credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(j => {
+                const list = (j && j.ok && Array.isArray(j.districts)) ? j.districts : [];
+                let html = '<option value="">— select district —</option>';
+                let matched = false;
+                list.forEach(d => {
+                    const sel = (preselectDistrict && d === preselectDistrict);
+                    if (sel) matched = true;
+                    html += '<option value="' + d.replace(/"/g, '&quot;') + '"' + (sel ? ' selected' : '') + '>' + d.replace(/</g, '&lt;') + '</option>';
+                });
+                // If the stored district doesn't match any seeded entry
+                // (older row, custom spelling), keep it as a one-off
+                // option so the edit doesn't silently drop the value.
+                if (preselectDistrict && !matched) {
+                    html += '<option value="' + preselectDistrict.replace(/"/g, '&quot;') + '" selected>' + preselectDistrict.replace(/</g, '&lt;') + ' (not in master)</option>';
+                    hint.style.display = ''; hint.textContent = 'This district is not in the India master list — admins can add it in a future SBU-style master page.';
+                }
+                distSel.innerHTML = html;
+            })
+            .catch(e => {
+                distSel.innerHTML = '<option value="">— could not load —</option>';
+            });
+    };
+    stateSel?.addEventListener('change', () => loadDistricts(stateSel.value, null));
+
     modalEl?.addEventListener('show.bs.modal', (ev) => {
         const t = ev.relatedTarget; if (!t) return;
         const title = document.getElementById('eModalTitle');
         if (t.classList.contains('js-new-emp')) {
             title.innerHTML = '<i class="bi bi-plus-lg me-1"></i>New employer';
-            ['eModalId','eModalName','eModalSbu','eModalSector','eModalDist','eModalState',
+            ['eModalId','eModalName','eModalSbu','eModalSector','eModalAddr','eModalState',
              'eModalCnum','eModalCmail','eModalHrName','eModalHrMob','eModalHrMail',
              'eModalLoiDate','eModalNotes'].forEach(k => setV(k, k === 'eModalId' ? '0' : (k === 'eModalSbu' ? '0' : '')));
+            if (distSel) distSel.innerHTML = '<option value="">— select a state first —</option>';
             setC('eModalLoi', false); setC('eModalRegDwms', false); setC('eModalJobsDwms', false); setC('eModalActive', true);
         } else if (t.classList.contains('js-edit-emp')) {
             let d = {}; try { d = JSON.parse(t.getAttribute('data-payload') || '{}'); } catch (e) {}
             title.innerHTML = '<i class="bi bi-pencil-square me-1"></i>Edit employer';
             setV('eModalId', String(d.id || 0));
             setV('eModalName', d.name); setV('eModalSbu', String(d.sbu_id || 0)); setV('eModalSector', d.sector);
-            setV('eModalDist', d.district); setV('eModalState', d.state);
+            setV('eModalAddr', d.address_of_communication);
+            setV('eModalState', d.state || '');
+            // Fire the AJAX load after the modal is shown; the state
+            // dropdown's value is set above, districts fetched here.
+            loadDistricts(d.state || '', d.district || '');
             setV('eModalCnum', d.contact_number); setV('eModalCmail', d.contact_email);
             setV('eModalHrName', d.hr_manager_name); setV('eModalHrMob', d.hr_manager_mobile); setV('eModalHrMail', d.hr_manager_email);
             setV('eModalLoiDate', (d.loi_received_date || '').substring(0, 10));

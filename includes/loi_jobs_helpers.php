@@ -54,6 +54,7 @@ function loi_jobs_bootstrap(): void
             id INT AUTO_INCREMENT PRIMARY KEY,
             sbu_id INT NULL,
             name VARCHAR(200) NOT NULL,
+            address_of_communication TEXT NULL,
             district VARCHAR(120) NULL,
             state VARCHAR(80) NULL,
             contact_number VARCHAR(40) NULL,
@@ -78,6 +79,15 @@ function loi_jobs_bootstrap(): void
             KEY idx_name (name),
             KEY idx_loi (loi_received)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        // Idempotent ALTER for installs that already have loi_employer
+        // without the address column. Fails silently on refuseful hosts.
+        try {
+            $cols = [];
+            foreach ($db->query('SHOW COLUMNS FROM loi_employer')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
+            if (!isset($cols['address_of_communication'])) {
+                $db->query('ALTER TABLE loi_employer ADD COLUMN address_of_communication TEXT NULL AFTER name');
+            }
+        } catch (Throwable $e) { /* ALTER refused */ }
 
         $db->query("CREATE TABLE IF NOT EXISTS loi_job (
             id INT AUTO_INCREMENT PRIMARY KEY,

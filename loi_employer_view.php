@@ -204,8 +204,12 @@ render_page_header($emp['name'], [
             <div class="row g-3">
                 <div class="col-md-3"><div class="small text-muted">SBU</div><div class="fw-semibold"><?= esc((string) ($emp['sbu_name'] ?? '—')) ?></div></div>
                 <div class="col-md-3"><div class="small text-muted">Sector</div><div><?= esc((string) ($emp['sector'] ?? '—')) ?></div></div>
-                <div class="col-md-3"><div class="small text-muted">District / State</div><div><?= esc((string) ($emp['district'] ?? '—')) ?><?= !empty($emp['state']) ? ', ' . esc((string) $emp['state']) : '' ?></div></div>
+                <div class="col-md-3"><div class="small text-muted">State / District</div><div><?= esc((string) ($emp['state'] ?? '—')) ?><?= !empty($emp['district']) ? ' · ' . esc((string) $emp['district']) : '' ?></div></div>
                 <div class="col-md-3"><div class="small text-muted">Status</div><div><?php if ((int) $emp['is_active'] === 1): ?><span class="badge text-bg-success">Active</span><?php else: ?><span class="badge text-bg-secondary">Inactive</span><?php endif; ?></div></div>
+
+                <?php if (!empty($emp['address_of_communication'])): ?>
+                    <div class="col-12"><div class="small text-muted">Address of communication</div><div style="white-space:pre-wrap;"><?= esc((string) $emp['address_of_communication']) ?></div></div>
+                <?php endif; ?>
 
                 <div class="col-md-3"><div class="small text-muted">Contact number</div><div><?= esc((string) ($emp['contact_number'] ?? '—')) ?></div></div>
                 <div class="col-md-3"><div class="small text-muted">Contact email</div><div><?= esc((string) ($emp['contact_email'] ?? '—')) ?></div></div>
