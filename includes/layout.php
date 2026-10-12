@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/dashboard_helpers.php'; // dashboard_menu_visible() used in the top-nav
 
 function role_label(string $role): string
 {
