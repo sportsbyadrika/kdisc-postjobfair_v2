@@ -334,6 +334,12 @@ if (is_post() && ($_POST['action'] ?? '') === 'copy_meeting') {
     $copyParticipants = isset($_POST['copy_participants']);
     $copyAgenda       = isset($_POST['copy_agenda']);
     $copyDecisions    = isset($_POST['copy_decisions']);
+    // If this is ticked, the source meeting's next-meeting agenda rows
+    // are inserted into the NEW meeting's main Agenda list (appended
+    // after any items pulled from "Copy agenda items", so a chair can
+    // tick both: carry forward the current agenda AND promote what
+    // was planned for next time).
+    $copyNextAsAgenda = isset($_POST['copy_next_as_agenda']);
 
     $db = db();
     $db->query('START TRANSACTION');
@@ -389,15 +395,21 @@ if (is_post() && ($_POST['action'] ?? '') === 'copy_meeting') {
             }
         }
 
-        if ($copyAgenda) {
-            $insA = $db->prepare('INSERT INTO meeting_agenda
+        // Agenda is written by two optional sources: the source
+        // meeting's existing agenda, then its next-meeting agenda
+        // promoted into the main list. $agendaOrder stays shared
+        // across both so the sort_order is sequential.
+        $agendaOrder = 0;
+        if ($copyAgenda || $copyNextAsAgenda) {
+            $insA  = $db->prepare('INSERT INTO meeting_agenda
                 (meeting_id, sort_order, title, description, lead_user_id, lead_seat_id, lead_contact_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?)');
             $insAL = $db->prepare('INSERT INTO meeting_agenda_lead (agenda_id, user_id, seat_id, contact_id) VALUES (?, ?, ?, ?)');
-            $order = 0;
+        }
+        if ($copyAgenda) {
             foreach ($existingAgenda as $a) {
                 $insA->execute([
-                    $newId, ++$order,
+                    $newId, ++$agendaOrder,
                     (string) $a['title'],
                     trim((string) ($a['description'] ?? '')) ?: null,
                     ((int) ($a['lead_user_id']    ?? 0)) ?: null,
@@ -414,6 +426,24 @@ if (is_post() && ($_POST['action'] ?? '') === 'copy_meeting') {
                     ]);
                 }
             }
+        }
+        if ($copyNextAsAgenda) {
+            // Pull the source meeting's next-meeting agenda rows (if
+            // any) and append them to the new meeting's main agenda.
+            // Leads aren't carried — next_agenda has no leads.
+            try {
+                $pt = $db->prepare('SELECT title, description FROM meeting_next_agenda
+                    WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC');
+                $pt->execute([(int) $existing['id']]);
+                foreach ($pt->fetchAll() as $n) {
+                    $insA->execute([
+                        $newId, ++$agendaOrder,
+                        (string) $n['title'],
+                        trim((string) ($n['description'] ?? '')) ?: null,
+                        null, null, null,
+                    ]);
+                }
+            } catch (Throwable $e) { /* next_agenda rows absent — skip */ }
         }
 
         if ($copyDecisions) {
@@ -1853,11 +1883,15 @@ document.addEventListener('DOMContentLoaded', function () {
             <input class="form-check-input" type="checkbox" id="cmAgenda" name="copy_agenda" value="1" checked>
             <label class="form-check-label" for="cmAgenda"><strong>Agenda items</strong> <span class="small text-muted">(titles, descriptions, leads)</span></label>
           </div>
+          <div class="form-check ms-4">
+            <input class="form-check-input" type="checkbox" id="cmNextAsAgenda" name="copy_next_as_agenda" value="1">
+            <label class="form-check-label" for="cmNextAsAgenda"><strong>Promote next-meeting agenda</strong> <span class="small text-muted">(append the source's planned-for-next items as agenda items in the new meeting)</span></label>
+          </div>
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="cmDecisions" name="copy_decisions" value="1" checked>
             <label class="form-check-label" for="cmDecisions"><strong>Decision points</strong> <span class="small text-muted">(heading, description, due date, remarks, responsibility, team links)</span></label>
           </div>
-          <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Date / time, minutes text, next-meeting agenda, URL attachments and chairperson approval are <strong>not</strong> copied — they belong to the specific meeting and are set fresh on the new one.</div>
+          <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Date / time, minutes text, URL attachments and chairperson approval are <strong>not</strong> copied — they belong to the specific meeting and are set fresh on the new one. The source meeting's <em>next-meeting agenda</em> stays on the source; use the checkbox above to also promote it into the new meeting's main agenda.</div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
