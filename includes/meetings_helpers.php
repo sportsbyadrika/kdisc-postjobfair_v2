@@ -202,6 +202,25 @@ function meetings_bootstrap(): void
             }
         } catch (Throwable $e) { /* ALTER refused — decision modal still works without the toggles */ }
 
+        // Remarks column on agenda + next_agenda — populated by the
+        // bulk-import force flow when a row is pushed through despite
+        // unmatched names/dates, so the operator can see what was
+        // skipped. Idempotent via SHOW COLUMNS.
+        try {
+            $cols = [];
+            foreach ($db->query('SHOW COLUMNS FROM meeting_agenda')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
+            if (!isset($cols['remarks'])) {
+                $db->query('ALTER TABLE meeting_agenda ADD COLUMN remarks TEXT NULL AFTER description');
+            }
+        } catch (Throwable $e) { /* ALTER refused */ }
+        try {
+            $cols = [];
+            foreach ($db->query('SHOW COLUMNS FROM meeting_next_agenda')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
+            if (!isset($cols['remarks'])) {
+                $db->query('ALTER TABLE meeting_next_agenda ADD COLUMN remarks TEXT NULL AFTER description');
+            }
+        } catch (Throwable $e) { /* ALTER refused */ }
+
         // Chairperson approval. A completed meeting is still a draft
         // for everyone-but-creator/chair until the chair clicks
         // Approve; decision points + next-meeting agenda stay hidden
