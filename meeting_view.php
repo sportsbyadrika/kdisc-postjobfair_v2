@@ -273,6 +273,7 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                         <li class="mb-2">
                             <strong><?= esc((string) $a['title']) ?></strong>
                             <?php if (!empty($a['description'])): ?><div class="small text-muted" style="white-space:pre-wrap;"><?= esc((string) $a['description']) ?></div><?php endif; ?>
+                            <?php if (!empty($a['remarks'])): ?><div class="small text-warning-emphasis mt-1" style="white-space:pre-wrap;"><i class="bi bi-exclamation-triangle me-1"></i><em>Remarks:</em> <?= esc((string) $a['remarks']) ?></div><?php endif; ?>
                             <?php
                                 $leads = $agendaLeads[(int) $a['id']] ?? [];
                                 $leadNames = [];
@@ -375,7 +376,9 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                     <div class="small text-muted mb-1">Agenda</div>
                     <ul class="mb-0">
                         <?php foreach ($nextAg as $n): ?>
-                            <li><strong><?= esc((string) $n['title']) ?></strong><?php if (!empty($n['description'])): ?><div class="small text-muted"><?= esc((string) $n['description']) ?></div><?php endif; ?></li>
+                            <li><strong><?= esc((string) $n['title']) ?></strong><?php if (!empty($n['description'])): ?><div class="small text-muted"><?= esc((string) $n['description']) ?></div><?php endif; ?>
+                                <?php if (!empty($n['remarks'])): ?><div class="small text-warning-emphasis mt-1" style="white-space:pre-wrap;"><i class="bi bi-exclamation-triangle me-1"></i><em>Remarks:</em> <?= esc((string) $n['remarks']) ?></div><?php endif; ?>
+                            </li>
                         <?php endforeach; ?>
                     </ul>
                 <?php endif; ?>

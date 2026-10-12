@@ -235,11 +235,12 @@ if (is_post() && ($_POST['action'] ?? '') === 'preview') {
 if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
     csrf_check_or_die();
     $preview = $_SESSION[$sessionKey] ?? [];
+    $force   = isset($_POST['force']);
     if ($preview === []) {
         $flashMessage = 'Nothing to confirm — upload a file first.';
         $flashType = 'danger';
     } else {
-        $inserted = 0; $skipped = 0; $newDecisionIds = [];
+        $inserted = 0; $skipped = 0; $forced = 0; $newDecisionIds = [];
         $db = db();
         $db->query('START TRANSACTION');
         try {
@@ -253,12 +254,13 @@ if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
             $st = $db->prepare('SELECT COALESCE(MAX(sort_order), 0) AS n FROM meeting_next_agenda WHERE meeting_id = ?'); $st->execute([$meetingId]);
             $nSort = (int) ($st->fetchColumn() ?: 0);
             // Does the decision table have the flag + fan-out columns?
-            $hasFlags = false; $hasFanOut = false;
+            $hasFlags = false; $hasFanOut = false; $hasDecRemarks = false;
             try {
                 $cols = [];
                 foreach ($db->query('SHOW COLUMNS FROM meeting_decision')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
-                $hasFlags  = isset($cols['create_own_tasks']) && isset($cols['status_private']);
-                $hasFanOut = isset($cols['fan_out_teams']);
+                $hasFlags      = isset($cols['create_own_tasks']) && isset($cols['status_private']);
+                $hasFanOut     = isset($cols['fan_out_teams']);
+                $hasDecRemarks = isset($cols['remarks']);
             } catch (Throwable $e) { /* ignore */ }
             // And the responsible table — does it carry team_id?
             $hasRespTeam = false;
@@ -267,8 +269,39 @@ if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
                 foreach ($db->query('SHOW COLUMNS FROM meeting_decision_responsible')->fetchAll() as $c) $cols2[strtolower((string) $c['Field'])] = true;
                 $hasRespTeam = isset($cols2['team_id']);
             } catch (Throwable $e) { /* ignore */ }
+            // Agenda + next_agenda remarks (added by the force-import
+            // path to tag "we pushed this through with warnings").
+            $hasAgendaRemarks = false; $hasNextRemarks = false;
+            try {
+                foreach ($db->query('SHOW COLUMNS FROM meeting_agenda')->fetchAll() as $c) if (strtolower((string) $c['Field']) === 'remarks') $hasAgendaRemarks = true;
+            } catch (Throwable $e) { /* ignore */ }
+            try {
+                foreach ($db->query('SHOW COLUMNS FROM meeting_next_agenda')->fetchAll() as $c) if (strtolower((string) $c['Field']) === 'remarks') $hasNextRemarks = true;
+            } catch (Throwable $e) { /* ignore */ }
 
-            $insAgenda = $db->prepare('INSERT INTO meeting_agenda (meeting_id, sort_order, title, description) VALUES (?, ?, ?, ?)');
+            // Partition errors into fatal (always skip, even on force)
+            // vs recoverable (push through on force, drop the offending
+            // field to NULL and append the warning to the row's remarks).
+            $classifyErrors = static function (array $row): array {
+                $fatal = []; $soft = [];
+                foreach ($row['errors'] as $e) {
+                    if (strpos($e, 'Type must be')         === 0) { $fatal[] = $e; continue; }
+                    if (strpos($e, 'Heading/Title is')     === 0) { $fatal[] = $e; continue; }
+                    if (strpos($e, 'Teams column present') === 0) { $fatal[] = $e; continue; }
+                    $soft[] = $e;
+                }
+                return ['fatal' => $fatal, 'soft' => $soft];
+            };
+            $buildRemarksNote = static function (array $errs, string $existingRemarks = ''): ?string {
+                if ($errs === []) return $existingRemarks === '' ? null : $existingRemarks;
+                $tag = '[Bulk import on ' . date('d/m/Y H:i') . '] ' . implode(' | ', $errs);
+                $joined = trim(($existingRemarks !== '' ? $existingRemarks . "\n" : '') . $tag);
+                return $joined === '' ? null : $joined;
+            };
+
+            $insAgenda = $hasAgendaRemarks
+                ? $db->prepare('INSERT INTO meeting_agenda (meeting_id, sort_order, title, description, remarks) VALUES (?, ?, ?, ?, ?)')
+                : $db->prepare('INSERT INTO meeting_agenda (meeting_id, sort_order, title, description) VALUES (?, ?, ?, ?)');
             $insALead  = $db->prepare('INSERT INTO meeting_agenda_lead (agenda_id, user_id, seat_id, contact_id) VALUES (?, ?, ?, ?)');
             if ($hasFlags && $hasFanOut) {
                 $insDec = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date, create_own_tasks, status_private, fan_out_teams) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
@@ -280,13 +313,27 @@ if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
             $insDResp  = $hasRespTeam
                 ? $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id, team_id) VALUES (?, ?, ?, ?, ?)')
                 : $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
-            $insNext   = $db->prepare('INSERT INTO meeting_next_agenda (meeting_id, sort_order, title, description) VALUES (?, ?, ?, ?)');
+            $insNext   = $hasNextRemarks
+                ? $db->prepare('INSERT INTO meeting_next_agenda (meeting_id, sort_order, title, description, remarks) VALUES (?, ?, ?, ?, ?)')
+                : $db->prepare('INSERT INTO meeting_next_agenda (meeting_id, sort_order, title, description) VALUES (?, ?, ?, ?)');
 
             foreach ($preview as $row) {
-                if ($row['errors'] !== []) { $skipped++; continue; }
+                $parts = $classifyErrors($row);
+                if ($parts['fatal'] !== []) { $skipped++; continue; }
+                $hasSoft = $parts['soft'] !== [];
+                // Soft errors still skip when force isn't on — same old
+                // behaviour. Only force flips the switch.
+                if ($hasSoft && !$force) { $skipped++; continue; }
+                $remarksNote = $hasSoft ? $buildRemarksNote($parts['soft']) : null;
+                if ($hasSoft) $forced++;
+                // Soft errors also mean "drop invalid due date".
+                $effectiveDue = $row['due_date'];
+                if ($effectiveDue === false) $effectiveDue = null;
+
                 if ($row['type'] === 'agenda') {
                     $aSort++;
-                    $insAgenda->execute([$meetingId, $aSort, $row['head'], $row['desc'] === '' ? null : $row['desc']]);
+                    if ($hasAgendaRemarks) $insAgenda->execute([$meetingId, $aSort, $row['head'], $row['desc'] === '' ? null : $row['desc'], $remarksNote]);
+                    else                   $insAgenda->execute([$meetingId, $aSort, $row['head'], $row['desc'] === '' ? null : $row['desc']]);
                     $newId = $db->lastInsertId();
                     foreach ($row['int_user_ids'] as $uid) $insALead->execute([$newId, $uid, null, null]);
                     foreach ($row['ext_user_ids'] as $cid) $insALead->execute([$newId, null, null, $cid]);
@@ -296,11 +343,14 @@ if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
                     $inserted++;
                 } elseif ($row['type'] === 'decision') {
                     $dSort++;
-                    $params = [$meetingId, $dSort, $row['head'], $row['desc'] === '' ? null : $row['desc'], $row['due_date']];
+                    $params = [$meetingId, $dSort, $row['head'], $row['desc'] === '' ? null : $row['desc'], $effectiveDue];
                     if ($hasFlags) { $params[] = $row['create_own']; $params[] = $row['private']; }
                     if ($hasFlags && $hasFanOut) { $params[] = (int) ($row['fan_out'] ?? 0); }
                     $insDec->execute($params);
                     $newId = $db->lastInsertId();
+                    if ($hasDecRemarks && $remarksNote !== null) {
+                        $db->prepare('UPDATE meeting_decision SET remarks = ? WHERE id = ?')->execute([$remarksNote, $newId]);
+                    }
                     if ($hasRespTeam) {
                         foreach ($row['int_user_ids'] as $uid) $insDResp->execute([$newId, $uid, null, null, null]);
                         foreach ($row['ext_user_ids'] as $cid) $insDResp->execute([$newId, null, $cid, null, null]);
@@ -317,7 +367,8 @@ if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
                     $inserted++;
                 } elseif ($row['type'] === 'next_agenda') {
                     $nSort++;
-                    $insNext->execute([$meetingId, $nSort, $row['head'], $row['desc'] === '' ? null : $row['desc']]);
+                    if ($hasNextRemarks) $insNext->execute([$meetingId, $nSort, $row['head'], $row['desc'] === '' ? null : $row['desc'], $remarksNote]);
+                    else                 $insNext->execute([$meetingId, $nSort, $row['head'], $row['desc'] === '' ? null : $row['desc']]);
                     $inserted++;
                 }
             }
@@ -333,7 +384,9 @@ if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
                 meetings_sync_decision_tasks((int) $decId, $uids, $viewerId);
             }
 
-            $_SESSION['meeting_view_flash'] = ['msg' => 'Imported ' . $inserted . ' row(s); skipped ' . $skipped . ' row(s) with errors.', 'type' => 'success'];
+            $msg = 'Imported ' . $inserted . ' row(s); skipped ' . $skipped . ' row(s) with fatal errors.';
+            if ($forced > 0) $msg .= ' ' . $forced . ' row(s) were force-imported with warnings — see the Remarks column on those rows.';
+            $_SESSION['meeting_view_flash'] = ['msg' => $msg, 'type' => 'success'];
             header('Location: /meeting_edit.php?id=' . $meetingId); exit;
         } catch (Throwable $e) {
             try { $db->query('ROLLBACK'); } catch (Throwable $r) { /* ignore */ }
@@ -498,12 +551,21 @@ render_page_header('Bulk upload minutes · ' . ($meeting['reference_no'] ?? ''),
             </tbody>
         </table>
     </div>
-    <div class="card-footer d-flex justify-content-end gap-2">
+    <div class="card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap">
         <a class="btn btn-light" href="/meeting_bulk_import.php?id=<?= $meetingId ?>&clear=1">Discard preview</a>
-        <form method="post" class="d-inline">
+        <form method="post" class="d-flex align-items-center gap-3 flex-wrap">
             <?php csrf_field(); ?>
             <input type="hidden" name="action" value="confirm">
             <input type="hidden" name="id" value="<?= $meetingId ?>">
+            <?php if ($errorRows !== []): ?>
+                <div class="form-check" title="Push the warning rows through anyway. Unmatched users/teams are skipped on the row but noted in the Remarks column so you can patch later.">
+                    <input class="form-check-input" type="checkbox" id="forceImport" name="force" value="1">
+                    <label class="form-check-label small" for="forceImport">
+                        <strong>Force-import warning rows</strong>
+                        <span class="text-muted">(unmatched names skipped on the row, added to Remarks)</span>
+                    </label>
+                </div>
+            <?php endif; ?>
             <button class="btn btn-success"><i class="bi bi-check2-circle me-1"></i>Confirm &amp; import</button>
         </form>
     </div>
