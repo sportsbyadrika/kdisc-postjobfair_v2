@@ -286,11 +286,12 @@ function render_header(string $title, array $options = []): void
                             <?php /* ============ Module: LOI & Jobs (incl. Platform Requests) ============ */ ?>
                             <?php if ($menuShow('loi_jobs') && ($canLoi || $canPlatReq || is_admin($user))): ?>
                                 <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['loi_employers.php','loi_employer_view.php','loi_sbu.php','loi_bulk_import.php','loi_reports.php','platform_requests.php','loi_request_view.php','loi_request_reasons.php','loi_qualification_categories.php','loi_locations.php','loi_salary_ranges.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-briefcase me-1"></i>LOI &amp; Jobs</a>
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['loi_employers.php','loi_employer_view.php','loi_sbu.php','loi_bulk_import.php','loi_reports.php','platform_requests.php','loi_request_view.php','loi_request_reasons.php','loi_qualification_categories.php','loi_locations.php','loi_salary_ranges.php','loi_brochures.php','loi_brochure_templates.php','loi_brochure_template_edit.php','loi_brochure_pdf.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-briefcase me-1"></i>LOI &amp; Jobs</a>
                                     <ul class="dropdown-menu">
                                         <?php if ($canLoi || is_admin($user)): ?>
                                             <li><h6 class="dropdown-header">LOI &amp; Jobs</h6></li>
                                             <li><a class="dropdown-item ps-4" href="/loi_employers.php"><i class="bi bi-building me-2"></i>Employers</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/loi_brochures.php"><i class="bi bi-file-earmark-pdf me-2"></i>Brochures</a></li>
                                         <?php endif; ?>
                                         <?php if ($canPlatReq || $canLoi || is_admin($user)): ?>
                                             <li><hr class="dropdown-divider"></li>
@@ -305,6 +306,7 @@ function render_header(string $title, array $options = []): void
                                                 <li><a class="dropdown-item ps-4" href="/loi_qualification_categories.php"><i class="bi bi-mortarboard me-2"></i>Qualification categories</a></li>
                                                 <li><a class="dropdown-item ps-4" href="/loi_locations.php"><i class="bi bi-geo-alt me-2"></i>Job location master</a></li>
                                                 <li><a class="dropdown-item ps-4" href="/loi_salary_ranges.php"><i class="bi bi-currency-rupee me-2"></i>Salary range master</a></li>
+                                                <li><a class="dropdown-item ps-4" href="/loi_brochure_templates.php"><i class="bi bi-file-earmark-image me-2"></i>Brochure templates</a></li>
                                                 <li><a class="dropdown-item ps-4" href="/loi_bulk_import.php"><i class="bi bi-file-earmark-arrow-up me-2"></i>Bulk import</a></li>
                                             <?php endif; ?>
                                             <?php if ($isPlatReqAdmin || is_manage_admin($user)): ?>
