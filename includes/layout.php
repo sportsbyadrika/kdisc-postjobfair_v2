@@ -283,37 +283,40 @@ function render_header(string $title, array $options = []): void
                                 </li>
                             <?php endif; ?>
 
-                            <?php /* ============ Module: LOI & Jobs ============ */ ?>
-                            <?php if ($menuShow('loi_jobs') && ($canLoi || is_admin($user))): ?>
+                            <?php /* ============ Module: LOI & Jobs (incl. Platform Requests) ============ */ ?>
+                            <?php if ($menuShow('loi_jobs') && ($canLoi || $canPlatReq || is_admin($user))): ?>
                                 <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['loi_employers.php','loi_employer_view.php','loi_sbu.php','loi_bulk_import.php','loi_reports.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-briefcase me-1"></i>LOI &amp; Jobs</a>
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['loi_employers.php','loi_employer_view.php','loi_sbu.php','loi_bulk_import.php','loi_reports.php','platform_requests.php','loi_request_view.php','loi_request_reasons.php','loi_qualification_categories.php','loi_locations.php','loi_salary_ranges.php','loi_brochures.php','loi_brochure_templates.php','loi_brochure_template_edit.php','loi_brochure_pdf.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-briefcase me-1"></i>LOI &amp; Jobs</a>
                                     <ul class="dropdown-menu">
-                                        <li><h6 class="dropdown-header">Transactions</h6></li>
-                                        <li><a class="dropdown-item ps-4" href="/loi_employers.php"><i class="bi bi-building me-2"></i>Employers</a></li>
-                                        <?php if ($isLoiAdmin || is_manage_admin($user)): ?>
-                                            <li><hr class="dropdown-divider"></li>
-                                            <li><h6 class="dropdown-header">Masters</h6></li>
-                                            <li><a class="dropdown-item ps-4" href="/loi_sbu.php"><i class="bi bi-diagram-3 me-2"></i>SBU master</a></li>
-                                            <li><a class="dropdown-item ps-4" href="/loi_bulk_import.php"><i class="bi bi-file-earmark-arrow-up me-2"></i>Bulk import</a></li>
+                                        <?php if ($canLoi || is_admin($user)): ?>
+                                            <li><h6 class="dropdown-header">LOI &amp; Jobs</h6></li>
+                                            <li><a class="dropdown-item ps-4" href="/loi_employers.php"><i class="bi bi-building me-2"></i>Employers</a></li>
+                                            <li><a class="dropdown-item ps-4" href="/loi_brochures.php"><i class="bi bi-file-earmark-pdf me-2"></i>Brochures</a></li>
                                         <?php endif; ?>
-                                        <li><hr class="dropdown-divider"></li>
-                                        <li><h6 class="dropdown-header">Reports</h6></li>
-                                        <li><a class="dropdown-item ps-4" href="/loi_reports.php"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Employer-wise Report</a></li>
-                                    </ul>
-                                </li>
-                            <?php endif; ?>
-
-                            <?php /* ============ Module: Platform Requests ============ */ ?>
-                            <?php if ($menuShow('platform_requests') && ($canPlatReq || $canLoi || is_admin($user))): ?>
-                                <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['platform_requests.php','loi_request_view.php','loi_request_reasons.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-chat-dots me-1"></i>Platform Requests</a>
-                                    <ul class="dropdown-menu">
-                                        <li><h6 class="dropdown-header">Transactions</h6></li>
-                                        <li><a class="dropdown-item ps-4" href="/platform_requests.php"><i class="bi bi-inbox me-2"></i>Inbox</a></li>
-                                        <?php if ($isPlatReqAdmin || is_manage_admin($user)): ?>
+                                        <?php if ($canPlatReq || $canLoi || is_admin($user)): ?>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><h6 class="dropdown-header">Platform Requests</h6></li>
+                                            <li><a class="dropdown-item ps-4" href="/platform_requests.php"><i class="bi bi-inbox me-2"></i>Inbox</a></li>
+                                        <?php endif; ?>
+                                        <?php if ($isLoiAdmin || $isPlatReqAdmin || is_manage_admin($user)): ?>
                                             <li><hr class="dropdown-divider"></li>
                                             <li><h6 class="dropdown-header">Masters</h6></li>
-                                            <li><a class="dropdown-item ps-4" href="/loi_request_reasons.php"><i class="bi bi-tags me-2"></i>Reason master</a></li>
+                                            <?php if ($isLoiAdmin || is_manage_admin($user)): ?>
+                                                <li><a class="dropdown-item ps-4" href="/loi_sbu.php"><i class="bi bi-diagram-3 me-2"></i>SBU master</a></li>
+                                                <li><a class="dropdown-item ps-4" href="/loi_qualification_categories.php"><i class="bi bi-mortarboard me-2"></i>Qualification categories</a></li>
+                                                <li><a class="dropdown-item ps-4" href="/loi_locations.php"><i class="bi bi-geo-alt me-2"></i>Job location master</a></li>
+                                                <li><a class="dropdown-item ps-4" href="/loi_salary_ranges.php"><i class="bi bi-currency-rupee me-2"></i>Salary range master</a></li>
+                                                <li><a class="dropdown-item ps-4" href="/loi_brochure_templates.php"><i class="bi bi-file-earmark-image me-2"></i>Brochure templates</a></li>
+                                                <li><a class="dropdown-item ps-4" href="/loi_bulk_import.php"><i class="bi bi-file-earmark-arrow-up me-2"></i>Bulk import</a></li>
+                                            <?php endif; ?>
+                                            <?php if ($isPlatReqAdmin || is_manage_admin($user)): ?>
+                                                <li><a class="dropdown-item ps-4" href="/loi_request_reasons.php"><i class="bi bi-tags me-2"></i>Platform-request reasons</a></li>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                        <?php if ($canLoi || is_admin($user)): ?>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><h6 class="dropdown-header">Reports</h6></li>
+                                            <li><a class="dropdown-item ps-4" href="/loi_reports.php"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Employer-wise Report</a></li>
                                         <?php endif; ?>
                                     </ul>
                                 </li>
