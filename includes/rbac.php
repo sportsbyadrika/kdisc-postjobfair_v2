@@ -35,6 +35,7 @@ const RBAC_MODULES = [
     ['code' => 'demand_side',        'name' => 'Demand Side',        'sort_order' => 30],
     ['code' => 'pmu_assets',         'name' => 'PMU Assets',         'sort_order' => 40],
     ['code' => 'loi_jobs',           'name' => 'LOI & Jobs',         'sort_order' => 45],
+    ['code' => 'platform_requests',  'name' => 'Platform Requests',  'sort_order' => 47],
     ['code' => 'administration',     'name' => 'Administration',     'sort_order' => 50],
 ];
 

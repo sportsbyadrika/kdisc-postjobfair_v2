@@ -16,11 +16,13 @@ require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/loi_jobs_helpers.php';
+require_once __DIR__ . '/includes/loi_requests_helpers.php';
 require_auth();
 
 $viewer   = current_user() ?? [];
 $viewerId = (int) ($viewer['id'] ?? 0);
 loi_jobs_bootstrap();
+loi_requests_bootstrap();
 
 if (!user_can_access_module($viewerId, 'loi_jobs') && !is_admin($viewer)) {
     http_response_code(403);
@@ -170,7 +172,7 @@ try {
 
 $sbuRows = loi_sbu_list(true);
 $tab = (string) ($_GET['tab'] ?? 'overview');
-if (!in_array($tab, ['overview','jobs','interviews','candidates','audit'], true)) $tab = 'overview';
+if (!in_array($tab, ['overview','jobs','interviews','candidates','requests','audit'], true)) $tab = 'overview';
 
 $tabHref = static fn(string $t): string => '/loi_employer_view.php?id=' . (int) $_GET['id'] . '&tab=' . $t;
 
@@ -195,6 +197,7 @@ render_page_header($emp['name'], [
     <li class="nav-item"><a class="nav-link <?= $tab === 'jobs'       ? 'active' : '' ?>" href="<?= esc($tabHref('jobs')) ?>"><i class="bi bi-briefcase me-1"></i>Jobs <span class="badge text-bg-light border ms-1"><?= count($jobs) ?></span></a></li>
     <li class="nav-item"><a class="nav-link <?= $tab === 'interviews' ? 'active' : '' ?>" href="<?= esc($tabHref('interviews')) ?>"><i class="bi bi-calendar-event me-1"></i>Interviews</a></li>
     <li class="nav-item"><a class="nav-link <?= $tab === 'candidates' ? 'active' : '' ?>" href="<?= esc($tabHref('candidates')) ?>"><i class="bi bi-people me-1"></i>Candidates</a></li>
+    <li class="nav-item"><a class="nav-link <?= $tab === 'requests'   ? 'active' : '' ?>" href="<?= esc($tabHref('requests')) ?>"><i class="bi bi-chat-dots me-1"></i>Platform Requests</a></li>
     <li class="nav-item"><a class="nav-link <?= $tab === 'audit'      ? 'active' : '' ?>" href="<?= esc($tabHref('audit')) ?>"><i class="bi bi-clock-history me-1"></i>Audit</a></li>
 </ul>
 
@@ -418,6 +421,74 @@ render_page_header($emp['name'], [
     <div class="card"><div class="card-body">
         <div class="alert alert-info mb-0"><i class="bi bi-hourglass-split me-1"></i>Candidate roster lands in <strong>Phase 2</strong>. Each row will capture Name / Mobile / Email / Qualification / Experience / Outcome against a specific interview-job pair.</div>
     </div></div>
+<?php elseif ($tab === 'requests'):
+    $canParticipate = loi_requests_can_participate($viewerId, $viewer);
+    $reqs = [];
+    try {
+        $rst = db()->prepare("SELECT r.*, u.name AS raised_by_name, rr.name AS reason_name,
+                (SELECT COUNT(*) FROM loi_request_message WHERE request_id = r.id) AS msg_count,
+                (SELECT MAX(created_at) FROM loi_request_message WHERE request_id = r.id) AS last_msg_at
+            FROM loi_request r
+            LEFT JOIN users u ON u.id = r.created_by
+            LEFT JOIN loi_request_reason rr ON rr.id = r.reason_id
+            WHERE r.employer_id = ?
+            ORDER BY FIELD(r.status, 'open','in_progress','resolved','closed'), r.created_at DESC");
+        $rst->execute([$id]);
+        $reqs = $rst->fetchAll();
+    } catch (Throwable $e) { /* empty */ }
+?>
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-chat-dots text-primary me-1"></i>Platform requests for this employer</span>
+            <?php if ($canParticipate && (int) $emp['is_active'] === 1): ?>
+                <button type="button" class="btn btn-sm btn-warning js-raise-req-from-tab"><i class="bi bi-chat-dots me-1"></i>Raise new request</button>
+            <?php endif; ?>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead><tr>
+                    <th>Reason</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Raised by</th>
+                    <th>Last activity</th>
+                    <th class="text-center">Messages</th>
+                    <th class="text-end">Action</th>
+                </tr></thead>
+                <tbody>
+                    <?php if ($reqs === []): ?>
+                        <tr><td colspan="7"><div class="empty-state"><i class="bi bi-inbox"></i>No platform requests raised for this employer yet.</div></td></tr>
+                    <?php endif; ?>
+                    <?php foreach ($reqs as $r): ?>
+                        <tr>
+                            <td class="fw-semibold"><?= esc((string) ($r['reason_name'] ?? '—')) ?></td>
+                            <td><span class="badge text-bg-<?= esc(loi_request_priority_tone((string) $r['priority'])) ?>"><?= esc(ucfirst((string) $r['priority'])) ?></span></td>
+                            <td><span class="badge text-bg-<?= esc(loi_request_status_tone((string) $r['status'])) ?>"><?= esc(loi_request_status_label((string) $r['status'])) ?></span></td>
+                            <td class="small"><?= esc((string) ($r['raised_by_name'] ?? '—')) ?><div class="text-muted"><?= esc(date('d/m/Y H:i', strtotime((string) $r['created_at']))) ?></div></td>
+                            <td class="small text-muted"><?= $r['last_msg_at'] ? esc(date('d/m/Y H:i', strtotime((string) $r['last_msg_at']))) : '—' ?></td>
+                            <td class="text-center"><?= (int) ($r['msg_count'] ?? 0) ?></td>
+                            <td class="text-end">
+                                <a class="btn btn-sm btn-outline-primary" href="/loi_request_view.php?id=<?= (int) $r['id'] ?>"><i class="bi bi-chat-left-text me-1"></i>Open chat</a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <?php if ($canParticipate): ?>
+    <script>
+    // Lightweight bridge: clicking "Raise new request" bounces back to
+    // the employers list page's modal, pre-filled with this employer.
+    // Keeps a single modal definition instead of duplicating here.
+    document.addEventListener('click', (e) => {
+        const btn = e.target.closest('.js-raise-req-from-tab');
+        if (!btn) return;
+        location.href = '/loi_employers.php?raise=<?= (int) $emp['id'] ?>';
+    });
+    </script>
+    <?php endif; ?>
 <?php elseif ($tab === 'audit'): ?>
     <?php
         $audit = [];
