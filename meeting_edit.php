@@ -310,6 +310,159 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     }
 }
 
+/* ---------- Copy to new meeting ---------- */
+if (is_post() && ($_POST['action'] ?? '') === 'copy_meeting') {
+    csrf_check_or_die();
+    if ($existing === null) $flashAndReturn('Source meeting not found.', 'danger', 0);
+
+    $copyGeneral      = isset($_POST['copy_general']);
+    $copyParticipants = isset($_POST['copy_participants']);
+    $copyAgenda       = isset($_POST['copy_agenda']);
+    $copyDecisions    = isset($_POST['copy_decisions']);
+
+    $db = db();
+    $db->query('START TRANSACTION');
+    try {
+        $sourceDivision = (int) ($existing['division_id'] ?? 0);
+        $newRef         = meetings_generate_reference($sourceDivision);
+        $divCode        = (string) ($existing['division_code_snapshot'] ?? '');
+
+        // Base defaults for the new meeting. Date is today; from/to
+        // time + minutes_body + status start empty so the operator
+        // fills them in. previous_meeting_id points at the source so
+        // the chain is preserved for cross-reference.
+        $newTitle    = $copyGeneral ? ('Copy of ' . (string) $existing['title']) : '(Copy — please update title)';
+        $newPurpose  = $copyGeneral ? (string) ($existing['purpose']       ?? '') : '';
+        $newLocation = $copyGeneral ? (string) ($existing['location']      ?? '') : '';
+        $newVlink    = $copyGeneral ? (string) ($existing['virtual_link']  ?? '') : '';
+        $newChairU   = $copyGeneral ? (int)    ($existing['chair_user_id'] ?? 0)  : 0;
+        $newChairC   = $copyGeneral ? (int)    ($existing['chair_contact_id'] ?? 0) : 0;
+
+        $db->prepare('INSERT INTO meeting
+            (reference_no, title, purpose, meeting_date, from_time, to_time, location, virtual_link,
+             chair_user_id, chair_contact_id, division_id, division_code_snapshot, status,
+             minutes_body, next_meeting_date, next_meeting_time, previous_meeting_id, is_active,
+             created_at, updated_at, created_by, updated_by)
+            VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, "scheduled", NULL, NULL, NULL, ?, 1, NOW(), NOW(), ?, ?)')
+            ->execute([
+                $newRef, $newTitle,
+                $newPurpose === '' ? null : $newPurpose,
+                date('Y-m-d'),
+                $newLocation === '' ? null : $newLocation,
+                $newVlink === '' ? null : $newVlink,
+                $newChairU > 0 ? $newChairU : null,
+                $newChairC > 0 ? $newChairC : null,
+                $sourceDivision > 0 ? $sourceDivision : null,
+                $divCode === '' ? null : $divCode,
+                (int) $existing['id'],
+                $viewerId, $viewerId,
+            ]);
+        $newId = (int) $db->lastInsertId();
+
+        if ($copyParticipants) {
+            $insP = $db->prepare('INSERT INTO meeting_participant
+                (meeting_id, user_id, contact_id, is_mandatory, attended, role_label, created_at)
+                VALUES (?, ?, ?, ?, NULL, ?, NOW())');
+            foreach ($existingParticipants as $p) {
+                $insP->execute([
+                    $newId,
+                    ((int) ($p['user_id']    ?? 0)) ?: null,
+                    ((int) ($p['contact_id'] ?? 0)) ?: null,
+                    (int) ($p['is_mandatory'] ?? 1),
+                    trim((string) ($p['role_label'] ?? '')) ?: null,
+                ]);
+            }
+        }
+
+        if ($copyAgenda) {
+            $insA = $db->prepare('INSERT INTO meeting_agenda
+                (meeting_id, sort_order, title, description, lead_user_id, lead_seat_id, lead_contact_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)');
+            $insAL = $db->prepare('INSERT INTO meeting_agenda_lead (agenda_id, user_id, seat_id, contact_id) VALUES (?, ?, ?, ?)');
+            $order = 0;
+            foreach ($existingAgenda as $a) {
+                $insA->execute([
+                    $newId, ++$order,
+                    (string) $a['title'],
+                    trim((string) ($a['description'] ?? '')) ?: null,
+                    ((int) ($a['lead_user_id']    ?? 0)) ?: null,
+                    ((int) ($a['lead_seat_id']    ?? 0)) ?: null,
+                    ((int) ($a['lead_contact_id'] ?? 0)) ?: null,
+                ]);
+                $newAgendaId = (int) $db->lastInsertId();
+                foreach ($existingAgendaLeads[(int) $a['id']] ?? [] as $lead) {
+                    $insAL->execute([
+                        $newAgendaId,
+                        ((int) ($lead['user_id']    ?? 0)) ?: null,
+                        ((int) ($lead['seat_id']    ?? 0)) ?: null,
+                        ((int) ($lead['contact_id'] ?? 0)) ?: null,
+                    ]);
+                }
+            }
+        }
+
+        if ($copyDecisions) {
+            // Probe schema shape for the optional flag/fan-out/team columns.
+            $hasDecFlagsC = false; $hasFanOutC = false; $hasRemarksC = false; $hasRespTeamC = false;
+            try {
+                $cols = [];
+                foreach ($db->query('SHOW COLUMNS FROM meeting_decision')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
+                $hasDecFlagsC = isset($cols['create_own_tasks']) && isset($cols['status_private']);
+                $hasFanOutC   = isset($cols['fan_out_teams']);
+                $hasRemarksC  = isset($cols['remarks']);
+            } catch (Throwable $e) { /* ignore */ }
+            try {
+                $cols2 = [];
+                foreach ($db->query('SHOW COLUMNS FROM meeting_decision_responsible')->fetchAll() as $c) $cols2[strtolower((string) $c['Field'])] = true;
+                $hasRespTeamC = isset($cols2['team_id']);
+            } catch (Throwable $e) { /* ignore */ }
+
+            if ($hasDecFlagsC && $hasFanOutC) {
+                $insD = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date, create_own_tasks, status_private, fan_out_teams) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+            } elseif ($hasDecFlagsC) {
+                $insD = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date, create_own_tasks, status_private) VALUES (?, ?, ?, ?, ?, ?, ?)');
+            } else {
+                $insD = $db->prepare('INSERT INTO meeting_decision (meeting_id, sort_order, heading, description, due_date) VALUES (?, ?, ?, ?, ?)');
+            }
+            $insR = $hasRespTeamC
+                ? $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id, team_id) VALUES (?, ?, ?, ?, ?)')
+                : $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
+            $order = 0;
+            foreach ($existingDecisions as $d) {
+                $params = [$newId, ++$order,
+                    (string) $d['heading'],
+                    trim((string) ($d['description'] ?? '')) ?: null,
+                    (string) ($d['due_date'] ?? '') ?: null];
+                if ($hasDecFlagsC)                 { $params[] = (int) ($d['create_own_tasks'] ?? 1); $params[] = (int) ($d['status_private'] ?? 0); }
+                if ($hasDecFlagsC && $hasFanOutC)  { $params[] = (int) ($d['fan_out_teams'] ?? 0); }
+                $insD->execute($params);
+                $newDecId = (int) $db->lastInsertId();
+                if ($hasRemarksC) {
+                    $db->prepare('UPDATE meeting_decision SET remarks = ? WHERE id = ?')
+                        ->execute([trim((string) ($d['remarks'] ?? '')) ?: null, $newDecId]);
+                }
+                foreach ($existingDecisionResp[(int) $d['id']] ?? [] as $r) {
+                    $uid = ((int) ($r['user_id']    ?? 0)) ?: null;
+                    $cid = ((int) ($r['contact_id'] ?? 0)) ?: null;
+                    $sid = ((int) ($r['seat_id']    ?? 0)) ?: null;
+                    $tid = ((int) ($r['team_id']    ?? 0)) ?: null;
+                    if ($hasRespTeamC) $insR->execute([$newDecId, $uid, $cid, $sid, $tid]);
+                    else               $insR->execute([$newDecId, $uid, $cid, $sid]);
+                }
+            }
+        }
+
+        $db->query('COMMIT');
+        if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+        $_SESSION['meeting_edit_flash'] = ['msg' => 'Copied to ' . $newRef . '. Update the date, time and the rest below, then save.', 'type' => 'success'];
+        header('Location: /meeting_edit.php?id=' . $newId);
+        exit;
+    } catch (Throwable $e) {
+        try { $db->query('ROLLBACK'); } catch (Throwable $r) { /* ignore */ }
+        $flashAndReturn('Copy failed: ' . $e->getMessage(), 'danger', (int) $existing['id']);
+    }
+}
+
 $formValues = $existing ?: [
     'title' => '', 'purpose' => '', 'meeting_date' => date('Y-m-d'),
     'from_time' => '', 'to_time' => '', 'location' => '', 'virtual_link' => '',
@@ -320,16 +473,33 @@ $formValues = $existing ?: [
 ];
 
 $pageTitle = $existing ? 'Edit meeting · ' . $existing['reference_no'] : 'New meeting';
+
+// Flash messages written by the Copy-to-new-meeting handler land here
+// (the usual save handler bounces to meeting_view.php and uses the
+// meeting_view_flash key).
+if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+$editFlashMessage = null; $editFlashType = 'success';
+if (!empty($_SESSION['meeting_edit_flash']) && is_array($_SESSION['meeting_edit_flash'])) {
+    $editFlashMessage = (string) ($_SESSION['meeting_edit_flash']['msg']  ?? '');
+    $editFlashType    = (string) ($_SESSION['meeting_edit_flash']['type'] ?? 'success');
+    unset($_SESSION['meeting_edit_flash']);
+}
+
 render_header('Meetings · ' . $pageTitle, ['main_container_class' => 'container-xl']);
 render_page_header($pageTitle, [
     'icon' => 'bi-calendar2-week',
     'subtitle' => $existing ? 'Edit fields, participants, agenda, decisions. Saves in one transaction.' : 'Create a new meeting. A reference number is allocated automatically from the division.',
     'actions' => ($existing
             ? '<a class="btn btn-outline-success" href="/meeting_bulk_import.php?id=' . (int) $existing['id'] . '"><i class="bi bi-file-earmark-arrow-up me-1"></i>Bulk upload minutes</a>'
+                . '<button type="button" class="btn btn-outline-primary ms-2" data-bs-toggle="modal" data-bs-target="#copyMeetingModal"><i class="bi bi-copy me-1"></i>Copy to new meeting</button>'
             : '')
         . '<a class="btn btn-light ms-2" href="/meetings.php"><i class="bi bi-arrow-left me-1"></i>Back to Meetings</a>',
 ]);
 ?>
+
+<?php if ($editFlashMessage !== null): ?>
+    <div class="alert alert-<?= esc($editFlashType) ?>"><?= esc($editFlashMessage) ?></div>
+<?php endif; ?>
 
 <form method="post" class="card">
     <?php csrf_field(); ?>
@@ -1471,6 +1641,51 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>
 
 <?php if ($existing): ?>
+<!-- Copy-to-new-meeting modal (Bootstrap) -->
+<div class="modal fade" id="copyMeetingModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post">
+        <?php csrf_field(); ?>
+        <input type="hidden" name="action" value="copy_meeting">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-copy text-primary me-1"></i>Copy this meeting</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-light border mb-3">
+            <div class="small text-muted">Source</div>
+            <div class="fw-semibold"><?= esc((string) $existing['reference_no']) ?> · <?= esc((string) $existing['title']) ?></div>
+            <div class="small text-muted">A new meeting will be created under the same division with its own reference number. The current meeting stays untouched.</div>
+          </div>
+          <div class="small text-muted mb-2">Tick the sections you want to carry over. You'll land on the new meeting's edit page to set date, time and the rest.</div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="cmGeneral" name="copy_general" value="1" checked>
+            <label class="form-check-label" for="cmGeneral"><strong>General details</strong> <span class="small text-muted">(title, purpose, location, virtual link, chairperson)</span></label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="cmParticipants" name="copy_participants" value="1" checked>
+            <label class="form-check-label" for="cmParticipants"><strong>Participants</strong> <span class="small text-muted">(attendance clears — those marks are per-meeting)</span></label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="cmAgenda" name="copy_agenda" value="1" checked>
+            <label class="form-check-label" for="cmAgenda"><strong>Agenda items</strong> <span class="small text-muted">(titles, descriptions, leads)</span></label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="cmDecisions" name="copy_decisions" value="1" checked>
+            <label class="form-check-label" for="cmDecisions"><strong>Decision points</strong> <span class="small text-muted">(heading, description, due date, remarks, responsibility, team links)</span></label>
+          </div>
+          <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Date / time, minutes text, next-meeting agenda, URL attachments and chairperson approval are <strong>not</strong> copied — they belong to the specific meeting and are set fresh on the new one.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-copy me-1"></i>Create new meeting</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <!-- Import-from-previous modal (Bootstrap) -->
 <div class="modal fade" id="importPrevModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
