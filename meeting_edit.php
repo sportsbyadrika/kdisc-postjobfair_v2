@@ -1114,7 +1114,15 @@ window.__meetingRef = {
         tbody.innerHTML = state.participants.map((p, i) => {
             const name = p.user_id ? nameOf(R.users, p.user_id) : (p.contact_id ? nameOf(contactsPool, p.contact_id) : '—');
             const type = String(p.is_mandatory) === '1' ? '<span class="badge text-bg-danger">Mandatory</span>' : '<span class="badge text-bg-secondary">Optional</span>';
-            const att = p.attended === '' || p.attended === undefined || p.attended === null ? '<span class="text-muted">not recorded</span>' : (String(p.attended) === '1' ? '<span class="badge text-bg-success">Present</span>' : '<span class="badge text-bg-secondary">Absent</span>');
+            // Inline two-button attendance toggle. Clicking the active
+            // one again clears attendance back to "not recorded" (null).
+            const current = String(p.attended ?? '');
+            const presentActive = current === '1';
+            const absentActive  = current === '0';
+            const att = `<div class="btn-group btn-group-sm" role="group" aria-label="Attendance for ${esc(name)}">
+                <button type="button" class="btn ${presentActive ? 'btn-success' : 'btn-outline-success'}" data-attend-set="${i}:1" title="${presentActive ? 'Click to clear' : 'Mark as Present'}"><i class="bi bi-check2 me-1"></i>Present</button>
+                <button type="button" class="btn ${absentActive ? 'btn-danger' : 'btn-outline-danger'}" data-attend-set="${i}:0" title="${absentActive ? 'Click to clear' : 'Mark as Absent'}"><i class="bi bi-x me-1"></i>Absent</button>
+            </div>`;
             return `<tr><td>${esc(name)}</td><td>${type}</td><td>${att}</td><td class="small">${esc(p.role_label || '')}</td>
                 <td class="text-end">
                     <button type="button" class="btn btn-sm btn-outline-primary" data-edit-participant="${i}"><i class="bi bi-pencil"></i></button>
@@ -1237,7 +1245,44 @@ window.__meetingRef = {
         renderAll();
     };
     const confirmDelete = (label) => confirm('Delete this ' + label + '? This cannot be undone.');
+    // Inline attendance toggle on participant rows. Clicks the Present
+    // / Absent buttons rendered by renderParticipants(); toggles off if
+    // the already-active state is clicked again (so attendance can go
+    // back to "not recorded"). Saves via upsert_participant so the
+    // row persists without touching the big Save-meeting button.
+    const saveParticipantAttendance = async (idx) => {
+        const p = state.participants[idx];
+        if (!p) return;
+        try {
+            await ensureDraft();
+            setStatus('Saving attendance…', 'info');
+            const j = await ajax({
+                action: 'upsert_participant', meeting_id: meetingId,
+                id: p.id || 0,
+                user_id: p.user_id || 0, contact_id: p.contact_id || 0,
+                is_mandatory: p.is_mandatory ?? 1,
+                attended: p.attended === '' || p.attended == null ? '' : String(p.attended),
+                role_label: p.role_label || '',
+            });
+            if (!j.ok) throw new Error(j.error || 'save failed');
+            if (!p.id) p.id = j.item_id;
+            setStatus('Attendance saved', 'success');
+        } catch (e) { setStatus('Save error', 'danger'); alert('Attendance save failed: ' + e.message); }
+    };
     document.addEventListener('click', (ev) => {
+        const aB = ev.target.closest('[data-attend-set]');
+        if (aB) {
+            const [idxStr, valStr] = aB.dataset.attendSet.split(':');
+            const idx = +idxStr;
+            const newVal = String(valStr);
+            const p = state.participants[idx];
+            if (!p) return;
+            const current = String(p.attended ?? '');
+            p.attended = (current === newVal) ? '' : newVal; // click-again clears
+            renderParticipants();
+            saveParticipantAttendance(idx);
+            return;
+        }
         const eP = ev.target.closest('[data-edit-participant]'); if (eP) return openParticipant(+eP.dataset.editParticipant);
         const dP = ev.target.closest('[data-del-participant]');  if (dP) { if (!confirmDelete('participant')) return; const i = +dP.dataset.delParticipant; return deleteRow('delete_participant', state.participants[i]?.id || 0, 'participants', i); }
         const eA = ev.target.closest('[data-edit-agenda]'); if (eA) return openAgenda(+eA.dataset.editAgenda);
