@@ -439,7 +439,12 @@ ALTER TABLE office_hierarchy_officer_history
                 <?php endforeach; ?>
             </div>
             <?php if ($node !== null && $ancestors !== []): ?>
-                <div class="card-body py-2 border-bottom">
+                <?php /* Not a .card-body — that class has flex-grow:1 which,
+                       because .card is a flex column and the parent gets
+                       h-100 from the row, used to stretch this breadcrumb
+                       into a tall empty band when the left tree was long.
+                       Keep the same visual padding, drop the stretch. */ ?>
+                <div class="px-3 py-2 border-bottom flex-shrink-0">
                     <nav class="mb-0"><ol class="breadcrumb small mb-0">
                         <li class="breadcrumb-item"><a href="/office_hierarchy.php">All</a></li>
                         <?php foreach ($ancestors as $a): ?>
