@@ -56,6 +56,10 @@ if (!meetings_outcome_visible($meeting, $viewer)) {
 $fmtDate = static fn($s) => $s === null || $s === '' ? '' : date('d/m/Y', strtotime((string) $s));
 $fmtTime = static fn($s) => $s === null || $s === '' ? '' : substr((string) $s, 0, 5);
 $esc     = static fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+// For injecting a string into a CSS content: "" literal — CSS doesn't
+// decode HTML entities, so plain text needs backslash-escaping of
+// quotes/backslashes and no newlines.
+$cssEsc  = static fn($s) => addslashes(preg_replace('/[\r\n]+/', ' ', (string) $s));
 
 $parts = db()->prepare('SELECT mp.*, u.name AS user_name, c.name AS contact_name, c.institution
     FROM meeting_participant mp
@@ -157,18 +161,76 @@ $chairInst = $meeting['chair_contact_inst'];
     table { border-collapse: collapse; width: 100%; font-size: 12px; }
     th, td { border: 1px solid #999; padding: 6px 8px; text-align: left; vertical-align: top; }
     th { background: #eee; }
+    /* Table head repeats on every printed page break. */
+    thead { display: table-header-group; }
+    tr    { page-break-inside: avoid; break-inside: avoid; }
     ol { margin: 0 0 0 20px; padding: 0; font-size: 13px; }
-    .decision { border: 1px solid #ccc; border-radius: 4px; padding: 8px; margin-bottom: 8px; font-size: 12px; }
+    .decision { border: 1px solid #ccc; border-radius: 4px; padding: 8px; margin-bottom: 8px; font-size: 12px; page-break-inside: avoid; break-inside: avoid; }
     .decision-title { font-weight: bold; margin-bottom: 4px; }
     .decision .meta-row { color: #555; font-size: 11px; margin-top: 4px; }
-    .group-h { background: #f0f0f0; padding: 4px 8px; font-weight: bold; font-size: 13px; margin-top: 12px; }
-    .sig { margin-top: 40px; }
+    .group-h { background: #f0f0f0; padding: 4px 8px; font-weight: bold; font-size: 13px; margin-top: 12px; page-break-after: avoid; break-after: avoid; }
+    .sig { margin-top: 40px; page-break-inside: avoid; break-inside: avoid; }
     .sig .line { border-top: 1px solid #111; width: 240px; margin-top: 40px; padding-top: 4px; font-size: 12px; }
     .footer { margin-top: 30px; font-size: 11px; color: #555; border-top: 1px solid #ccc; padding-top: 6px; text-align: center; }
-    .print-toolbar { position: sticky; top: 0; background: #fff; padding: 8px 0; border-bottom: 1px dashed #ccc; margin-bottom: 12px; }
+    .print-toolbar { position: sticky; top: 0; background: #fff; padding: 8px 0; border-bottom: 1px dashed #ccc; margin-bottom: 12px; z-index: 10; }
+
+    /* --- Paged-print setup ---------------------------------------
+       @page margin boxes carry a running header + footer with meeting
+       reference, title and auto page numbers via counter(page) /
+       counter(pages). Chrome, Firefox and Edge all honour these in
+       print-to-PDF. The on-screen view keeps the ordinary flow — the
+       header/footer only appear when printing. */
+    @page {
+        size: A4;
+        margin: 22mm 14mm 22mm 14mm;
+        @top-left {
+            content: "<?= $cssEsc($heading !== '' ? $heading : 'Minutes of Meeting') ?>";
+            font-family: 'Times New Roman', serif;
+            font-size: 10pt;
+            color: #333;
+            padding-bottom: 4mm;
+            border-bottom: 1px solid #999;
+            vertical-align: bottom;
+        }
+        @top-right {
+            content: "<?= $cssEsc((string) $meeting['reference_no']) ?>";
+            font-family: 'Times New Roman', serif;
+            font-size: 10pt;
+            color: #333;
+            padding-bottom: 4mm;
+            border-bottom: 1px solid #999;
+            vertical-align: bottom;
+        }
+        @bottom-left {
+            content: "<?= $cssEsc((string) $meeting['title']) ?>";
+            font-family: 'Times New Roman', serif;
+            font-size: 9pt;
+            color: #666;
+            padding-top: 3mm;
+            border-top: 1px solid #ccc;
+        }
+        @bottom-center {
+            content: "Generated <?= date('d/m/Y H:i') ?>";
+            font-family: 'Times New Roman', serif;
+            font-size: 9pt;
+            color: #666;
+            padding-top: 3mm;
+            border-top: 1px solid #ccc;
+        }
+        @bottom-right {
+            content: "Page " counter(page) " of " counter(pages);
+            font-family: 'Times New Roman', serif;
+            font-size: 9pt;
+            color: #333;
+            padding-top: 3mm;
+            border-top: 1px solid #ccc;
+        }
+    }
     @media print {
         .print-toolbar { display: none; }
-        body { margin: 8mm; }
+        body { margin: 0; }
+        /* First-page MoM banner (logo + heading) still prints at the top of page 1. */
+        .footer { display: none; } /* We have an auto footer via @page now. */
     }
 </style>
 </head><body>
@@ -176,7 +238,7 @@ $chairInst = $meeting['chair_contact_inst'];
 <div class="print-toolbar">
     <button onclick="window.print()" style="padding:6px 12px; background:#0d6efd; color:#fff; border:none; border-radius:4px; cursor:pointer;">Print / Save as PDF</button>
     <a href="/meeting_view.php?id=<?= $id ?>" style="margin-left:12px;">Back to meeting</a>
-    <span style="margin-left:16px; color:#555; font-size:12px;">Use your browser's print dialog and choose "Save as PDF" for a real PDF.</span>
+    <span style="margin-left:16px; color:#555; font-size:12px;">Use your browser's print dialog and choose "Save as PDF" for a real PDF. The page header (title + reference) and footer (page X of Y + generated time) are added automatically. In the print dialog, un-tick <strong>Headers and footers</strong> under "More settings" to avoid the browser adding its own.</span>
 </div>
 
 <div class="mom-head">
