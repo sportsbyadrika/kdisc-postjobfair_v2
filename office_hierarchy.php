@@ -322,8 +322,10 @@ $rowPayload = static function (array $r): string {
     ], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES);
 };
 
-/* Recursive tree render — kept the same, clicking a node updates the
- * URL to select it and refresh the right-side table. */
+/* Recursive tree render — clicking a node updates the URL to select
+ * it and refresh the right-side table. A per-node +/- toggle shows /
+ * hides that branch; expand/collapse state is persisted in
+ * localStorage by the little script at the bottom of this file. */
 $renderTree = function (array $nodes, ?int $selectedId) use (&$renderTree): void {
     if ($nodes === []) return;
     echo '<ul class="list-unstyled ms-3 mb-0" style="border-left:1px dashed var(--bs-border-color); padding-left:.5rem;">';
@@ -334,14 +336,24 @@ $renderTree = function (array $nodes, ?int $selectedId) use (&$renderTree): void
         $level     = (string) $n['level_type'];
         $icon      = office_hierarchy_level_icon($level);
         $labelCls  = 'small' . ($isCurrent ? ' fw-bold text-primary' : '') . ($isActive ? '' : ' text-muted text-decoration-line-through');
-        echo '<li class="mb-1">';
+        $kids = office_hierarchy_get_children($id);
+        $hasKids = $kids !== [];
+        echo '<li class="mb-1 oh-node" data-node-id="' . $id . '">';
+        if ($hasKids) {
+            echo '<button type="button" class="oh-toggle btn btn-link p-0 me-1 align-baseline" aria-expanded="true" title="Collapse">'
+               . '<i class="bi bi-dash-square text-muted"></i></button>';
+        } else {
+            // Spacer so leaf names line up with branch names.
+            echo '<span class="oh-spacer d-inline-block me-1" style="width:14px;">&nbsp;</span>';
+        }
         echo '<a href="/office_hierarchy.php?node=' . $id . '" class="' . $labelCls . ' text-decoration-none">';
         echo '<i class="bi ' . htmlspecialchars($icon, ENT_QUOTES, 'UTF-8') . ' me-1"></i>';
         echo htmlspecialchars((string) $n['name'], ENT_QUOTES, 'UTF-8');
         echo '</a>';
-        $kids = office_hierarchy_get_children($id);
-        if ($kids !== []) {
+        if ($hasKids) {
+            echo '<div class="oh-children">';
             $renderTree($kids, $selectedId);
+            echo '</div>';
         }
         echo '</li>';
     }
@@ -410,14 +422,18 @@ ALTER TABLE office_hierarchy_officer_history
                     <i class="bi bi-plus-lg me-1"></i>New Office
                 </button>
             </div>
-            <div class="card-body">
+            <div class="card-body" id="ohTreeWrap">
                 <?php if ($rootNodes === []): ?>
                     <div class="empty-state small"><i class="bi bi-inbox"></i>No offices yet. Click "New Office" to start.</div>
                 <?php else: ?>
-                    <div>
+                    <div class="d-flex align-items-center justify-content-between mb-2">
                         <a class="small text-decoration-none <?= $nodeId === 0 ? 'fw-bold text-primary' : '' ?>" href="/office_hierarchy.php">
                             <i class="bi bi-diagram-3 me-1"></i>All offices
                         </a>
+                        <div class="btn-group btn-group-sm" role="group" aria-label="Expand/collapse tree">
+                            <button type="button" class="btn btn-outline-secondary" id="ohExpandAll" title="Expand everything"><i class="bi bi-plus-square me-1"></i>Expand all</button>
+                            <button type="button" class="btn btn-outline-secondary" id="ohCollapseAll" title="Collapse everything"><i class="bi bi-dash-square me-1"></i>Collapse all</button>
+                        </div>
                     </div>
                     <?php $renderTree($rootNodes, $nodeId); ?>
                 <?php endif; ?>
@@ -926,6 +942,76 @@ ALTER TABLE office_hierarchy_officer_history
         // pick someone else instead.
         pickerBody.querySelectorAll('tr').forEach(tr => tr.classList.remove('table-primary'));
         t.closest('tr')?.classList.add('table-primary');
+    });
+})();
+
+/* --- Office-hierarchy tree expand/collapse ------------------------ *
+ * Each branch node renders a .oh-toggle button; this script toggles
+ * the matching .oh-children block and persists the collapsed-id set
+ * in localStorage so a reload keeps the view. The two header buttons
+ * (#ohExpandAll / #ohCollapseAll) nuke / fill the stored set. */
+(function () {
+    const WRAP = document.getElementById('ohTreeWrap');
+    if (!WRAP) return;
+    const KEY = 'oh_tree_collapsed_v1';
+    const read  = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { return {}; } };
+    const write = (s) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} };
+    let collapsed = read();
+
+    const applyNodeState = (li, isCollapsed) => {
+        const children = li.querySelector(':scope > .oh-children');
+        const btn      = li.querySelector(':scope > .oh-toggle');
+        if (!children || !btn) return;
+        if (isCollapsed) {
+            children.style.display = 'none';
+            btn.setAttribute('aria-expanded', 'false');
+            btn.title = 'Expand';
+            const i = btn.querySelector('i');
+            if (i) i.className = 'bi bi-plus-square text-muted';
+        } else {
+            children.style.display = '';
+            btn.setAttribute('aria-expanded', 'true');
+            btn.title = 'Collapse';
+            const i = btn.querySelector('i');
+            if (i) i.className = 'bi bi-dash-square text-muted';
+        }
+    };
+    // Apply saved state on load.
+    WRAP.querySelectorAll('.oh-node').forEach(li => {
+        const id = li.dataset.nodeId;
+        if (id && collapsed[id]) applyNodeState(li, true);
+    });
+
+    WRAP.addEventListener('click', (e) => {
+        const btn = e.target.closest('.oh-toggle');
+        if (!btn || !WRAP.contains(btn)) return;
+        e.preventDefault();
+        const li = btn.closest('.oh-node');
+        if (!li) return;
+        const id = li.dataset.nodeId;
+        const nowCollapsed = btn.getAttribute('aria-expanded') === 'true';
+        applyNodeState(li, nowCollapsed);
+        if (!id) return;
+        if (nowCollapsed) collapsed[id] = true;
+        else              delete collapsed[id];
+        write(collapsed);
+    });
+
+    document.getElementById('ohExpandAll')?.addEventListener('click', () => {
+        collapsed = {};
+        write(collapsed);
+        WRAP.querySelectorAll('.oh-node').forEach(li => applyNodeState(li, false));
+    });
+    document.getElementById('ohCollapseAll')?.addEventListener('click', () => {
+        collapsed = {};
+        WRAP.querySelectorAll('.oh-node').forEach(li => {
+            const id = li.dataset.nodeId;
+            // Only collapse branch nodes (ones that have a toggle).
+            if (!li.querySelector(':scope > .oh-toggle')) return;
+            applyNodeState(li, true);
+            if (id) collapsed[id] = true;
+        });
+        write(collapsed);
     });
 })();
 </script>
