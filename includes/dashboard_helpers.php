@@ -31,6 +31,7 @@ function dashboard_all_cards(): array
         ['code' => 'projects_status',   'label' => 'Projects · Status',       'description' => 'Active / Completed project counts + task risk buckets (overdue / due / safe / not started).'],
         ['code' => 'office_stats',      'label' => 'Office Hierarchy · Summary', 'description' => 'Division / Section / Sub Section / Seat counts.'],
         ['code' => 'loi_jobs',          'label' => 'LOI & Jobs',              'description' => 'Active Employers / Active Jobs / Mobilisations in progress / Interviews this week.'],
+        ['code' => 'platform_requests', 'label' => 'Platform Requests',       'description' => 'Open requests across the platform + requests I raised that are still open.'],
     ];
 }
 
@@ -152,6 +153,7 @@ function dashboard_all_menus(): array
         ['code' => 'demand_side',        'label' => 'Demand Side',          'description' => 'Employers, assignments, uploads, stats, settings.'],
         ['code' => 'pmu_assets',         'label' => 'PMU Assets',           'description' => 'District profiles + asset registers + district masters.'],
         ['code' => 'loi_jobs',           'label' => 'LOI & Jobs',           'description' => 'Employers, job roles, interviews, mobilisation & reports.'],
+        ['code' => 'platform_requests',  'label' => 'Platform Requests',    'description' => 'Platform-support request inbox + chat threads per employer.'],
     ];
 }
 

@@ -14,13 +14,17 @@ require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/loi_jobs_helpers.php';
 require_once __DIR__ . '/includes/india_locations_helpers.php';
+require_once __DIR__ . '/includes/loi_requests_helpers.php';
 require_auth();
 
 $viewer   = current_user() ?? [];
 $viewerId = (int) ($viewer['id'] ?? 0);
 loi_jobs_bootstrap();
 india_locations_bootstrap();
-$stateRows = india_states_list();
+loi_requests_bootstrap();
+$stateRows   = india_states_list();
+$reasonRows  = loi_request_reason_list(true);
+$canParticipate = loi_requests_can_participate($viewerId, $viewer);
 
 if (!user_can_access_module($viewerId, 'loi_jobs') && !is_admin($viewer)) {
     http_response_code(403);
@@ -114,6 +118,35 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
         }
     } catch (Throwable $e) {
         $flashAndBack('Save failed: ' . $e->getMessage(), 'danger');
+    }
+}
+if (is_post() && ($_POST['action'] ?? '') === 'raise_request') {
+    csrf_check_or_die();
+    if (!$canParticipate) $flashAndBack('You do not have access to raise a request.', 'danger');
+    $empId    = (int) ($_POST['employer_id'] ?? 0);
+    $reasonId = (int) ($_POST['reason_id'] ?? 0);
+    $priority = (string) ($_POST['priority'] ?? 'medium');
+    $comment  = trim((string) ($_POST['comment'] ?? ''));
+    if ($empId <= 0 || $reasonId <= 0 || $comment === '') $flashAndBack('Reason and initial comment are required.', 'danger');
+    if (!in_array($priority, LOI_REQUEST_PRIORITIES, true)) $priority = 'medium';
+    // Verify the employer exists.
+    $cs = db()->prepare('SELECT id FROM loi_employer WHERE id = ? LIMIT 1');
+    $cs->execute([$empId]);
+    if ($cs->fetchColumn() === false) $flashAndBack('Employer not found.', 'danger');
+    try {
+        db()->prepare('INSERT INTO loi_request
+            (employer_id, reason_id, priority, status, initial_comment, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, "open", ?, ?, NOW(), NOW())')
+            ->execute([$empId, $reasonId, $priority, $comment, $viewerId]);
+        $reqId = (int) db()->lastInsertId();
+        // First message is the initial comment itself so the chat
+        // thread starts populated.
+        loi_request_post_message($reqId, $viewerId, $comment, 'comment');
+        if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+        $_SESSION['loi_request_view_flash'] = ['msg' => 'Request raised. The Platform team has been notified in their inbox.', 'type' => 'success'];
+        header('Location: /loi_request_view.php?id=' . $reqId); exit;
+    } catch (Throwable $e) {
+        $flashAndBack('Raise failed: ' . $e->getMessage(), 'danger');
     }
 }
 if (is_post() && ($_POST['action'] ?? '') === 'toggle_active') {
@@ -291,6 +324,13 @@ render_page_header('LOI & Jobs · Employers', [
                         <td class="text-end">
                             <div class="d-inline-flex gap-1">
                                 <a class="btn btn-sm btn-outline-primary" href="/loi_employer_view.php?id=<?= (int) $r['id'] ?>" title="Open"><i class="bi bi-box-arrow-up-right"></i></a>
+                                <?php if ($canParticipate && $active): ?>
+                                    <button type="button" class="btn btn-sm btn-outline-warning js-raise-request"
+                                            data-emp-id="<?= (int) $r['id'] ?>" data-emp-name="<?= esc((string) $r['name']) ?>"
+                                            data-bs-toggle="modal" data-bs-target="#raiseReqModal" title="Raise platform request">
+                                        <i class="bi bi-chat-dots"></i>
+                                    </button>
+                                <?php endif; ?>
                                 <?php if ($canAdmin): ?>
                                     <button type="button" class="btn btn-sm btn-outline-primary js-edit-emp"
                                             data-payload="<?= $payload ?>"
@@ -516,6 +556,88 @@ render_page_header('LOI & Jobs · Employers', [
             setC('eModalActive',    d.is_active === 1);
         }
     });
+})();
+</script>
+<?php endif; ?>
+
+<?php if ($canParticipate): ?>
+<!-- Raise platform request modal -->
+<div class="modal fade" id="raiseReqModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post">
+                <?php csrf_field(); ?>
+                <input type="hidden" name="action" value="raise_request">
+                <input type="hidden" name="employer_id" id="rrEmpId" value="0">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-chat-dots text-warning me-1"></i>Raise platform request</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-light border mb-3">
+                        <div class="small text-muted">Employer</div>
+                        <div class="fw-semibold" id="rrEmpName">—</div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-7">
+                            <label class="form-label">Reason <span class="text-danger">*</span></label>
+                            <select class="form-select" name="reason_id" id="rrReason" required>
+                                <option value="">— select —</option>
+                                <?php foreach ($reasonRows as $r): ?>
+                                    <option value="<?= (int) $r['id'] ?>" data-desc="<?= esc((string) ($r['description'] ?? '')) ?>"><?= esc((string) $r['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <div class="small text-muted mt-1" id="rrReasonHint"></div>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label">Priority <span class="text-danger">*</span></label>
+                            <select class="form-select" name="priority" id="rrPriority" required>
+                                <?php foreach (LOI_REQUEST_PRIORITIES as $p): ?>
+                                    <option value="<?= esc($p) ?>" <?= $p === 'medium' ? 'selected' : '' ?>><?= esc(ucfirst($p)) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Initial comment <span class="text-danger">*</span></label>
+                            <textarea class="form-control" name="comment" id="rrComment" rows="4" required placeholder="Describe what you need the platform team to do."></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button class="btn btn-warning" type="submit"><i class="bi bi-send me-1"></i>Raise request</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    const modalEl = document.getElementById('raiseReqModal');
+    const reason  = document.getElementById('rrReason');
+    const hint    = document.getElementById('rrReasonHint');
+    const refreshHint = () => {
+        const opt = reason.options[reason.selectedIndex];
+        hint.textContent = (opt && opt.dataset.desc) ? opt.dataset.desc : '';
+    };
+    reason?.addEventListener('change', refreshHint);
+    modalEl?.addEventListener('show.bs.modal', (ev) => {
+        const t = ev.relatedTarget; if (!t) return;
+        document.getElementById('rrEmpId').value   = t.getAttribute('data-emp-id') || '0';
+        document.getElementById('rrEmpName').textContent = t.getAttribute('data-emp-name') || '—';
+        reason.value = '';
+        document.getElementById('rrPriority').value = 'medium';
+        document.getElementById('rrComment').value  = '';
+        refreshHint();
+    });
+    // Auto-open the modal when ?raise=<id> is present (bounced here
+    // from loi_employer_view.php's Requests tab).
+    const params = new URLSearchParams(location.search);
+    const raiseFor = Number(params.get('raise') || 0);
+    if (raiseFor > 0 && window.bootstrap?.Modal) {
+        const btn = document.querySelector('.js-raise-request[data-emp-id="' + raiseFor + '"]');
+        if (btn) btn.click();
+    }
 })();
 </script>
 <?php endif; ?>

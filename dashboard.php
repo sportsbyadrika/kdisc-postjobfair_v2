@@ -1080,8 +1080,49 @@ render_header('Dashboard');
     </div>
 </div>
 <?php endif; /* loi_jobs */ ?>
+<?php $cardBlocks['loi_jobs'] = ob_get_clean(); ob_start(); ?>
+
 <?php
-    $cardBlocks['loi_jobs'] = ob_get_clean();
+    if (dashboard_card_visible('platform_requests')):
+        require_once __DIR__ . '/includes/loi_requests_helpers.php';
+        loi_requests_bootstrap();
+        $prCounts = loi_requests_dashboard_counts((int) ($user['id'] ?? 0));
+?>
+<div class="row g-3 mt-1">
+    <div class="col-12">
+        <h2 class="h5 text-muted mb-2"><i class="bi bi-chat-dots me-1"></i>Platform Requests</h2>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-warning h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Open across all</p><p class="stat-value"><?= number_format((int) $prCounts['open_total']) ?></p></div>
+                <span class="stat-icon-box tone-warning"><i class="bi bi-inbox"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-info h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">My open requests</p><p class="stat-value"><?= number_format((int) $prCounts['open_mine']) ?></p></div>
+                <span class="stat-icon-box tone-info"><i class="bi bi-person-raised-hand"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-body d-flex align-items-center justify-content-between">
+                <div>
+                    <div class="small text-muted">Jump into</div>
+                    <div class="h6 mb-0">Platform Requests inbox</div>
+                </div>
+                <a href="/platform_requests.php" class="btn btn-outline-primary"><i class="bi bi-box-arrow-up-right me-1"></i>Open</a>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; /* platform_requests */ ?>
+<?php
+    $cardBlocks['platform_requests'] = ob_get_clean();
     // Emit every captured card block in the order the operator
     // arranged them under Dashboard settings.
     foreach (dashboard_ordered_cards() as $orderedCard) {
