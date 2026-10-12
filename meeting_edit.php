@@ -209,6 +209,8 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
         }
 
         // Agenda
+        $hasAgendaRemarksSave = false;
+        try { foreach ($db->query('SHOW COLUMNS FROM meeting_agenda')->fetchAll() as $c) if (strtolower((string) $c['Field']) === 'remarks') $hasAgendaRemarksSave = true; } catch (Throwable $e) { /* ignore */ }
         $insA = $db->prepare('INSERT INTO meeting_agenda
             (meeting_id, sort_order, title, description, lead_user_id, lead_seat_id, lead_contact_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)');
@@ -223,6 +225,12 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 ((int) ($row['lead_seat_id'] ?? 0)) ?: null,
                 ((int) ($row['lead_contact_id'] ?? 0)) ?: null,
             ]);
+            $newAgendaId = (int) $db->lastInsertId();
+            if ($hasAgendaRemarksSave) {
+                $remarksRaw = trim((string) ($row['remarks'] ?? ''));
+                $db->prepare('UPDATE meeting_agenda SET remarks = ? WHERE id = ?')
+                    ->execute([$remarksRaw === '' ? null : $remarksRaw, $newAgendaId]);
+            }
         }
 
         // Decisions + M:N responsibility. The decision carries two
@@ -286,12 +294,19 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
         }
 
         // Next-meeting agenda
+        $hasNextRemarksSave = false;
+        try { foreach ($db->query('SHOW COLUMNS FROM meeting_next_agenda')->fetchAll() as $c) if (strtolower((string) $c['Field']) === 'remarks') $hasNextRemarksSave = true; } catch (Throwable $e) { /* ignore */ }
         $insN = $db->prepare('INSERT INTO meeting_next_agenda (meeting_id, sort_order, title, description) VALUES (?, ?, ?, ?)');
         $order = 0;
         foreach ((array) ($_POST['next_agenda'] ?? []) as $row) {
             $t = trim((string) ($row['title'] ?? ''));
             if ($t === '') continue;
             $insN->execute([$id, ++$order, $t, trim((string) ($row['description'] ?? '')) ?: null]);
+            if ($hasNextRemarksSave) {
+                $remarksRaw = trim((string) ($row['remarks'] ?? ''));
+                $db->prepare('UPDATE meeting_next_agenda SET remarks = ? WHERE id = ?')
+                    ->execute([$remarksRaw === '' ? null : $remarksRaw, (int) $db->lastInsertId()]);
+            }
         }
 
         // URL attachments
@@ -649,8 +664,15 @@ render_page_header($pageTitle, [
             <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="agendaModal"><i class="bi bi-plus-lg me-1"></i>Add agenda item</button>
             <?php endif; ?>
         </div>
-        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="agendaTable">
-            <thead><tr><th style="width:4%;">#</th><th>Title</th><th>Description</th><th>Lead</th><th class="text-end">Action</th></tr></thead>
+        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 meeting-sub-table" id="agendaTable">
+            <thead><tr>
+                <th style="width:40px;">#</th>
+                <th style="width:22%;">Title</th>
+                <th style="width:30%;">Description</th>
+                <th style="width:18%;">Lead</th>
+                <th style="width:18%;">Remarks</th>
+                <th style="width:92px;" class="text-end">Action</th>
+            </tr></thead>
             <tbody></tbody>
         </table></div>
         <div id="agendaHidden"></div>
@@ -673,8 +695,16 @@ render_page_header($pageTitle, [
             <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="decisionModal"><i class="bi bi-plus-lg me-1"></i>Add decision</button>
             <?php endif; ?>
         </div>
-        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="decisionTable">
-            <thead><tr><th style="width:4%;">#</th><th>Heading</th><th>Description</th><th>Due</th><th>Responsible</th><th class="text-end">Action</th></tr></thead>
+        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 meeting-sub-table" id="decisionTable">
+            <thead><tr>
+                <th style="width:40px;">#</th>
+                <th style="width:18%;">Heading</th>
+                <th style="width:24%;">Description</th>
+                <th style="width:90px;">Due</th>
+                <th style="width:20%;">Responsible</th>
+                <th style="width:18%;">Remarks</th>
+                <th style="width:92px;" class="text-end">Action</th>
+            </tr></thead>
             <tbody></tbody>
         </table></div>
         <div id="decisionHidden"></div>
@@ -708,8 +738,14 @@ render_page_header($pageTitle, [
             <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="nextAgendaModal"><i class="bi bi-plus-lg me-1"></i>Add next-meeting agenda</button>
             <?php endif; ?>
         </div>
-        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="nextAgendaTable">
-            <thead><tr><th style="width:4%;">#</th><th>Title</th><th>Description</th><th class="text-end">Action</th></tr></thead>
+        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 meeting-sub-table" id="nextAgendaTable">
+            <thead><tr>
+                <th style="width:40px;">#</th>
+                <th style="width:28%;">Title</th>
+                <th style="width:42%;">Description</th>
+                <th style="width:22%;">Remarks</th>
+                <th style="width:92px;" class="text-end">Action</th>
+            </tr></thead>
             <tbody></tbody>
         </table></div>
         <div id="nextAgendaHidden"></div>
@@ -764,6 +800,7 @@ window.__meetingRef = {
                 'id' => (int) $a['id'],
                 'title' => (string) $a['title'],
                 'description' => (string) ($a['description'] ?? ''),
+                'remarks' => (string) ($a['remarks'] ?? ''),
                 'user_ids' => $uIds, 'seat_ids' => $sIds, 'contact_ids' => $cIds,
             ];
         }, $existingAgenda)) ?>,
@@ -784,7 +821,7 @@ window.__meetingRef = {
                 'team_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['team_id'] ?? 0), $rs))),
             ];
         }, $existingDecisions)) ?>,
-        next_agenda: <?= json_encode(array_map(static fn($n) => ['id' => (int) $n['id'], 'title' => (string) $n['title'], 'description' => (string) ($n['description'] ?? '')], $existingNextAgenda)) ?>,
+        next_agenda: <?= json_encode(array_map(static fn($n) => ['id' => (int) $n['id'], 'title' => (string) $n['title'], 'description' => (string) ($n['description'] ?? ''), 'remarks' => (string) ($n['remarks'] ?? '')], $existingNextAgenda)) ?>,
         urls: <?= json_encode(array_map(static fn($u) => ['id' => (int) $u['id'], 'label' => (string) ($u['label'] ?? ''), 'url' => (string) $u['url']], $existingUrls)) ?>,
     },
 };
@@ -829,6 +866,23 @@ window.__meetingRef = {
 </div>
 <style>
 .pm-check-list { height: 240px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 6px; padding: 6px 10px; }
+/* Fixed-width columns in the three sub-tables (agenda / decision /
+ * next-meeting agenda). Description + Remarks use a 2-line clamp +
+ * `title` tooltip so long text stays readable without pushing the
+ * table out of shape. */
+.meeting-sub-table            { table-layout: fixed; width: 100%; }
+.meeting-sub-table th,
+.meeting-sub-table td         { overflow: hidden; vertical-align: top; }
+.meeting-sub-table .cell-clamp2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+    cursor: help;
+}
+.meeting-sub-table .cell-wrap { word-break: break-word; white-space: normal; }
 .pm-check-list .pm-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
 .pm-check-list .pm-row label { margin: 0; cursor: pointer; line-height: 1.3; }
 .pm-check-list .pm-row:hover { background: #f8fafc; }
@@ -841,7 +895,8 @@ window.__meetingRef = {
     <div class="mm-body">
         <input type="hidden" id="aModalIdx" value="">
         <div class="mb-2"><label class="form-label small">Title *</label><input class="form-control" id="aModalTitle"></div>
-        <div class="mb-3"><label class="form-label small">Description</label><textarea class="form-control" id="aModalDesc" rows="2"></textarea></div>
+        <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="aModalDesc" rows="2"></textarea></div>
+        <div class="mb-3"><label class="form-label small">Remarks <span class="text-muted">(internal note; also populated automatically by bulk-import warnings)</span></label><textarea class="form-control" id="aModalRemarks" rows="2"></textarea></div>
         <div class="small text-muted mb-2">Leads are usually drawn from the meeting's participant list. Tick anyone from the Participants column; the other two columns let you add someone who isn't on the list yet.</div>
         <div class="row g-3">
             <div class="col-md-4">
@@ -934,6 +989,7 @@ window.__meetingRef = {
         <input type="hidden" id="nModalIdx" value="">
         <div class="mb-2"><label class="form-label small">Title *</label><input class="form-control" id="nModalTitle"></div>
         <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="nModalDesc" rows="2"></textarea></div>
+        <div class="mb-2"><label class="form-label small">Remarks <span class="text-muted">(internal note; also populated automatically by bulk-import warnings)</span></label><textarea class="form-control" id="nModalRemarks" rows="2"></textarea></div>
     </div>
     <div class="mm-footer"><button type="button" class="btn btn-light btn-sm" data-close-modal>Cancel</button><button type="button" class="btn btn-primary btn-sm" id="nModalSave"><i class="bi bi-check2 me-1"></i>Save</button></div>
 </div>
@@ -1146,12 +1202,19 @@ window.__meetingRef = {
                 ...((a.seat_ids    || []).map(id => nameOf(R.seats,       id))),
                 ...((a.contact_ids || []).map(id => nameOf(contactsPool,  id))),
             ].filter(Boolean).map(esc).join(', ');
-            return `<tr><td>${i+1}</td><td>${esc(a.title)}</td><td class="small text-muted">${esc((a.description || '').slice(0, 100))}</td><td class="small">${leads}</td>
+            const desc    = a.description || '';
+            const remarks = a.remarks || '';
+            return `<tr>
+                <td>${i+1}</td>
+                <td class="fw-semibold cell-wrap" title="${esc(a.title || '')}">${esc(a.title)}</td>
+                <td class="small text-muted cell-clamp2" title="${esc(desc)}">${esc(desc)}</td>
+                <td class="small cell-wrap" title="${esc(leads)}">${leads}</td>
+                <td class="small text-warning-emphasis cell-clamp2" title="${esc(remarks)}">${esc(remarks)}</td>
                 <td class="text-end">
                     <button type="button" class="btn btn-sm btn-outline-primary" data-edit-agenda="${i}"><i class="bi bi-pencil"></i></button>
                     <button type="button" class="btn btn-sm btn-outline-danger"  data-del-agenda="${i}"><i class="bi bi-x"></i></button>
                 </td></tr>`;
-        }).join('') || '<tr><td colspan="5" class="text-center text-muted small py-2">No agenda items yet.</td></tr>';
+        }).join('') || '<tr><td colspan="6" class="text-center text-muted small py-2">No agenda items yet.</td></tr>';
         // Hidden inputs for the big Save-meeting fallback — keep the
         // legacy single-value fields so the server-side wholesale
         // rewrite still works, now derived from the first ticked
@@ -1163,6 +1226,7 @@ window.__meetingRef = {
             const c = (a.contact_ids || [])[0] || 0;
             return `<input type="hidden" name="agenda[${i}][title]"           value="${esc(a.title || '')}">
                     <input type="hidden" name="agenda[${i}][description]"     value="${esc(a.description || '')}">
+                    <input type="hidden" name="agenda[${i}][remarks]"         value="${esc(a.remarks || '')}">
                     <input type="hidden" name="agenda[${i}][lead_user_id]"    value="${u}">
                     <input type="hidden" name="agenda[${i}][lead_seat_id]"    value="${s}">
                     <input type="hidden" name="agenda[${i}][lead_contact_id]" value="${c}">`;
@@ -1180,12 +1244,20 @@ window.__meetingRef = {
                     return t ? ('Team: ' + t.name) : '';
                 }),
             ].filter(Boolean).map(esc).join(', ');
-            return `<tr><td>${i+1}</td><td>${esc(d.heading)}</td><td class="small text-muted">${esc((d.description || '').slice(0, 100))}</td><td class="small">${esc(d.due_date || '')}</td><td class="small">${responsibles}</td>
+            const desc    = d.description || '';
+            const remarks = d.remarks || '';
+            return `<tr>
+                <td>${i+1}</td>
+                <td class="fw-semibold cell-wrap" title="${esc(d.heading || '')}">${esc(d.heading)}</td>
+                <td class="small text-muted cell-clamp2" title="${esc(desc)}">${esc(desc)}</td>
+                <td class="small">${esc(d.due_date || '')}</td>
+                <td class="small cell-clamp2" title="${esc(responsibles)}">${responsibles}</td>
+                <td class="small text-warning-emphasis cell-clamp2" title="${esc(remarks)}">${esc(remarks)}</td>
                 <td class="text-end">
                     <button type="button" class="btn btn-sm btn-outline-primary" data-edit-decision="${i}"><i class="bi bi-pencil"></i></button>
                     <button type="button" class="btn btn-sm btn-outline-danger"  data-del-decision="${i}"><i class="bi bi-x"></i></button>
                 </td></tr>`;
-        }).join('') || '<tr><td colspan="6" class="text-center text-muted small py-2">No decision points yet.</td></tr>';
+        }).join('') || '<tr><td colspan="7" class="text-center text-muted small py-2">No decision points yet.</td></tr>';
         const hidden = document.getElementById('decisionHidden');
         hidden.innerHTML = state.decisions.map((d, i) => {
             const users   = (d.user_ids    || []).map(id => `<input type="hidden" name="decision[${i}][user_ids][]"    value="${id}">`).join('');
@@ -1207,15 +1279,22 @@ window.__meetingRef = {
     const renderNextAgenda = () => {
         const tbody = document.querySelector('#nextAgendaTable tbody');
         tbody.innerHTML = state.next_agenda.map((n, i) => {
-            return `<tr><td>${i+1}</td><td>${esc(n.title)}</td><td class="small text-muted">${esc(n.description || '')}</td>
+            const desc    = n.description || '';
+            const remarks = n.remarks || '';
+            return `<tr>
+                <td>${i+1}</td>
+                <td class="fw-semibold cell-wrap" title="${esc(n.title || '')}">${esc(n.title)}</td>
+                <td class="small text-muted cell-clamp2" title="${esc(desc)}">${esc(desc)}</td>
+                <td class="small text-warning-emphasis cell-clamp2" title="${esc(remarks)}">${esc(remarks)}</td>
                 <td class="text-end">
                     <button type="button" class="btn btn-sm btn-outline-primary" data-edit-next="${i}"><i class="bi bi-pencil"></i></button>
                     <button type="button" class="btn btn-sm btn-outline-danger"  data-del-next="${i}"><i class="bi bi-x"></i></button>
                 </td></tr>`;
-        }).join('') || '<tr><td colspan="4" class="text-center text-muted small py-2">No next-meeting agenda yet.</td></tr>';
+        }).join('') || '<tr><td colspan="5" class="text-center text-muted small py-2">No next-meeting agenda yet.</td></tr>';
         document.getElementById('nextAgendaHidden').innerHTML = state.next_agenda.map((n, i) =>
             `<input type="hidden" name="next_agenda[${i}][title]"       value="${esc(n.title || '')}">
-             <input type="hidden" name="next_agenda[${i}][description]" value="${esc(n.description || '')}">`).join('');
+             <input type="hidden" name="next_agenda[${i}][description]" value="${esc(n.description || '')}">
+             <input type="hidden" name="next_agenda[${i}][remarks]"     value="${esc(n.remarks || '')}">`).join('');
     };
     const renderUrls = () => {
         const tbody = document.querySelector('#urlTable tbody');
@@ -1368,6 +1447,7 @@ window.__meetingRef = {
         document.getElementById('aModalIdx').value = idx == null ? '' : idx;
         document.getElementById('aModalTitle').value = a.title || '';
         document.getElementById('aModalDesc').value  = a.description || '';
+        document.getElementById('aModalRemarks').value = a.remarks || '';
         // Participant pool (prefixed-id scheme: u<id> or c<id>).
         const partPool = sortByName(buildParticipantPool());
         const prePart = [];
@@ -1445,6 +1525,7 @@ window.__meetingRef = {
         document.getElementById('nModalIdx').value = idx == null ? '' : idx;
         document.getElementById('nModalTitle').value = n.title || '';
         document.getElementById('nModalDesc').value  = n.description || '';
+        document.getElementById('nModalRemarks').value = n.remarks || '';
         openModal('nextAgendaModal');
     };
     const openUrl = (idx) => {
@@ -1547,6 +1628,7 @@ window.__meetingRef = {
         document.querySelectorAll('#aListContacts input:checked').forEach(c => contactSet.add(Number(c.value)));
         upsertRow('upsert_agenda', {
             id: existingId, title, description: document.getElementById('aModalDesc').value.trim(),
+            remarks: document.getElementById('aModalRemarks').value.trim(),
             user_ids: Array.from(userSet).filter(Boolean),
             seat_ids: [], // seat-as-lead UI retired; schema still accepts the field
             contact_ids: Array.from(contactSet).filter(Boolean),
@@ -1586,6 +1668,7 @@ window.__meetingRef = {
         const existingId = idxRaw !== '' ? (state.next_agenda[+idxRaw]?.id || 0) : 0;
         upsertRow('upsert_next_agenda', {
             id: existingId, title, description: document.getElementById('nModalDesc').value.trim(),
+            remarks: document.getElementById('nModalRemarks').value.trim(),
         }, 'next_agenda', idxRaw);
     });
     document.getElementById('uModalSave').addEventListener('click', () => {

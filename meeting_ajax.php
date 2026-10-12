@@ -155,6 +155,8 @@ if ($action === 'upsert_agenda') {
     $title = trim((string) ($_POST['title'] ?? ''));
     if ($title === '') $sendError('Title required.');
     $desc = trim((string) ($_POST['description'] ?? '')) ?: null;
+    $remarks = array_key_exists('remarks', $_POST) ? (trim((string) $_POST['remarks']) ?: null) : null;
+    $touchRemarks = array_key_exists('remarks', $_POST) && meetings_column_exists('meeting_agenda', 'remarks');
     // Grid-mode saves only touch the title/description columns and
     // leave the modal-set lead rows alone. The modal, in contrast,
     // rewrites the whole lead set wholesale.
@@ -195,6 +197,10 @@ if ($action === 'upsert_agenda') {
             foreach ($userIds    as $x) $insL->execute([$id, $x, null, null]);
             foreach ($seatIds    as $x) $insL->execute([$id, null, $x, null]);
             foreach ($contactIds as $x) $insL->execute([$id, null, null, $x]);
+        }
+        if ($touchRemarks) {
+            db()->prepare('UPDATE meeting_agenda SET remarks = ? WHERE id = ? AND meeting_id = ?')
+                ->execute([$remarks, $id, $meetingId]);
         }
         db()->query('COMMIT');
         echo json_encode(['ok' => true, 'item_id' => $id]); exit;
@@ -436,6 +442,8 @@ if ($action === 'upsert_next_agenda') {
     $title = trim((string) ($_POST['title'] ?? ''));
     if ($title === '') $sendError('Title required.');
     $desc = trim((string) ($_POST['description'] ?? '')) ?: null;
+    $remarks = array_key_exists('remarks', $_POST) ? (trim((string) $_POST['remarks']) ?: null) : null;
+    $touchRemarks = array_key_exists('remarks', $_POST) && meetings_column_exists('meeting_next_agenda', 'remarks');
     try {
         if ($id > 0) {
             db()->prepare('UPDATE meeting_next_agenda SET title = ?, description = ? WHERE id = ? AND meeting_id = ?')
@@ -447,6 +455,10 @@ if ($action === 'upsert_next_agenda') {
             db()->prepare('INSERT INTO meeting_next_agenda (meeting_id, sort_order, title, description) VALUES (?, ?, ?, ?)')
                 ->execute([$meetingId, $newSort, $title, $desc]);
             $id = db()->lastInsertId();
+        }
+        if ($touchRemarks) {
+            db()->prepare('UPDATE meeting_next_agenda SET remarks = ? WHERE id = ? AND meeting_id = ?')
+                ->execute([$remarks, $id, $meetingId]);
         }
         echo json_encode(['ok' => true, 'item_id' => $id]); exit;
     } catch (Throwable $e) { $sendError($e->getMessage(), 500); }
