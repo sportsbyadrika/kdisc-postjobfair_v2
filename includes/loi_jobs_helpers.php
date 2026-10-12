@@ -87,6 +87,9 @@ function loi_jobs_bootstrap(): void
             if (!isset($cols['address_of_communication'])) {
                 $db->query('ALTER TABLE loi_employer ADD COLUMN address_of_communication TEXT NULL AFTER name');
             }
+            if (!isset($cols['dwms_employer_id'])) {
+                $db->query('ALTER TABLE loi_employer ADD COLUMN dwms_employer_id VARCHAR(80) NULL AFTER name');
+            }
         } catch (Throwable $e) { /* ALTER refused */ }
 
         $db->query("CREATE TABLE IF NOT EXISTS loi_job (
@@ -177,7 +180,129 @@ function loi_jobs_bootstrap(): void
             KEY idx_job (job_id),
             KEY idx_outcome (outcome)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        /* ---- Masters for the job form ----------------------------- */
+        $db->query("CREATE TABLE IF NOT EXISTS loi_qualification_category (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(120) NOT NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            sort_order INT NOT NULL DEFAULT 100,
+            created_at DATETIME NULL, updated_at DATETIME NULL,
+            created_by INT NULL, updated_by INT NULL,
+            UNIQUE KEY unique_name (name),
+            KEY idx_active (is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $db->query("CREATE TABLE IF NOT EXISTS loi_location (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(160) NOT NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            sort_order INT NOT NULL DEFAULT 100,
+            created_at DATETIME NULL, updated_at DATETIME NULL,
+            created_by INT NULL, updated_by INT NULL,
+            UNIQUE KEY unique_name (name),
+            KEY idx_active (is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $db->query("CREATE TABLE IF NOT EXISTS loi_salary_range (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(60) NOT NULL,
+            min_amount INT NULL,
+            max_amount INT NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            sort_order INT NOT NULL DEFAULT 100,
+            created_at DATETIME NULL, updated_at DATETIME NULL,
+            created_by INT NULL, updated_by INT NULL,
+            UNIQUE KEY unique_name (name),
+            KEY idx_active (is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // Seed each master on a fresh install. INSERT IGNORE keeps
+        // admin renames stable on re-runs.
+        $seedQ = $db->prepare('INSERT IGNORE INTO loi_qualification_category (name, sort_order, created_at, updated_at) VALUES (?, ?, NOW(), NOW())');
+        $o = 10;
+        foreach (['10th','Plus 2','ITI','Polytechnic','Arts and Science','Engineering','Management','Doctorate'] as $n) {
+            $seedQ->execute([$n, $o]); $o += 10;
+        }
+        $seedL = $db->prepare('INSERT IGNORE INTO loi_location (name, sort_order, created_at, updated_at) VALUES (?, ?, NOW(), NOW())');
+        $o = 10;
+        $kerala = ['Thiruvananthapuram','Kollam','Pathanamthitta','Alappuzha','Kottayam','Idukki','Ernakulam','Thrissur','Palakkad','Malappuram','Kozhikode','Wayanad','Kannur','Kasaragod'];
+        foreach (array_merge(['Anywhere in Kerala'], $kerala, ['Anywhere in India','International']) as $n) {
+            $seedL->execute([$n, $o]); $o += 10;
+        }
+        $seedS = $db->prepare('INSERT IGNORE INTO loi_salary_range (name, min_amount, max_amount, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())');
+        $o = 10;
+        foreach ([
+            ['Below 15,000',          null, 15000],
+            ['15,000 - 25,000',       15000, 25000],
+            ['25,000 - 40,000',       25000, 40000],
+            ['40,000 - 60,000',       40000, 60000],
+            ['60,000 - 1,00,000',     60000, 100000],
+            ['Above 1,00,000',        100000, null],
+            ['Negotiable',            null,  null],
+        ] as $row) {
+            $seedS->execute([$row[0], $row[1], $row[2], $o]); $o += 10;
+        }
+
+        /* ---- Extend loi_job with the new fields ------------------- */
+        try {
+            $cols = [];
+            foreach ($db->query('SHOW COLUMNS FROM loi_job')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
+            if (!isset($cols['dwms_job_id']))             $db->query('ALTER TABLE loi_job ADD COLUMN dwms_job_id VARCHAR(80) NULL AFTER job_role');
+            if (!isset($cols['qualification_category_id'])) $db->query('ALTER TABLE loi_job ADD COLUMN qualification_category_id INT NULL AFTER qualification');
+            if (!isset($cols['job_description']))         $db->query('ALTER TABLE loi_job ADD COLUMN job_description TEXT NULL AFTER qualification_category_id');
+            if (!isset($cols['skills_required']))         $db->query('ALTER TABLE loi_job ADD COLUMN skills_required TEXT NULL AFTER job_description');
+            if (!isset($cols['gender']))                  $db->query("ALTER TABLE loi_job ADD COLUMN gender ENUM('male','female','other','male_female') NULL AFTER skills_required");
+            if (!isset($cols['salary_range_id']))         $db->query('ALTER TABLE loi_job ADD COLUMN salary_range_id INT NULL AFTER gender');
+        } catch (Throwable $e) { /* ALTER refused — job form hides optional fields */ }
+
+        $db->query("CREATE TABLE IF NOT EXISTS loi_job_location (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            job_id INT NOT NULL,
+            location_id INT NOT NULL,
+            UNIQUE KEY unique_pair (job_id, location_id),
+            KEY idx_job (job_id),
+            KEY idx_location (location_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     } catch (Throwable $e) { /* CREATE refused on hosted DB — module reads/writes degrade silently */ }
+}
+
+/** Active rows for a master, ordered by sort_order then name. */
+function loi_qualification_category_list(bool $onlyActive = true): array
+{
+    try {
+        $sql = 'SELECT id, name, is_active, sort_order FROM loi_qualification_category';
+        if ($onlyActive) $sql .= ' WHERE is_active = 1';
+        $sql .= ' ORDER BY sort_order ASC, name ASC';
+        return db()->query($sql)->fetchAll();
+    } catch (Throwable $e) { return []; }
+}
+function loi_location_list(bool $onlyActive = true): array
+{
+    try {
+        $sql = 'SELECT id, name, is_active, sort_order FROM loi_location';
+        if ($onlyActive) $sql .= ' WHERE is_active = 1';
+        $sql .= ' ORDER BY sort_order ASC, name ASC';
+        return db()->query($sql)->fetchAll();
+    } catch (Throwable $e) { return []; }
+}
+function loi_salary_range_list(bool $onlyActive = true): array
+{
+    try {
+        $sql = 'SELECT id, name, min_amount, max_amount, is_active, sort_order FROM loi_salary_range';
+        if ($onlyActive) $sql .= ' WHERE is_active = 1';
+        $sql .= ' ORDER BY sort_order ASC, min_amount IS NULL, min_amount ASC, name ASC';
+        return db()->query($sql)->fetchAll();
+    } catch (Throwable $e) { return []; }
+}
+
+function loi_gender_label(?string $g): string
+{
+    return match ((string) $g) {
+        'male'        => 'Male',
+        'female'      => 'Female',
+        'other'       => 'Other',
+        'male_female' => 'Male / Female',
+        default       => '—',
+    };
 }
 
 /**

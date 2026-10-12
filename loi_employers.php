@@ -57,6 +57,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     $name = trim((string) ($_POST['name'] ?? ''));
     if ($name === '') $flashAndBack('Employer name is required.', 'danger');
     $sbuId    = (int) ($_POST['sbu_id'] ?? 0);
+    $dwmsEmp  = trim((string) ($_POST['dwms_employer_id'] ?? ''));
     $addr     = trim((string) ($_POST['address_of_communication'] ?? ''));
     $state    = trim((string) ($_POST['state'] ?? ''));
     $district = trim((string) ($_POST['district'] ?? ''));
@@ -77,7 +78,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     try {
         if ($id > 0) {
             db()->prepare('UPDATE loi_employer SET
-                    sbu_id = ?, name = ?, address_of_communication = ?, state = ?, district = ?,
+                    sbu_id = ?, name = ?, dwms_employer_id = ?, address_of_communication = ?, state = ?, district = ?,
                     contact_number = ?, contact_email = ?,
                     hr_manager_name = ?, hr_manager_mobile = ?, hr_manager_email = ?,
                     sector = ?, loi_received = ?, loi_received_date = ?,
@@ -86,6 +87,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 WHERE id = ?')
                 ->execute([
                     $sbuId > 0 ? $sbuId : null, $name,
+                    $dwmsEmp === '' ? null : $dwmsEmp,
                     $addr === '' ? null : $addr,
                     $state === '' ? null : $state, $district === '' ? null : $district,
                     $cnum === '' ? null : $cnum, $cmail === '' ? null : $cmail,
@@ -97,14 +99,15 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
             $flashAndBack('Employer updated.', 'success', $id);
         } else {
             db()->prepare('INSERT INTO loi_employer
-                (sbu_id, name, address_of_communication, state, district, contact_number, contact_email,
+                (sbu_id, name, dwms_employer_id, address_of_communication, state, district, contact_number, contact_email,
                  hr_manager_name, hr_manager_mobile, hr_manager_email,
                  sector, loi_received, loi_received_date,
                  registered_in_dwms, jobs_added_in_dwms, notes,
                  is_active, created_at, updated_at, created_by, updated_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)')
                 ->execute([
                     $sbuId > 0 ? $sbuId : null, $name,
+                    $dwmsEmp === '' ? null : $dwmsEmp,
                     $addr === '' ? null : $addr,
                     $state === '' ? null : $state, $district === '' ? null : $district,
                     $cnum === '' ? null : $cnum, $cmail === '' ? null : $cmail,
@@ -280,6 +283,7 @@ render_page_header('LOI & Jobs · Employers', [
                         'id'                 => (int) $r['id'],
                         'sbu_id'             => (int) ($r['sbu_id'] ?? 0),
                         'name'               => (string) $r['name'],
+                        'dwms_employer_id'   => (string) ($r['dwms_employer_id'] ?? ''),
                         'address_of_communication' => (string) ($r['address_of_communication'] ?? ''),
                         'state'              => (string) ($r['state'] ?? ''),
                         'district'           => (string) ($r['district'] ?? ''),
@@ -387,7 +391,11 @@ render_page_header('LOI & Jobs · Employers', [
                             <input type="text" class="form-control" id="eModalSector" name="sector" maxlength="120">
                         </div>
 
-                        <div class="col-md-12">
+                        <div class="col-md-4">
+                            <label class="form-label">DWMS Employer ID <span class="small text-muted">(optional)</span></label>
+                            <input type="text" class="form-control" id="eModalDwmsId" name="dwms_employer_id" maxlength="80" placeholder="e.g. EMP-01234">
+                        </div>
+                        <div class="col-md-8">
                             <label class="form-label">Address of communication</label>
                             <textarea class="form-control" id="eModalAddr" name="address_of_communication" rows="2" placeholder="Full postal address used for official correspondence"></textarea>
                         </div>
@@ -531,7 +539,7 @@ render_page_header('LOI & Jobs · Employers', [
         const title = document.getElementById('eModalTitle');
         if (t.classList.contains('js-new-emp')) {
             title.innerHTML = '<i class="bi bi-plus-lg me-1"></i>New employer';
-            ['eModalId','eModalName','eModalSbu','eModalSector','eModalAddr','eModalState',
+            ['eModalId','eModalName','eModalSbu','eModalSector','eModalDwmsId','eModalAddr','eModalState',
              'eModalCnum','eModalCmail','eModalHrName','eModalHrMob','eModalHrMail',
              'eModalLoiDate','eModalNotes'].forEach(k => setV(k, k === 'eModalId' ? '0' : (k === 'eModalSbu' ? '0' : '')));
             if (distSel) distSel.innerHTML = '<option value="">— select a state first —</option>';
@@ -541,6 +549,7 @@ render_page_header('LOI & Jobs · Employers', [
             title.innerHTML = '<i class="bi bi-pencil-square me-1"></i>Edit employer';
             setV('eModalId', String(d.id || 0));
             setV('eModalName', d.name); setV('eModalSbu', String(d.sbu_id || 0)); setV('eModalSector', d.sector);
+            setV('eModalDwmsId', d.dwms_employer_id);
             setV('eModalAddr', d.address_of_communication);
             setV('eModalState', d.state || '');
             // Fire the AJAX load after the modal is shown; the state

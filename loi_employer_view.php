@@ -58,7 +58,11 @@ $flashAndBack = static function (string $msg, string $type = 'success', int $emp
 };
 
 /* ---------- Jobs CRUD + audit ---------- */
-$jobFields = ['job_role','vacancy_count','expiry_date','qualification',
+// Field list drives the audit writer. Includes every column we persist
+// so a change in any one of them lands as a row in loi_job_history.
+$jobFields = ['job_role','dwms_job_id','vacancy_count','expiry_date','qualification',
+              'qualification_category_id','job_description','skills_required','gender',
+              'salary_range_id',
               'experience_from_years','experience_to_years','experience_valid_till',
               'preferred_candidates','status','mobilisation_commenced_at','mobilisation_completed_at',
               'applications_count'];
@@ -69,18 +73,26 @@ if (is_post() && ($_POST['action'] ?? '') === 'save_job') {
     $jobId = (int) ($_POST['job_id'] ?? 0);
     $data  = [
         'job_role'               => trim((string) ($_POST['job_role'] ?? '')),
+        'dwms_job_id'            => trim((string) ($_POST['dwms_job_id'] ?? '')) ?: null,
         'vacancy_count'          => trim((string) ($_POST['vacancy_count'] ?? '')) === '' ? null : (int) $_POST['vacancy_count'],
-        'expiry_date'            => trim((string) ($_POST['expiry_date'] ?? '')) ?: null,
+        'expiry_date'            => trim((string) ($_POST['expiry_date'] ?? '')) ?: null,   // UI label = "Date Valid From"
         'qualification'          => trim((string) ($_POST['qualification'] ?? '')) ?: null,
+        'qualification_category_id' => (int) ($_POST['qualification_category_id'] ?? 0) ?: null,
+        'job_description'        => trim((string) ($_POST['job_description'] ?? '')) ?: null,
+        'skills_required'        => trim((string) ($_POST['skills_required'] ?? '')) ?: null,
+        'gender'                 => in_array($_POST['gender'] ?? '', ['male','female','other','male_female'], true) ? $_POST['gender'] : null,
+        'salary_range_id'        => (int) ($_POST['salary_range_id'] ?? 0) ?: null,
         'experience_from_years'  => trim((string) ($_POST['experience_from_years'] ?? '')) === '' ? null : (float) $_POST['experience_from_years'],
         'experience_to_years'    => trim((string) ($_POST['experience_to_years'] ?? '')) === '' ? null : (float) $_POST['experience_to_years'],
-        'experience_valid_till'  => trim((string) ($_POST['experience_valid_till'] ?? '')) ?: null,
+        'experience_valid_till'  => trim((string) ($_POST['experience_valid_till'] ?? '')) ?: null,   // UI label = "Date Valid To"
         'preferred_candidates'   => in_array($_POST['preferred_candidates'] ?? '', ['fresher','experienced','either'], true) ? $_POST['preferred_candidates'] : 'either',
         'status'                 => in_array($_POST['status'] ?? '', ['active','closed'], true) ? $_POST['status'] : 'active',
         'mobilisation_commenced' => isset($_POST['mobilisation_commenced']) ? 1 : 0,
         'mobilisation_completed' => isset($_POST['mobilisation_completed']) ? 1 : 0,
         'applications_count'     => trim((string) ($_POST['applications_count'] ?? '')) === '' ? null : (int) $_POST['applications_count'],
     ];
+    // Multi-select locations — array of ids from the checkbox list.
+    $locationIds = array_values(array_filter(array_map('intval', (array) ($_POST['location_ids'] ?? []))));
     if ($data['job_role'] === '') $flashAndBack('Job role is required.', 'danger', $id, 'jobs');
 
     // Convert the mobilisation checkboxes into timestamps on first flip;
@@ -101,14 +113,18 @@ if (is_post() && ($_POST['action'] ?? '') === 'save_job') {
     try {
         if ($jobId > 0) {
             db()->prepare('UPDATE loi_job SET
-                    job_role = ?, vacancy_count = ?, expiry_date = ?, qualification = ?,
+                    job_role = ?, dwms_job_id = ?, vacancy_count = ?, expiry_date = ?, qualification = ?,
+                    qualification_category_id = ?, job_description = ?, skills_required = ?,
+                    gender = ?, salary_range_id = ?,
                     experience_from_years = ?, experience_to_years = ?, experience_valid_till = ?,
                     preferred_candidates = ?, status = ?,
                     mobilisation_commenced_at = ?, mobilisation_completed_at = ?,
                     applications_count = ?, updated_at = NOW(), updated_by = ?
                 WHERE id = ? AND employer_id = ?')
                 ->execute([
-                    $data['job_role'], $data['vacancy_count'], $data['expiry_date'], $data['qualification'],
+                    $data['job_role'], $data['dwms_job_id'], $data['vacancy_count'], $data['expiry_date'], $data['qualification'],
+                    $data['qualification_category_id'], $data['job_description'], $data['skills_required'],
+                    $data['gender'], $data['salary_range_id'],
                     $data['experience_from_years'], $data['experience_to_years'], $data['experience_valid_till'],
                     $data['preferred_candidates'], $data['status'],
                     $mobCommencedAt, $mobCompletedAt,
@@ -122,23 +138,30 @@ if (is_post() && ($_POST['action'] ?? '') === 'save_job') {
                         : ($data[$f] ?? null));
                 loi_job_history_write($jobId, $f, $oldVal, $newVal, $viewerId);
             }
+            // Locations — wholesale rewrite of the bridge.
+            db()->prepare('DELETE FROM loi_job_location WHERE job_id = ?')->execute([$jobId]);
+            $insLoc = db()->prepare('INSERT INTO loi_job_location (job_id, location_id) VALUES (?, ?)');
+            foreach ($locationIds as $lid) try { $insLoc->execute([$jobId, $lid]); } catch (Throwable $e) { /* dup */ }
             $flashAndBack('Job updated.', 'success', $id, 'jobs');
         } else {
             db()->prepare('INSERT INTO loi_job
-                (employer_id, job_role, vacancy_count, expiry_date, qualification,
+                (employer_id, job_role, dwms_job_id, vacancy_count, expiry_date, qualification,
+                 qualification_category_id, job_description, skills_required, gender, salary_range_id,
                  experience_from_years, experience_to_years, experience_valid_till,
                  preferred_candidates, status,
                  mobilisation_commenced_at, mobilisation_completed_at, applications_count,
                  is_active, created_at, updated_at, created_by, updated_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)')
                 ->execute([
-                    $id, $data['job_role'], $data['vacancy_count'], $data['expiry_date'], $data['qualification'],
+                    $id, $data['job_role'], $data['dwms_job_id'], $data['vacancy_count'], $data['expiry_date'], $data['qualification'],
+                    $data['qualification_category_id'], $data['job_description'], $data['skills_required'],
+                    $data['gender'], $data['salary_range_id'],
                     $data['experience_from_years'], $data['experience_to_years'], $data['experience_valid_till'],
                     $data['preferred_candidates'], $data['status'],
                     $mobCommencedAt, $mobCompletedAt, $data['applications_count'],
                     $viewerId, $viewerId,
                 ]);
-            $newId = db()->lastInsertId();
+            $newId = (int) db()->lastInsertId();
             // Audit — first-time create records "null -> value" rows so
             // the audit tab shows the initial state too.
             foreach ($jobFields as $f) {
@@ -146,8 +169,11 @@ if (is_post() && ($_POST['action'] ?? '') === 'save_job') {
                         : ($f === 'mobilisation_completed_at' ? $mobCompletedAt
                         : ($data[$f] ?? null));
                 if ($newVal === null || $newVal === '') continue;
-                loi_job_history_write((int) $newId, $f, null, $newVal, $viewerId);
+                loi_job_history_write($newId, $f, null, $newVal, $viewerId);
             }
+            // Locations bridge for the fresh job row.
+            $insLoc = db()->prepare('INSERT INTO loi_job_location (job_id, location_id) VALUES (?, ?)');
+            foreach ($locationIds as $lid) try { $insLoc->execute([$newId, $lid]); } catch (Throwable $e) { /* dup */ }
             $flashAndBack('Job added.', 'success', $id, 'jobs');
         }
     } catch (Throwable $e) {
@@ -170,7 +196,22 @@ try {
     $jobs = $st->fetchAll();
 } catch (Throwable $e) { /* empty */ }
 
-$sbuRows = loi_sbu_list(true);
+// Per-job location sets {job_id => [location_id, ...]} + name map for
+// displaying the chips in the Jobs table.
+$jobLocationIds = [];
+$locationName   = [];
+try {
+    foreach (db()->query('SELECT jl.job_id, jl.location_id, l.name
+        FROM loi_job_location jl INNER JOIN loi_location l ON l.id = jl.location_id')->fetchAll() as $row) {
+        $jobLocationIds[(int) $row['job_id']][] = (int) $row['location_id'];
+        $locationName[(int) $row['location_id']] = (string) $row['name'];
+    }
+} catch (Throwable $e) { /* table absent */ }
+
+$sbuRows            = loi_sbu_list(true);
+$qualCategoryRows   = loi_qualification_category_list(true);
+$locationRows       = loi_location_list(true);
+$salaryRangeRows    = loi_salary_range_list(true);
 $tab = (string) ($_GET['tab'] ?? 'overview');
 if (!in_array($tab, ['overview','jobs','interviews','candidates','requests','audit'], true)) $tab = 'overview';
 
@@ -214,6 +255,7 @@ render_page_header($emp['name'], [
                     <div class="col-12"><div class="small text-muted">Address of communication</div><div style="white-space:pre-wrap;"><?= esc((string) $emp['address_of_communication']) ?></div></div>
                 <?php endif; ?>
 
+                <div class="col-md-3"><div class="small text-muted">DWMS Employer ID</div><div class="font-monospace"><?= esc((string) ($emp['dwms_employer_id'] ?? '—')) ?></div></div>
                 <div class="col-md-3"><div class="small text-muted">Contact number</div><div><?= esc((string) ($emp['contact_number'] ?? '—')) ?></div></div>
                 <div class="col-md-3"><div class="small text-muted">Contact email</div><div><?= esc((string) ($emp['contact_email'] ?? '—')) ?></div></div>
                 <div class="col-md-6"><div class="small text-muted">HR manager / SPOC</div>
@@ -250,27 +292,46 @@ render_page_header($emp['name'], [
             <table class="table table-hover align-middle mb-0">
                 <thead><tr>
                     <th>Job role</th>
-                    <th>Vacancies</th>
+                    <th>DWMS Job ID</th>
+                    <th>Openings</th>
                     <th>Qualification</th>
                     <th>Experience</th>
                     <th>Preferred</th>
+                    <th>Gender</th>
+                    <th>Salary</th>
+                    <th>Locations</th>
                     <th>Mobilisation</th>
-                    <th>Expiry</th>
+                    <th>Valid From → To</th>
                     <th>Status</th>
                     <?php if ($canEdit): ?><th class="text-end">Action</th><?php endif; ?>
                 </tr></thead>
                 <tbody>
                     <?php if ($jobs === []): ?>
-                        <tr><td colspan="<?= $canEdit ? 9 : 8 ?>"><div class="empty-state"><i class="bi bi-inbox"></i>No jobs added yet.</div></td></tr>
+                        <tr><td colspan="<?= $canEdit ? 13 : 12 ?>"><div class="empty-state"><i class="bi bi-inbox"></i>No jobs added yet.</div></td></tr>
                     <?php endif; ?>
                     <?php foreach ($jobs as $j):
                         $active = ((int) $j['is_active']) === 1;
+                        $jLocIds = $jobLocationIds[(int) $j['id']] ?? [];
+                        $qcName = '';
+                        if (!empty($j['qualification_category_id'])) {
+                            foreach ($qualCategoryRows as $qc) if ((int) $qc['id'] === (int) $j['qualification_category_id']) { $qcName = (string) $qc['name']; break; }
+                        }
+                        $srName = '';
+                        if (!empty($j['salary_range_id'])) {
+                            foreach ($salaryRangeRows as $sr) if ((int) $sr['id'] === (int) $j['salary_range_id']) { $srName = (string) $sr['name']; break; }
+                        }
                         $payload = htmlspecialchars(json_encode([
                             'id'                     => (int) $j['id'],
                             'job_role'               => (string) $j['job_role'],
+                            'dwms_job_id'            => (string) ($j['dwms_job_id'] ?? ''),
                             'vacancy_count'          => $j['vacancy_count'],
                             'expiry_date'            => (string) ($j['expiry_date'] ?? ''),
                             'qualification'          => (string) ($j['qualification'] ?? ''),
+                            'qualification_category_id' => (int) ($j['qualification_category_id'] ?? 0),
+                            'job_description'        => (string) ($j['job_description'] ?? ''),
+                            'skills_required'        => (string) ($j['skills_required'] ?? ''),
+                            'gender'                 => (string) ($j['gender'] ?? ''),
+                            'salary_range_id'        => (int) ($j['salary_range_id'] ?? 0),
                             'experience_from_years'  => $j['experience_from_years'],
                             'experience_to_years'    => $j['experience_to_years'],
                             'experience_valid_till'  => (string) ($j['experience_valid_till'] ?? ''),
@@ -279,21 +340,35 @@ render_page_header($emp['name'], [
                             'mobilisation_commenced' => !empty($j['mobilisation_commenced_at']) ? 1 : 0,
                             'mobilisation_completed' => !empty($j['mobilisation_completed_at']) ? 1 : 0,
                             'applications_count'     => $j['applications_count'],
+                            'location_ids'           => $jLocIds,
                         ], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES);
                     ?>
                         <tr class="<?= $active ? '' : 'text-muted' ?>">
                             <td class="fw-semibold"><?= esc((string) $j['job_role']) ?></td>
+                            <td class="small font-monospace"><?= esc((string) ($j['dwms_job_id'] ?? '—')) ?></td>
                             <td class="small"><?= $j['vacancy_count'] === null ? '—' : (int) $j['vacancy_count'] ?></td>
-                            <td class="small"><?= esc((string) ($j['qualification'] ?? '—')) ?></td>
+                            <td class="small">
+                                <?= esc((string) ($j['qualification'] ?? '—')) ?>
+                                <?php if ($qcName !== ''): ?><div class="text-muted small">[<?= esc($qcName) ?>]</div><?php endif; ?>
+                            </td>
                             <td class="small">
                                 <?php
                                     $ef = $j['experience_from_years']; $et = $j['experience_to_years'];
                                     if ($ef === null && $et === null) echo '—';
                                     else echo esc(($ef ?? '0') . '–' . ($et ?? '—') . ' yrs');
-                                    if (!empty($j['experience_valid_till'])) echo '<div class="text-muted">till ' . esc($fmtDate($j['experience_valid_till'])) . '</div>';
                                 ?>
                             </td>
                             <td class="small"><?= esc(loi_pref_label((string) $j['preferred_candidates'])) ?></td>
+                            <td class="small"><?= esc(loi_gender_label($j['gender'] ?? null)) ?></td>
+                            <td class="small"><?= $srName === '' ? '<span class="text-muted">—</span>' : esc($srName) ?></td>
+                            <td class="small">
+                                <?php if ($jLocIds === []): ?><span class="text-muted">—</span><?php else:
+                                    foreach ($jLocIds as $lid):
+                                        $nm = $locationName[$lid] ?? ''; if ($nm === '') continue; ?>
+                                        <span class="badge bg-light text-dark border me-1 mb-1"><?= esc($nm) ?></span>
+                                    <?php endforeach;
+                                endif; ?>
+                            </td>
                             <td class="small">
                                 <?php
                                     $comm = !empty($j['mobilisation_commenced_at']);
@@ -303,7 +378,12 @@ render_page_header($emp['name'], [
                                     else                echo '<span class="badge text-bg-light border">Not started</span>';
                                 ?>
                             </td>
-                            <td class="small"><?= esc($fmtDate($j['expiry_date'] ?? '')) ?></td>
+                            <td class="small">
+                                <?= esc($fmtDate($j['expiry_date'] ?? '')) ?>
+                                <?php if (!empty($j['experience_valid_till'])): ?>
+                                    <div class="text-muted">→ <?= esc($fmtDate($j['experience_valid_till'])) ?></div>
+                                <?php endif; ?>
+                            </td>
                             <td class="small"><span class="badge text-bg-<?= esc(loi_job_status_tone((string) $j['status'])) ?>"><?= esc(ucfirst((string) $j['status'])) ?></span></td>
                             <?php if ($canEdit): ?>
                                 <td class="text-end">
@@ -339,16 +419,62 @@ render_page_header($emp['name'], [
                     </div>
                     <div class="modal-body">
                         <div class="row g-3">
-                            <div class="col-md-6"><label class="form-label">Job role <span class="text-danger">*</span></label><input class="form-control" id="jModalRole" name="job_role" required maxlength="200"></div>
-                            <div class="col-md-2"><label class="form-label">Vacancy count</label><input type="number" min="0" class="form-control" id="jModalVac" name="vacancy_count"></div>
-                            <div class="col-md-2"><label class="form-label">Expiry date</label><input type="date" class="form-control" id="jModalExp" name="expiry_date"></div>
+                            <div class="col-md-5"><label class="form-label">Job role <span class="text-danger">*</span></label><input class="form-control" id="jModalRole" name="job_role" required maxlength="200"></div>
+                            <div class="col-md-3"><label class="form-label">DWMS Job ID <span class="small text-muted">(optional)</span></label><input class="form-control" id="jModalDwmsId" name="dwms_job_id" maxlength="80" placeholder="e.g. JOB-01234"></div>
+                            <div class="col-md-2"><label class="form-label">Openings</label><input type="number" min="0" class="form-control" id="jModalVac" name="vacancy_count"></div>
                             <div class="col-md-2"><label class="form-label">Applications</label><input type="number" min="0" class="form-control" id="jModalApps" name="applications_count"></div>
 
-                            <div class="col-md-6"><label class="form-label">Candidate qualification</label><input class="form-control" id="jModalQual" name="qualification" maxlength="300"></div>
+                            <div class="col-md-5"><label class="form-label">Candidate qualification</label><input class="form-control" id="jModalQual" name="qualification" maxlength="300" placeholder="Free-text qualification note"></div>
+                            <div class="col-md-3"><label class="form-label">Qualification category</label>
+                                <select class="form-select" id="jModalQCat" name="qualification_category_id">
+                                    <option value="0">— select —</option>
+                                    <?php foreach ($qualCategoryRows as $qc): ?>
+                                        <option value="<?= (int) $qc['id'] ?>"><?= esc((string) $qc['name']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
                             <div class="col-md-2"><label class="form-label">Experience from (yrs)</label><input type="number" step="0.5" min="0" class="form-control" id="jModalEFrom" name="experience_from_years"></div>
                             <div class="col-md-2"><label class="form-label">Experience to (yrs)</label><input type="number" step="0.5" min="0" class="form-control" id="jModalETo" name="experience_to_years"></div>
-                            <div class="col-md-2"><label class="form-label">Band valid till</label><input type="date" class="form-control" id="jModalETill" name="experience_valid_till"></div>
 
+                            <div class="col-md-12"><label class="form-label">Job description</label><textarea class="form-control" id="jModalDesc" name="job_description" rows="3" placeholder="Full description of the role, duties and responsibilities."></textarea></div>
+
+                            <div class="col-md-6"><label class="form-label">Skills required</label><textarea class="form-control" id="jModalSkills" name="skills_required" rows="2" placeholder="Comma-separated skills, e.g. Java, SQL, Communication"></textarea></div>
+                            <div class="col-md-3"><label class="form-label">Gender</label>
+                                <select class="form-select" id="jModalGender" name="gender">
+                                    <option value="">— any —</option>
+                                    <option value="male">Male</option>
+                                    <option value="female">Female</option>
+                                    <option value="other">Other</option>
+                                    <option value="male_female">Male / Female</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3"><label class="form-label">Salary range</label>
+                                <select class="form-select" id="jModalSalary" name="salary_range_id">
+                                    <option value="0">— select —</option>
+                                    <?php foreach ($salaryRangeRows as $sr): ?>
+                                        <option value="<?= (int) $sr['id'] ?>"><?= esc((string) $sr['name']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="col-md-12">
+                                <label class="form-label">Location <span class="small text-muted">(tick as many as apply)</span></label>
+                                <div class="border rounded p-2" style="max-height: 180px; overflow-y: auto;">
+                                    <div class="row g-1">
+                                        <?php foreach ($locationRows as $lr): ?>
+                                            <div class="col-md-3 col-sm-4 col-6">
+                                                <div class="form-check">
+                                                    <input class="form-check-input js-loc-cb" type="checkbox" name="location_ids[]" value="<?= (int) $lr['id'] ?>" id="jModalLoc<?= (int) $lr['id'] ?>">
+                                                    <label class="form-check-label small" for="jModalLoc<?= (int) $lr['id'] ?>"><?= esc((string) $lr['name']) ?></label>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-3"><label class="form-label">Date Valid From</label><input type="date" class="form-control" id="jModalExp" name="expiry_date"></div>
+                            <div class="col-md-3"><label class="form-label">Date Valid To</label><input type="date" class="form-control" id="jModalETill" name="experience_valid_till"></div>
                             <div class="col-md-3"><label class="form-label">Preferred candidates</label>
                                 <select class="form-select" id="jModalPref" name="preferred_candidates">
                                     <option value="either">Either</option>
@@ -362,11 +488,12 @@ render_page_header($emp['name'], [
                                     <option value="closed">Closed</option>
                                 </select>
                             </div>
-                            <div class="col-md-3"><div class="form-check mt-md-4">
+
+                            <div class="col-md-6"><div class="form-check">
                                 <input class="form-check-input" type="checkbox" id="jModalMobComm" name="mobilisation_commenced" value="1">
                                 <label class="form-check-label" for="jModalMobComm">Mobilisation commenced</label>
                             </div></div>
-                            <div class="col-md-3"><div class="form-check mt-md-4">
+                            <div class="col-md-6"><div class="form-check">
                                 <input class="form-check-input" type="checkbox" id="jModalMobDone" name="mobilisation_completed" value="1">
                                 <label class="form-check-label" for="jModalMobDone">Mobilisation completed</label>
                             </div></div>
@@ -386,28 +513,44 @@ render_page_header($emp['name'], [
         const modalEl = document.getElementById('jobModal');
         const setV = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
         const setC = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+        const resetLocationChecks = (ids) => {
+            const set = new Set((ids || []).map(Number));
+            document.querySelectorAll('.js-loc-cb').forEach(cb => { cb.checked = set.has(Number(cb.value)); });
+        };
         modalEl?.addEventListener('show.bs.modal', (ev) => {
             const t = ev.relatedTarget; if (!t) return;
             const title = document.getElementById('jModalTitle');
             if (t.classList.contains('js-new-job')) {
                 title.innerHTML = '<i class="bi bi-plus-lg me-1"></i>New job';
-                ['jModalId','jModalRole','jModalVac','jModalExp','jModalApps','jModalQual','jModalEFrom','jModalETo','jModalETill'].forEach(k => setV(k, k === 'jModalId' ? '0' : ''));
+                ['jModalId','jModalRole','jModalDwmsId','jModalVac','jModalExp','jModalApps',
+                 'jModalQual','jModalDesc','jModalSkills','jModalEFrom','jModalETo','jModalETill']
+                    .forEach(k => setV(k, k === 'jModalId' ? '0' : ''));
                 setV('jModalPref', 'either'); setV('jModalStatus', 'active');
+                setV('jModalQCat', '0'); setV('jModalSalary', '0'); setV('jModalGender', '');
                 setC('jModalMobComm', false); setC('jModalMobDone', false);
+                resetLocationChecks([]);
             } else if (t.classList.contains('js-edit-job')) {
                 let d = {}; try { d = JSON.parse(t.getAttribute('data-payload') || '{}'); } catch (e) {}
                 title.innerHTML = '<i class="bi bi-pencil-square me-1"></i>Edit job';
                 setV('jModalId', String(d.id || 0));
                 setV('jModalRole', d.job_role);
-                setV('jModalVac', d.vacancy_count); setV('jModalExp', (d.expiry_date || '').substring(0, 10));
+                setV('jModalDwmsId', d.dwms_job_id);
+                setV('jModalVac', d.vacancy_count);
+                setV('jModalExp', (d.expiry_date || '').substring(0, 10));
                 setV('jModalApps', d.applications_count);
                 setV('jModalQual', d.qualification);
+                setV('jModalQCat', String(d.qualification_category_id || 0));
+                setV('jModalDesc', d.job_description);
+                setV('jModalSkills', d.skills_required);
+                setV('jModalGender', d.gender || '');
+                setV('jModalSalary', String(d.salary_range_id || 0));
                 setV('jModalEFrom', d.experience_from_years); setV('jModalETo', d.experience_to_years);
                 setV('jModalETill', (d.experience_valid_till || '').substring(0, 10));
                 setV('jModalPref', d.preferred_candidates || 'either');
                 setV('jModalStatus', d.status || 'active');
                 setC('jModalMobComm', d.mobilisation_commenced === 1);
                 setC('jModalMobDone', d.mobilisation_completed === 1);
+                resetLocationChecks(d.location_ids || []);
             }
         });
     })();

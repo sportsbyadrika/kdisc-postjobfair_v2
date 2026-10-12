@@ -152,8 +152,7 @@ function dashboard_all_menus(): array
         ['code' => 'meetings',           'label' => 'Meetings',             'description' => 'All meetings, New meeting, Contacts master, MoM report settings.'],
         ['code' => 'demand_side',        'label' => 'Demand Side',          'description' => 'Employers, assignments, uploads, stats, settings.'],
         ['code' => 'pmu_assets',         'label' => 'PMU Assets',           'description' => 'District profiles + asset registers + district masters.'],
-        ['code' => 'loi_jobs',           'label' => 'LOI & Jobs',           'description' => 'Employers, job roles, interviews, mobilisation & reports.'],
-        ['code' => 'platform_requests',  'label' => 'Platform Requests',    'description' => 'Platform-support request inbox + chat threads per employer.'],
+        ['code' => 'loi_jobs',           'label' => 'LOI & Jobs',           'description' => 'Employers, job roles, interviews, mobilisation, platform-support request inbox + reports (Platform Requests lives under this menu).'],
     ];
 }
 
