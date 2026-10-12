@@ -604,7 +604,7 @@ render_page_header($pageTitle, [
                         ];
                     ?>
                         <option value="<?= (int) $p['id'] ?>" <?= (int) $formValues['previous_meeting_id'] === (int) $p['id'] ? 'selected' : '' ?>>
-                            <?= esc((string) $p['reference_no']) ?> · <?= esc((string) $p['title']) ?>
+                            <?= esc((string) $p['reference_no']) ?> · <?= esc((string) $p['title']) ?><?= !empty($p['meeting_date']) ? ' · ' . esc(date('d/m/Y', strtotime((string) $p['meeting_date']))) : '' ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
