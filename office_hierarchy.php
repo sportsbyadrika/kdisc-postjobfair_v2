@@ -71,6 +71,12 @@ if (is_post() && $action === 'save') {
     } elseif ($name === '') {
         $flashMessage = 'Name is required.';
         $flashType = 'danger';
+    } elseif ($editId === 0 && $levelType === 'seat' && $parentId > 0
+              && office_hierarchy_seat_depth($parentId) >= OFFICE_HIERARCHY_MAX_SEAT_DEPTH) {
+        // Server-side enforcement of the seat nesting cap. Mirrors the
+        // UI check — belt + braces for a direct POST.
+        $flashMessage = 'Seat nesting is limited to ' . OFFICE_HIERARCHY_MAX_SEAT_DEPTH . ' levels. Can\'t add another seat under this one.';
+        $flashType = 'danger';
     } else {
         try {
             // If the Task Tracker migration hasn't yet added the
@@ -284,6 +290,12 @@ $children   = $node ? office_hierarchy_get_children((int) $node['id']) : $rootNo
 // array and the UI renders one button per entry.
 $parentLevelForNew = $node ? (string) $node['level_type'] : null;
 $newLevels = office_hierarchy_allowed_children($parentLevelForNew);
+// Seat-under-seat has a depth cap. Strip "seat" out of the allowed
+// child set when the chain already reaches the max.
+if ($parentLevelForNew === 'seat' && $node !== null
+    && office_hierarchy_seat_depth((int) $node['id']) >= OFFICE_HIERARCHY_MAX_SEAT_DEPTH) {
+    $newLevels = array_values(array_filter($newLevels, static fn($l) => $l !== 'seat'));
+}
 $newLevel  = $newLevels[0] ?? null; // primary/default level, kept for empty-state copy
 
 /* -------------------------------------------------------------------- *

@@ -87,6 +87,13 @@ function office_hierarchy_child_level(?string $parentLevel): ?string
  * they should appear as buttons on the UI. Section allows both seats
  * (the historical default) and an optional intermediate Sub Section.
  */
+/**
+ * Hard cap on seat-under-seat nesting. A seat whose chain of seat
+ * ancestors already reaches this depth cannot parent further seats —
+ * both the UI and the save handler enforce it.
+ */
+const OFFICE_HIERARCHY_MAX_SEAT_DEPTH = 5;
+
 function office_hierarchy_allowed_children(?string $parentLevel): array
 {
     return match ($parentLevel) {
@@ -95,8 +102,37 @@ function office_hierarchy_allowed_children(?string $parentLevel): array
         'division'    => ['section'],
         'section'     => ['seat', 'sub_section'],
         'sub_section' => ['seat'],
+        'seat'        => ['seat'], // nested seats, capped by seat-depth check
         default       => [],
     };
+}
+
+/**
+ * Depth of this seat inside its chain of seat ancestors. 1 = seat
+ * whose parent is NOT a seat (sub_section / section). 2 = seat whose
+ * parent is a seat whose grandparent is NOT a seat. Up to the cap.
+ * Returns 0 for non-seat nodes or when the lookup fails.
+ */
+function office_hierarchy_seat_depth(int $nodeId): int
+{
+    if ($nodeId <= 0) return 0;
+    try {
+        $cur = $nodeId;
+        $depth = 0;
+        // Walk up for a bounded number of hops so a malformed cycle
+        // can't spin forever.
+        for ($i = 0; $i < 32; $i++) {
+            $st = db()->prepare('SELECT parent_id, level_type FROM office_hierarchy_nodes WHERE id = ?');
+            $st->execute([$cur]);
+            $row = $st->fetch();
+            if ($row === false) return $depth;
+            if ((string) $row['level_type'] !== 'seat') return $depth;
+            $depth++;
+            $cur = (int) ($row['parent_id'] ?? 0);
+            if ($cur <= 0) return $depth;
+        }
+        return $depth;
+    } catch (Throwable $e) { return 0; }
 }
 
 /** Human-readable label for a level. */
