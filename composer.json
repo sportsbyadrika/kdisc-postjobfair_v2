@@ -1,0 +1,15 @@
+{
+    "name": "sportsbyadrika/kdisc-postjobfair-vendor",
+    "description": "Vendor tree for the KDISC MIS app. Dompdf is the sole runtime dependency; it is installed once with composer here and the resulting vendor/ directory is committed, so the hosting server never needs composer or any build step.",
+    "type": "project",
+    "require": {
+        "dompdf/dompdf": "^3.1"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true,
+        "platform": {
+            "php": "8.0"
+        }
+    }
+}

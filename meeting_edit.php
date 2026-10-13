@@ -334,6 +334,12 @@ if (is_post() && ($_POST['action'] ?? '') === 'copy_meeting') {
     $copyParticipants = isset($_POST['copy_participants']);
     $copyAgenda       = isset($_POST['copy_agenda']);
     $copyDecisions    = isset($_POST['copy_decisions']);
+    // If this is ticked, the source meeting's next-meeting agenda rows
+    // are inserted into the NEW meeting's main Agenda list (appended
+    // after any items pulled from "Copy agenda items", so a chair can
+    // tick both: carry forward the current agenda AND promote what
+    // was planned for next time).
+    $copyNextAsAgenda = isset($_POST['copy_next_as_agenda']);
 
     $db = db();
     $db->query('START TRANSACTION');
@@ -389,15 +395,21 @@ if (is_post() && ($_POST['action'] ?? '') === 'copy_meeting') {
             }
         }
 
-        if ($copyAgenda) {
-            $insA = $db->prepare('INSERT INTO meeting_agenda
+        // Agenda is written by two optional sources: the source
+        // meeting's existing agenda, then its next-meeting agenda
+        // promoted into the main list. $agendaOrder stays shared
+        // across both so the sort_order is sequential.
+        $agendaOrder = 0;
+        if ($copyAgenda || $copyNextAsAgenda) {
+            $insA  = $db->prepare('INSERT INTO meeting_agenda
                 (meeting_id, sort_order, title, description, lead_user_id, lead_seat_id, lead_contact_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?)');
             $insAL = $db->prepare('INSERT INTO meeting_agenda_lead (agenda_id, user_id, seat_id, contact_id) VALUES (?, ?, ?, ?)');
-            $order = 0;
+        }
+        if ($copyAgenda) {
             foreach ($existingAgenda as $a) {
                 $insA->execute([
-                    $newId, ++$order,
+                    $newId, ++$agendaOrder,
                     (string) $a['title'],
                     trim((string) ($a['description'] ?? '')) ?: null,
                     ((int) ($a['lead_user_id']    ?? 0)) ?: null,
@@ -414,6 +426,24 @@ if (is_post() && ($_POST['action'] ?? '') === 'copy_meeting') {
                     ]);
                 }
             }
+        }
+        if ($copyNextAsAgenda) {
+            // Pull the source meeting's next-meeting agenda rows (if
+            // any) and append them to the new meeting's main agenda.
+            // Leads aren't carried — next_agenda has no leads.
+            try {
+                $pt = $db->prepare('SELECT title, description FROM meeting_next_agenda
+                    WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC');
+                $pt->execute([(int) $existing['id']]);
+                foreach ($pt->fetchAll() as $n) {
+                    $insA->execute([
+                        $newId, ++$agendaOrder,
+                        (string) $n['title'],
+                        trim((string) ($n['description'] ?? '')) ?: null,
+                        null, null, null,
+                    ]);
+                }
+            } catch (Throwable $e) { /* next_agenda rows absent — skip */ }
         }
 
         if ($copyDecisions) {
@@ -665,13 +695,21 @@ render_page_header($pageTitle, [
             <?php endif; ?>
         </div>
         <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 meeting-sub-table" id="agendaTable">
+            <colgroup>
+                <col style="width:36px;">
+                <col style="width:18%;">
+                <col style="width:34%;">
+                <col style="width:16%;">
+                <col style="width:22%;">
+                <col style="width:92px;">
+            </colgroup>
             <thead><tr>
-                <th style="width:40px;">#</th>
-                <th style="width:22%;">Title</th>
-                <th style="width:30%;">Description</th>
-                <th style="width:18%;">Lead</th>
-                <th style="width:18%;">Remarks</th>
-                <th style="width:92px;" class="text-end">Action</th>
+                <th>#</th>
+                <th>Title</th>
+                <th>Description</th>
+                <th>Lead</th>
+                <th>Remarks</th>
+                <th class="text-end">Action</th>
             </tr></thead>
             <tbody></tbody>
         </table></div>
@@ -696,14 +734,23 @@ render_page_header($pageTitle, [
             <?php endif; ?>
         </div>
         <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 meeting-sub-table" id="decisionTable">
+            <colgroup>
+                <col style="width:36px;">
+                <col style="width:16%;">
+                <col style="width:26%;">
+                <col style="width:92px;">
+                <col style="width:20%;">
+                <col style="width:22%;">
+                <col style="width:92px;">
+            </colgroup>
             <thead><tr>
-                <th style="width:40px;">#</th>
-                <th style="width:18%;">Heading</th>
-                <th style="width:24%;">Description</th>
-                <th style="width:90px;">Due</th>
-                <th style="width:20%;">Responsible</th>
-                <th style="width:18%;">Remarks</th>
-                <th style="width:92px;" class="text-end">Action</th>
+                <th>#</th>
+                <th>Heading</th>
+                <th>Description</th>
+                <th>Due</th>
+                <th>Responsible</th>
+                <th>Remarks</th>
+                <th class="text-end">Action</th>
             </tr></thead>
             <tbody></tbody>
         </table></div>
@@ -739,12 +786,19 @@ render_page_header($pageTitle, [
             <?php endif; ?>
         </div>
         <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 meeting-sub-table" id="nextAgendaTable">
+            <colgroup>
+                <col style="width:36px;">
+                <col style="width:24%;">
+                <col style="width:46%;">
+                <col style="width:24%;">
+                <col style="width:92px;">
+            </colgroup>
             <thead><tr>
-                <th style="width:40px;">#</th>
-                <th style="width:28%;">Title</th>
-                <th style="width:42%;">Description</th>
-                <th style="width:22%;">Remarks</th>
-                <th style="width:92px;" class="text-end">Action</th>
+                <th>#</th>
+                <th>Title</th>
+                <th>Description</th>
+                <th>Remarks</th>
+                <th class="text-end">Action</th>
             </tr></thead>
             <tbody></tbody>
         </table></div>
@@ -866,23 +920,44 @@ window.__meetingRef = {
 </div>
 <style>
 .pm-check-list { height: 240px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 6px; padding: 6px 10px; }
-/* Fixed-width columns in the three sub-tables (agenda / decision /
- * next-meeting agenda). Description + Remarks use a 2-line clamp +
- * `title` tooltip so long text stays readable without pushing the
- * table out of shape. */
-.meeting-sub-table            { table-layout: fixed; width: 100%; }
+
+/* ---------- Participant / Agenda / Decision / Next-Agenda tables ----
+ * Fixed table layout keeps columns stable regardless of content length;
+ * long Description + Responsible + Remarks are clipped to a 3-line box
+ * with a mouse-over `title` so the full text is one hover away. Line
+ * height is pinned so clipped and un-clipped cells share the same row
+ * height — no more "one tall row + one short row" accordion. */
+.meeting-sub-table               { table-layout: fixed; width: 100%; }
+.meeting-sub-table thead th      { font-size: .78rem; letter-spacing: .02em; text-transform: uppercase; color: #475569; background: #f8fafc; }
 .meeting-sub-table th,
-.meeting-sub-table td         { overflow: hidden; vertical-align: top; }
-.meeting-sub-table .cell-clamp2 {
+.meeting-sub-table td            { overflow: hidden; vertical-align: top; padding: 8px 10px; }
+.meeting-sub-table td.text-end   { padding-right: 10px; }
+.meeting-sub-table td            { line-height: 1.35; font-size: .88rem; }
+
+/* 3-line clamp with ellipsis. One utility, used on Description /
+ * Responsible / Remarks. The explicit max-height is a fallback for
+ * browsers without -webkit-line-clamp — gives the same visual bound. */
+.meeting-sub-table .cell-clamp2,
+.meeting-sub-table .cell-clamp {
     display: -webkit-box;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
     word-break: break-word;
+    line-height: 1.35;
+    max-height: calc(1.35em * 3);
     cursor: help;
 }
-.meeting-sub-table .cell-wrap { word-break: break-word; white-space: normal; }
+.meeting-sub-table .cell-wrap    { word-break: break-word; white-space: normal; }
+.meeting-sub-table .remarks-cell { background: #fff8e1; }      /* soft amber */
+.meeting-sub-table .remarks-cell:empty { background: transparent; }
+.meeting-sub-table .cell-muted-empty::before { content: '—'; color: #cbd5e1; }
+.meeting-sub-table .action-col   { white-space: nowrap; }
+
+/* Bootstrap table-sm trims padding too aggressively for a 3-line
+ * clamp — restore a comfortable vertical rhythm. */
+.table-sm.meeting-sub-table > :not(caption) > * > * { padding: 8px 10px; }
 .pm-check-list .pm-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
 .pm-check-list .pm-row label { margin: 0; cursor: pointer; line-height: 1.3; }
 .pm-check-list .pm-row:hover { background: #f8fafc; }
@@ -1204,17 +1279,20 @@ window.__meetingRef = {
             ].filter(Boolean).map(esc).join(', ');
             const desc    = a.description || '';
             const remarks = a.remarks || '';
+            const descCell    = desc    === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(desc)}">${esc(desc)}</div>`;
+            const leadCell    = leads   === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(leads)}">${leads}</div>`;
+            const remarksCell = remarks === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(remarks)}">${esc(remarks)}</div>`;
             return `<tr>
-                <td>${i+1}</td>
-                <td class="fw-semibold cell-wrap" title="${esc(a.title || '')}">${esc(a.title)}</td>
-                <td class="small text-muted cell-clamp2" title="${esc(desc)}">${esc(desc)}</td>
-                <td class="small cell-wrap" title="${esc(leads)}">${leads}</td>
-                <td class="small text-warning-emphasis cell-clamp2" title="${esc(remarks)}">${esc(remarks)}</td>
-                <td class="text-end">
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-agenda="${i}"><i class="bi bi-pencil"></i></button>
-                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-agenda="${i}"><i class="bi bi-x"></i></button>
+                <td class="text-muted">${i+1}</td>
+                <td class="fw-semibold"><div class="cell-clamp" title="${esc(a.title || '')}">${esc(a.title)}</div></td>
+                <td class="text-muted">${descCell}</td>
+                <td>${leadCell}</td>
+                <td class="remarks-cell text-warning-emphasis">${remarksCell}</td>
+                <td class="action-col text-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-agenda="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-agenda="${i}"  title="Delete"><i class="bi bi-x"></i></button>
                 </td></tr>`;
-        }).join('') || '<tr><td colspan="6" class="text-center text-muted small py-2">No agenda items yet.</td></tr>';
+        }).join('') || '<tr><td colspan="6" class="text-center text-muted small py-3">No agenda items yet.</td></tr>';
         // Hidden inputs for the big Save-meeting fallback — keep the
         // legacy single-value fields so the server-side wholesale
         // rewrite still works, now derived from the first ticked
@@ -1246,18 +1324,22 @@ window.__meetingRef = {
             ].filter(Boolean).map(esc).join(', ');
             const desc    = d.description || '';
             const remarks = d.remarks || '';
+            const descCell    = desc    === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(desc)}">${esc(desc)}</div>`;
+            const respCell    = responsibles === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(responsibles)}">${responsibles}</div>`;
+            const remarksCell = remarks === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(remarks)}">${esc(remarks)}</div>`;
+            const dueCell     = (d.due_date || '') === '' ? '<span class="cell-muted-empty"></span>' : esc(d.due_date);
             return `<tr>
-                <td>${i+1}</td>
-                <td class="fw-semibold cell-wrap" title="${esc(d.heading || '')}">${esc(d.heading)}</td>
-                <td class="small text-muted cell-clamp2" title="${esc(desc)}">${esc(desc)}</td>
-                <td class="small">${esc(d.due_date || '')}</td>
-                <td class="small cell-clamp2" title="${esc(responsibles)}">${responsibles}</td>
-                <td class="small text-warning-emphasis cell-clamp2" title="${esc(remarks)}">${esc(remarks)}</td>
-                <td class="text-end">
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-decision="${i}"><i class="bi bi-pencil"></i></button>
-                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-decision="${i}"><i class="bi bi-x"></i></button>
+                <td class="text-muted">${i+1}</td>
+                <td class="fw-semibold"><div class="cell-clamp" title="${esc(d.heading || '')}">${esc(d.heading)}</div></td>
+                <td class="text-muted">${descCell}</td>
+                <td>${dueCell}</td>
+                <td>${respCell}</td>
+                <td class="remarks-cell text-warning-emphasis">${remarksCell}</td>
+                <td class="action-col text-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-decision="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-decision="${i}"  title="Delete"><i class="bi bi-x"></i></button>
                 </td></tr>`;
-        }).join('') || '<tr><td colspan="7" class="text-center text-muted small py-2">No decision points yet.</td></tr>';
+        }).join('') || '<tr><td colspan="7" class="text-center text-muted small py-3">No decision points yet.</td></tr>';
         const hidden = document.getElementById('decisionHidden');
         hidden.innerHTML = state.decisions.map((d, i) => {
             const users   = (d.user_ids    || []).map(id => `<input type="hidden" name="decision[${i}][user_ids][]"    value="${id}">`).join('');
@@ -1281,16 +1363,18 @@ window.__meetingRef = {
         tbody.innerHTML = state.next_agenda.map((n, i) => {
             const desc    = n.description || '';
             const remarks = n.remarks || '';
+            const descCell    = desc    === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(desc)}">${esc(desc)}</div>`;
+            const remarksCell = remarks === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(remarks)}">${esc(remarks)}</div>`;
             return `<tr>
-                <td>${i+1}</td>
-                <td class="fw-semibold cell-wrap" title="${esc(n.title || '')}">${esc(n.title)}</td>
-                <td class="small text-muted cell-clamp2" title="${esc(desc)}">${esc(desc)}</td>
-                <td class="small text-warning-emphasis cell-clamp2" title="${esc(remarks)}">${esc(remarks)}</td>
-                <td class="text-end">
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-next="${i}"><i class="bi bi-pencil"></i></button>
-                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-next="${i}"><i class="bi bi-x"></i></button>
+                <td class="text-muted">${i+1}</td>
+                <td class="fw-semibold"><div class="cell-clamp" title="${esc(n.title || '')}">${esc(n.title)}</div></td>
+                <td class="text-muted">${descCell}</td>
+                <td class="remarks-cell text-warning-emphasis">${remarksCell}</td>
+                <td class="action-col text-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-next="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-next="${i}"  title="Delete"><i class="bi bi-x"></i></button>
                 </td></tr>`;
-        }).join('') || '<tr><td colspan="5" class="text-center text-muted small py-2">No next-meeting agenda yet.</td></tr>';
+        }).join('') || '<tr><td colspan="5" class="text-center text-muted small py-3">No next-meeting agenda yet.</td></tr>';
         document.getElementById('nextAgendaHidden').innerHTML = state.next_agenda.map((n, i) =>
             `<input type="hidden" name="next_agenda[${i}][title]"       value="${esc(n.title || '')}">
              <input type="hidden" name="next_agenda[${i}][description]" value="${esc(n.description || '')}">
@@ -1799,11 +1883,15 @@ document.addEventListener('DOMContentLoaded', function () {
             <input class="form-check-input" type="checkbox" id="cmAgenda" name="copy_agenda" value="1" checked>
             <label class="form-check-label" for="cmAgenda"><strong>Agenda items</strong> <span class="small text-muted">(titles, descriptions, leads)</span></label>
           </div>
+          <div class="form-check ms-4">
+            <input class="form-check-input" type="checkbox" id="cmNextAsAgenda" name="copy_next_as_agenda" value="1">
+            <label class="form-check-label" for="cmNextAsAgenda"><strong>Promote next-meeting agenda</strong> <span class="small text-muted">(append the source's planned-for-next items as agenda items in the new meeting)</span></label>
+          </div>
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="cmDecisions" name="copy_decisions" value="1" checked>
             <label class="form-check-label" for="cmDecisions"><strong>Decision points</strong> <span class="small text-muted">(heading, description, due date, remarks, responsibility, team links)</span></label>
           </div>
-          <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Date / time, minutes text, next-meeting agenda, URL attachments and chairperson approval are <strong>not</strong> copied — they belong to the specific meeting and are set fresh on the new one.</div>
+          <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Date / time, minutes text, URL attachments and chairperson approval are <strong>not</strong> copied — they belong to the specific meeting and are set fresh on the new one. The source meeting's <em>next-meeting agenda</em> stays on the source; use the checkbox above to also promote it into the new meeting's main agenda.</div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
