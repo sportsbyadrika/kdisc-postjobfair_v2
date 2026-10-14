@@ -216,6 +216,27 @@ if ($action === 'delete_agenda') {
     echo json_encode(['ok' => true]); exit;
 }
 
+// Reorder agenda rows after a drag-and-drop. Payload: ids[] in the
+// desired display order. Each row's sort_order is set to its 1-based
+// position; rows not in the payload are left alone. All writes in one
+// transaction so partial-reorder failures don't half-renumber the list.
+if ($action === 'reorder_agenda') {
+    $ids = (array) ($_POST['ids'] ?? []);
+    $ids = array_values(array_filter(array_map('intval', $ids)));
+    if ($ids === []) { echo json_encode(['ok' => true, 'moved' => 0]); exit; }
+    db()->query('START TRANSACTION');
+    try {
+        $upd = db()->prepare('UPDATE meeting_agenda SET sort_order = ? WHERE id = ? AND meeting_id = ?');
+        $pos = 0;
+        foreach ($ids as $aid) $upd->execute([++$pos, $aid, $meetingId]);
+        db()->query('COMMIT');
+        echo json_encode(['ok' => true, 'moved' => count($ids)]); exit;
+    } catch (Throwable $e) {
+        try { db()->query('ROLLBACK'); } catch (Throwable $r) { /* ignore */ }
+        $sendError($e->getMessage(), 500);
+    }
+}
+
 /**
  * Thin wrapper around meetings_sync_decision_tasks() — keeps the
  * existing closure name in use further down this file so edits

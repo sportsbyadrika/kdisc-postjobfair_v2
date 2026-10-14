@@ -991,6 +991,15 @@ window.__meetingRef = {
 .meeting-list-item .meeting-sl        { min-width: 1.75rem; padding-top: 0.1rem; }
 .meeting-group-header                 { letter-spacing: .02em; }
 
+/* ---------- Drag-to-reorder (agenda rows) ---------- */
+.meeting-agenda-row                    { position: relative; }
+.agenda-drag-handle                    { cursor: grab; padding: 2px 2px 0 0; user-select: none; font-size: 1rem; opacity: 0; transition: opacity .15s; }
+.meeting-agenda-row:hover .agenda-drag-handle,
+.agenda-chosen .agenda-drag-handle     { opacity: .55; }
+.agenda-drag-handle:active             { cursor: grabbing; }
+.agenda-ghost                          { background: #eff6ff !important; opacity: .5; }
+.agenda-chosen                         { background: #f8fbff; }
+
 /* ---------- Inline edit (agenda row) ---------- */
 .meeting-list-edit                     { background: #f8fbff; padding-left: 10px !important; padding-right: 10px !important; border-radius: 4px; }
 .agenda-lead-pill                      { font-weight: 500; padding: 4px 8px; }
@@ -1371,7 +1380,8 @@ window.__meetingRef = {
         const descBlock    = (a.description || '').trim() === '' ? '' : `<div class="small text-muted mt-1" style="white-space:pre-wrap;">${esc(a.description)}</div>`;
         const remarksBlock = (a.remarks     || '').trim() === '' ? '' : `<div class="small text-warning-emphasis mt-1" style="white-space:pre-wrap;"><i class="bi bi-exclamation-triangle me-1"></i><em>Remarks:</em> ${esc(a.remarks)}</div>`;
         const leadsBlock   = leads.length === 0 ? '' : `<div class="small text-muted mt-1"><i class="bi bi-person-check me-1"></i>Lead: ${esc(leads.join(', '))}</div>`;
-        return `<div class="meeting-list-item d-flex align-items-start gap-2 py-2 border-bottom">
+        return `<div class="meeting-list-item meeting-agenda-row d-flex align-items-start gap-2 py-2 border-bottom" data-agenda-row-id="${a.id || 0}">
+            <div class="agenda-drag-handle text-muted" title="Drag to reorder"><i class="bi bi-grip-vertical"></i></div>
             <div class="meeting-sl text-muted small">${i+1}.</div>
             <div class="flex-grow-1">
                 <strong>${esc(a.title || '')}</strong>
@@ -1422,6 +1432,40 @@ window.__meetingRef = {
         </div>`;
     };
     const renderAgendaItem = (a, i) => (agendaEditIdx === i ? renderAgendaItemEdit(a, i) : renderAgendaItemView(a, i));
+    // SortableJS instance for the agenda list. Re-created on every
+    // render because innerHTML wipes the DOM nodes it was bound to.
+    let agendaSortable = null;
+    const initAgendaSortable = () => {
+        if (typeof Sortable === 'undefined') return;
+        const list = document.getElementById('agendaList');
+        if (!list) return;
+        if (agendaSortable) { try { agendaSortable.destroy(); } catch (e) {} agendaSortable = null; }
+        agendaSortable = new Sortable(list, {
+            handle: '.agenda-drag-handle',
+            animation: 150,
+            filter: '.meeting-list-edit',          // don't let an in-edit row be dragged
+            preventOnFilter: false,
+            ghostClass: 'agenda-ghost',
+            chosenClass: 'agenda-chosen',
+            onEnd: async (evt) => {
+                if (evt.oldIndex === evt.newIndex) return;
+                // Reorder the state array to mirror the DOM.
+                const moved = state.agenda.splice(evt.oldIndex, 1)[0];
+                state.agenda.splice(evt.newIndex, 0, moved);
+                renderAgenda();
+                // Persist the new sort_order server-side so the change
+                // survives a page reload without clicking the big Save.
+                const ids = state.agenda.map(a => a.id || 0).filter(Boolean);
+                if (ids.length > 0 && meetingId > 0) {
+                    try {
+                        setStatus('Reordering…', 'info');
+                        const j = await ajax({ action: 'reorder_agenda', meeting_id: meetingId, ids });
+                        setStatus(j.ok ? 'Saved' : 'Reorder failed', j.ok ? 'success' : 'danger');
+                    } catch (e) { setStatus('Reorder failed', 'danger'); }
+                }
+            },
+        });
+    };
     const renderAgenda = () => {
         const list = document.getElementById('agendaList');
         list.innerHTML = state.agenda.map(renderAgendaItem).join('') || '<div class="text-muted small">No agenda items yet.</div>';
@@ -1430,6 +1474,7 @@ window.__meetingRef = {
             const row = list.querySelector(`[data-agenda-edit-row="${agendaEditIdx}"]`);
             row?.querySelector('.js-agenda-title')?.focus();
         }
+        initAgendaSortable();
         const hidden = document.getElementById('agendaHidden');
         hidden.innerHTML = state.agenda.map((a, i) => {
             const u = (a.user_ids    || [])[0] || 0;
@@ -2159,6 +2204,7 @@ window.__meetingRef = {
      auto-save flow keeps working against the same field names. -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tom-select/2.3.1/css/tom-select.bootstrap5.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tom-select/2.3.1/js/tom-select.complete.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     if (typeof TomSelect === 'undefined') return;
