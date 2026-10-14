@@ -305,7 +305,31 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                         <i class="bi bi-lock me-1"></i>Decision points are hidden until the chairperson approves this meeting.
                     </div>
                 <?php elseif ($decisions === []): ?><span class="text-muted">— none —</span><?php else: ?>
-                <?php foreach ($decisions as $d): ?>
+                <?php
+                    // Group decisions by their mapped agenda item so the
+                    // reader sees "Decision under Agenda #1" rather than
+                    // a flat list. Agendas are rendered in sort order;
+                    // "Other" captures unmapped decisions at the bottom.
+                    $agendaOrder = [];
+                    foreach ($agenda as $ai => $a) $agendaOrder[(int) $a['id']] = ['pos' => $ai + 1, 'title' => (string) $a['title'], 'items' => []];
+                    $agendaOrder[0] = ['pos' => null, 'title' => 'Other', 'items' => []];
+                    foreach ($decisions as $d) {
+                        $aid = (int) ($d['agenda_id'] ?? 0);
+                        $key = isset($agendaOrder[$aid]) ? $aid : 0;
+                        $agendaOrder[$key]['items'][] = $d;
+                    }
+                ?>
+                <?php foreach ($agendaOrder as $groupKey => $group): if ($group['items'] === []) continue; ?>
+                    <div class="meeting-decision-group mb-3">
+                        <div class="small text-muted text-uppercase fw-semibold mb-2" style="letter-spacing:.03em;">
+                            <i class="bi bi-folder2 me-1"></i>
+                            <?php if ($group['pos'] !== null): ?>
+                                Agenda #<?= (int) $group['pos'] ?> — <?= esc($group['title']) ?>
+                            <?php else: ?>
+                                Other
+                            <?php endif; ?>
+                        </div>
+                <?php foreach ($group['items'] as $d): ?>
                     <div class="border-bottom pb-2 mb-2">
                         <strong><?= esc((string) $d['heading']) ?></strong>
                         <?php if (!empty($d['description'])): ?><div class="small" style="white-space:pre-wrap;"><?= esc((string) $d['description']) ?></div><?php endif; ?>
@@ -355,6 +379,8 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                         <?php elseif ($isPrivate && (int) ($d['create_own_tasks'] ?? 1) === 1): ?>
                             <div class="small mt-2 text-muted"><i class="bi bi-lock-fill me-1"></i>Task status is private — only the owner can see it.</div>
                         <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
                     </div>
                 <?php endforeach; ?>
                 <?php endif; ?>
