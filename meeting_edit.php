@@ -943,6 +943,17 @@ window.__meetingRef = {
 .meeting-list-item:last-child         { border-bottom: 0 !important; }
 .meeting-list-item .meeting-sl        { min-width: 1.75rem; padding-top: 0.1rem; }
 .meeting-group-header                 { letter-spacing: .02em; }
+
+/* ---------- Inline edit (agenda row) ---------- */
+.meeting-list-edit                     { background: #f8fbff; padding-left: 10px !important; padding-right: 10px !important; border-radius: 4px; }
+.agenda-lead-pill                      { font-weight: 500; padding: 4px 8px; }
+.agenda-lead-pill .btn-close           { opacity: .55; }
+.agenda-lead-pill .btn-close:hover     { opacity: 1; }
+.agenda-leads-dropdown                 { position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 1050; max-height: 240px; overflow-y: auto; border-radius: 4px; }
+.agenda-leads-section-label            { background: #f1f5f9; font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; }
+.agenda-leads-option                   { padding: 6px 10px; cursor: pointer; font-size: .88rem; }
+.agenda-leads-option:hover             { background: #eff6ff; }
+.agenda-leads-empty                    { font-style: italic; }
 </style>
 
 <!-- Agenda modal — three checkbox lists for leads (multi-select). -->
@@ -1293,7 +1304,12 @@ window.__meetingRef = {
                     <input type="hidden" name="participant[${i}][role_label]"   value="${esc(p.role_label || '')}">`;
         }).join('');
     };
-    const renderAgendaItem = (a, i) => {
+    // Rendered agenda item has two modes: a static display row (default)
+    // and an inline edit row (triggered by the pencil icon). Only one
+    // row at a time is in edit mode; agendaEditIdx holds its index so
+    // the next render reinstates the edit shell after any state churn.
+    let agendaEditIdx = null;
+    const renderAgendaItemView = (a, i) => {
         const leads = [
             ...((a.user_ids    || []).map(id => nameOf(R.users,       id))),
             ...((a.seat_ids    || []).map(id => nameOf(R.seats,       id))),
@@ -1311,14 +1327,56 @@ window.__meetingRef = {
                 ${remarksBlock}
             </div>
             <div class="d-flex flex-shrink-0 gap-1">
-                <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1" data-edit-agenda="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
+                <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1" data-edit-agenda-inline="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
                 <button type="button" class="btn btn-sm btn-outline-danger  py-0 px-1" data-del-agenda="${i}"  title="Delete"><i class="bi bi-x"></i></button>
             </div>
         </div>`;
     };
+    // Inline edit template — a pencil click swaps the view row for this
+    // one. Title / description / remarks become textareas; leads is a
+    // pill multi-select driven by a search dropdown. Save calls the
+    // same upsert_agenda endpoint the modal does; cancel just re-renders.
+    const renderAgendaItemEdit = (a, i) => {
+        const pills = [
+            ...((a.user_ids    || []).filter(Boolean).map(id => ({ type: 'u', id, name: nameOf(R.users, id) }))),
+            ...((a.contact_ids || []).filter(Boolean).map(id => ({ type: 'c', id, name: nameOf(contactsPool, id) }))),
+            ...((a.seat_ids    || []).filter(Boolean).map(id => ({ type: 's', id, name: nameOf(R.seats, id) }))),
+        ].filter(p => p.name);
+        const pillHtml = pills.map(p =>
+            `<span class="agenda-lead-pill badge text-bg-light border d-inline-flex align-items-center gap-1" data-lead-ref="${p.type}${p.id}">
+                ${esc(p.name)}
+                <button type="button" class="btn-close btn-close-sm js-remove-lead" aria-label="Remove" style="font-size:0.55rem;"></button>
+            </span>`
+        ).join('');
+        return `<div class="meeting-list-item meeting-list-edit d-flex align-items-start gap-2 py-2 border-bottom" data-agenda-edit-row="${i}">
+            <div class="meeting-sl text-muted small">${i+1}.</div>
+            <div class="flex-grow-1">
+                <input class="form-control form-control-sm mb-2 js-agenda-title" placeholder="Title *" value="${esc(a.title || '')}">
+                <textarea class="form-control form-control-sm mb-2 js-agenda-desc" rows="2" placeholder="Description">${esc(a.description || '')}</textarea>
+                <div class="agenda-leads-widget mb-2" data-leads-widget>
+                    <div class="d-flex flex-wrap gap-1 mb-1 js-leads-pills">${pillHtml}</div>
+                    <div class="position-relative">
+                        <input type="text" class="form-control form-control-sm js-leads-input" placeholder="Add lead — search participants or users…" autocomplete="off">
+                        <div class="agenda-leads-dropdown shadow-sm border bg-white js-leads-dropdown" style="display:none;"></div>
+                    </div>
+                </div>
+                <textarea class="form-control form-control-sm js-agenda-remarks" rows="1" placeholder="Remarks (optional)">${esc(a.remarks || '')}</textarea>
+            </div>
+            <div class="d-flex flex-shrink-0 gap-1">
+                <button type="button" class="btn btn-sm btn-primary py-0 px-2" data-save-agenda-inline="${i}" title="Save"><i class="bi bi-check2"></i></button>
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" data-cancel-agenda-inline="${i}" title="Cancel"><i class="bi bi-x"></i></button>
+            </div>
+        </div>`;
+    };
+    const renderAgendaItem = (a, i) => (agendaEditIdx === i ? renderAgendaItemEdit(a, i) : renderAgendaItemView(a, i));
     const renderAgenda = () => {
         const list = document.getElementById('agendaList');
         list.innerHTML = state.agenda.map(renderAgendaItem).join('') || '<div class="text-muted small">No agenda items yet.</div>';
+        // Focus the title input when a row has just entered edit mode.
+        if (agendaEditIdx !== null) {
+            const row = list.querySelector(`[data-agenda-edit-row="${agendaEditIdx}"]`);
+            row?.querySelector('.js-agenda-title')?.focus();
+        }
         const hidden = document.getElementById('agendaHidden');
         hidden.innerHTML = state.agenda.map((a, i) => {
             const u = (a.user_ids    || [])[0] || 0;
@@ -1333,6 +1391,122 @@ window.__meetingRef = {
                     <input type="hidden" name="agenda[${i}][lead_contact_id]" value="${c}">`;
         }).join('');
     };
+
+    // ---------- Inline-edit helpers (leads pill multi-select) ----------
+    // Build the dropdown HTML for the leads widget. Pool = participants
+    // first, then other internal users, then other external users.
+    // Already-picked leads (by ref 'u<id>'/'c<id>') are filtered out
+    // along with any search-text non-match.
+    const buildLeadDropdown = (needleRaw, excludeRefs) => {
+        const needle = (needleRaw || '').trim().toLowerCase();
+        const match = (n) => !needle || String(n || '').toLowerCase().includes(needle);
+        const partsU = new Set(), partsC = new Set();
+        state.participants.forEach(p => {
+            if (p.user_id > 0)    partsU.add(p.user_id);
+            if (p.contact_id > 0) partsC.add(p.contact_id);
+        });
+        const section = (label, items) => items.length === 0 ? '' :
+            `<div class="agenda-leads-section-label small text-muted px-2 py-1">${label}</div>` +
+            items.map(x => `<div class="agenda-leads-option js-pick-lead" data-lead-type="${x.type}" data-lead-id="${x.id}">${esc(x.name)}${x.inst ? ` <span class="text-muted small">· ${esc(x.inst)}</span>` : ''}</div>`).join('');
+        const participantOpts = [];
+        state.participants.forEach(p => {
+            if (p.user_id > 0) {
+                const u = findById(R.users, p.user_id);
+                if (u && !excludeRefs.has('u' + u.id) && match(u.name)) participantOpts.push({ type: 'u', id: u.id, name: u.name, inst: '' });
+            }
+            if (p.contact_id > 0) {
+                const c = findById(contactsPool, p.contact_id);
+                if (c && !excludeRefs.has('c' + c.id) && match(c.name + ' ' + (c.inst || ''))) participantOpts.push({ type: 'c', id: c.id, name: c.name, inst: c.inst || '' });
+            }
+        });
+        const otherUserOpts = R.users
+            .filter(u => !partsU.has(u.id) && !excludeRefs.has('u' + u.id) && match(u.name))
+            .map(u => ({ type: 'u', id: u.id, name: u.name, inst: '' }));
+        const otherContactOpts = contactsPool
+            .filter(c => !partsC.has(c.id) && !excludeRefs.has('c' + c.id) && match(c.name + ' ' + (c.inst || '')))
+            .map(c => ({ type: 'c', id: c.id, name: c.name, inst: c.inst || '' }));
+        const html = section('Participants',          sortByName(participantOpts).slice(0, 20))
+                   + section('Other internal users',  sortByName(otherUserOpts).slice(0, 20))
+                   + section('Other external users',  sortByName(otherContactOpts).slice(0, 20));
+        return html || '<div class="agenda-leads-empty small text-muted px-2 py-2">No matches.</div>';
+    };
+    const refreshLeadDropdown = (widget) => {
+        const input = widget.querySelector('.js-leads-input');
+        const dd    = widget.querySelector('.js-leads-dropdown');
+        const picked = new Set(Array.from(widget.querySelectorAll('.agenda-lead-pill')).map(el => el.dataset.leadRef));
+        dd.innerHTML = buildLeadDropdown(input.value, picked);
+        dd.style.display = 'block';
+    };
+    const pickLeadInWidget = (optionEl) => {
+        const widget = optionEl.closest('[data-leads-widget]');
+        if (!widget) return;
+        const type = optionEl.dataset.leadType; const id = Number(optionEl.dataset.leadId);
+        const name = optionEl.firstChild?.textContent?.trim() || optionEl.textContent.trim();
+        const pillsBox = widget.querySelector('.js-leads-pills');
+        if (pillsBox.querySelector(`[data-lead-ref="${type}${id}"]`)) return;
+        pillsBox.insertAdjacentHTML('beforeend',
+            `<span class="agenda-lead-pill badge text-bg-light border d-inline-flex align-items-center gap-1" data-lead-ref="${type}${id}">
+                ${esc(name)}
+                <button type="button" class="btn-close btn-close-sm js-remove-lead" aria-label="Remove" style="font-size:0.55rem;"></button>
+            </span>`);
+        const input = widget.querySelector('.js-leads-input');
+        input.value = ''; refreshLeadDropdown(widget); input.focus();
+    };
+    // Search box events + outside-click close.
+    document.addEventListener('input', (ev) => {
+        if (!ev.target.classList.contains('js-leads-input')) return;
+        const widget = ev.target.closest('[data-leads-widget]');
+        if (widget) refreshLeadDropdown(widget);
+    });
+    document.addEventListener('focusin', (ev) => {
+        if (!ev.target.classList.contains('js-leads-input')) return;
+        const widget = ev.target.closest('[data-leads-widget]');
+        if (widget) refreshLeadDropdown(widget);
+    });
+    document.addEventListener('click', (ev) => {
+        if (ev.target.closest('[data-leads-widget]')) return;
+        document.querySelectorAll('.js-leads-dropdown').forEach(dd => dd.style.display = 'none');
+    });
+    // Enter inside an inline-edit input would otherwise submit the big
+    // form. Catch it and route to Save; Escape cancels.
+    document.addEventListener('keydown', (ev) => {
+        const inEditRow = ev.target.closest('[data-agenda-edit-row]');
+        if (!inEditRow) return;
+        if (ev.key === 'Enter' && ev.target.classList.contains('js-agenda-title')) {
+            ev.preventDefault();
+            saveAgendaInline(+inEditRow.dataset.agendaEditRow);
+        } else if (ev.key === 'Escape') {
+            ev.preventDefault();
+            agendaEditIdx = null;
+            renderAgenda();
+        }
+    });
+    const saveAgendaInline = async (i) => {
+        const row = document.querySelector(`[data-agenda-edit-row="${i}"]`);
+        if (!row) return;
+        const title = row.querySelector('.js-agenda-title').value.trim();
+        if (title === '') { alert('Title required.'); return; }
+        const desc    = row.querySelector('.js-agenda-desc').value.trim();
+        const remarks = row.querySelector('.js-agenda-remarks').value.trim();
+        const userIds = [], contactIds = [], seatIds = [];
+        row.querySelectorAll('.agenda-lead-pill').forEach(pill => {
+            const ref = pill.dataset.leadRef || '';
+            const t = ref[0]; const id = Number(ref.slice(1));
+            if (!id) return;
+            if (t === 'u') userIds.push(id);
+            else if (t === 'c') contactIds.push(id);
+            else if (t === 's') seatIds.push(id);
+        });
+        const existing = state.agenda[i];
+        const payload = {
+            id: existing?.id || 0,
+            title, description: desc, remarks,
+            user_ids: userIds, contact_ids: contactIds, seat_ids: seatIds,
+        };
+        agendaEditIdx = null; // leave edit mode; upsertRow renders at the end
+        await upsertRow('upsert_agenda', payload, 'agenda', String(i));
+    };
+
     const renderDecisionCard = (d, origIdx) => {
         const responsibles = [
             ...(d.user_ids || []).map(id => nameOf(R.users, id)),
@@ -1498,8 +1672,19 @@ window.__meetingRef = {
         }
         const eP = ev.target.closest('[data-edit-participant]'); if (eP) return openParticipant(+eP.dataset.editParticipant);
         const dP = ev.target.closest('[data-del-participant]');  if (dP) { if (!confirmDelete('participant')) return; const i = +dP.dataset.delParticipant; return deleteRow('delete_participant', state.participants[i]?.id || 0, 'participants', i); }
-        const eA = ev.target.closest('[data-edit-agenda]'); if (eA) return openAgenda(+eA.dataset.editAgenda);
-        const dA = ev.target.closest('[data-del-agenda]');  if (dA) { if (!confirmDelete('agenda item')) return; const i = +dA.dataset.delAgenda; return deleteRow('delete_agenda', state.agenda[i]?.id || 0, 'agenda', i); }
+        const eAi = ev.target.closest('[data-edit-agenda-inline]'); if (eAi) { agendaEditIdx = +eAi.dataset.editAgendaInline; renderAgenda(); return; }
+        const eA  = ev.target.closest('[data-edit-agenda]');        if (eA)  return openAgenda(+eA.dataset.editAgenda);
+        const dA  = ev.target.closest('[data-del-agenda]');         if (dA)  { if (!confirmDelete('agenda item')) return; const i = +dA.dataset.delAgenda; if (agendaEditIdx === i) agendaEditIdx = null; return deleteRow('delete_agenda', state.agenda[i]?.id || 0, 'agenda', i); }
+        const cAi = ev.target.closest('[data-cancel-agenda-inline]'); if (cAi) { agendaEditIdx = null; renderAgenda(); return; }
+        const sAi = ev.target.closest('[data-save-agenda-inline]');   if (sAi) return saveAgendaInline(+sAi.dataset.saveAgendaInline);
+        const rLead = ev.target.closest('.js-remove-lead');           if (rLead) {
+            const pill = rLead.closest('.agenda-lead-pill');
+            const widget = pill?.closest('[data-leads-widget]');
+            pill?.remove();
+            if (widget && widget.querySelector('.js-leads-dropdown')?.style.display === 'block') refreshLeadDropdown(widget);
+            return;
+        }
+        const pLead = ev.target.closest('.js-pick-lead');             if (pLead) { pickLeadInWidget(pLead); return; }
         const eD = ev.target.closest('[data-edit-decision]'); if (eD) return openDecision(+eD.dataset.editDecision);
         const dD = ev.target.closest('[data-del-decision]');  if (dD) { if (!confirmDelete('decision point')) return; const i = +dD.dataset.delDecision; return deleteRow('delete_decision', state.decisions[i]?.id || 0, 'decisions', i); }
         const eN = ev.target.closest('[data-edit-next]'); if (eN) return openNext(+eN.dataset.editNext);
