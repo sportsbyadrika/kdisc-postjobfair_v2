@@ -31,6 +31,65 @@ function user_initials(string $name): string
     return strtoupper(mb_substr($parts[0], 0, 1) . mb_substr($parts[count($parts) - 1], 0, 1));
 }
 
+/**
+ * Return photo_path for a user, cached per request. Lets any render
+ * site that only has a user_id (and didn't JOIN the users table)
+ * still show the photo without touching the surrounding query.
+ */
+function user_photo_lookup(int $userId): ?string
+{
+    static $cache = [];
+    if ($userId <= 0) return null;
+    if (array_key_exists($userId, $cache)) return $cache[$userId];
+    try {
+        $st = db()->prepare('SELECT photo_path FROM users WHERE id = ?');
+        $st->execute([$userId]);
+        $p = (string) ($st->fetchColumn() ?: '');
+        return $cache[$userId] = ($p === '' ? null : $p);
+    } catch (Throwable $e) {
+        return $cache[$userId] = null;
+    }
+}
+
+/**
+ * Render a user avatar — the uploaded passport photo if we have one,
+ * otherwise the familiar initials circle. Accepts whatever the caller
+ * has at hand:
+ *   - full row: ['id', 'name', 'photo_path', 'avatar_colour', 'mobile_number'?]
+ *   - minimal: ['id', 'name']  (photo_path is looked up by id)
+ *   - initials-only row with no id: tone falls back to primary
+ * $size is edge length in CSS px.
+ */
+function user_avatar_html(array $user, int $size = 32, array $opts = []): string
+{
+    $name = (string) ($user['name'] ?? ($user['user_name'] ?? ($user['officer_name'] ?? '')));
+    $uid  = (int) ($user['id'] ?? $user['user_id'] ?? $user['officer_id'] ?? 0);
+    $photo = (string) ($user['photo_path'] ?? '');
+    if ($photo === '' && $uid > 0) {
+        $looked = user_photo_lookup($uid);
+        if ($looked !== null) $photo = $looked;
+    }
+    $title = $opts['title'] ?? $name;
+    $extra = isset($opts['class']) ? ' ' . (string) $opts['class'] : '';
+    if ($photo !== '') {
+        return '<span class="user-avatar user-avatar-photo border rounded-circle overflow-hidden d-inline-block align-middle' . htmlspecialchars($extra, ENT_QUOTES, 'UTF-8') . '" '
+             . 'style="width:' . $size . 'px; height:' . $size . 'px;" title="' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '">'
+             . '<img src="/' . htmlspecialchars($photo, ENT_QUOTES, 'UTF-8') . '" alt="' . htmlspecialchars(user_initials($name), ENT_QUOTES, 'UTF-8') . '" '
+             . 'style="width:100%; height:100%; object-fit:cover;"></span>';
+    }
+    // Fallback to the deterministic colour-coded initials circle.
+    $tone = (string) ($user['avatar_colour'] ?? '');
+    if ($tone === '' && function_exists('task_tracker_default_avatar_colour')) {
+        $tone = task_tracker_default_avatar_colour((string) ($user['mobile_number'] ?? $name));
+    }
+    if ($tone === '') $tone = 'primary';
+    $fontSize = max(10, (int) round($size * 0.42));
+    return '<span class="user-avatar user-avatar-initials badge rounded-circle text-bg-' . htmlspecialchars($tone, ENT_QUOTES, 'UTF-8') . ' align-middle' . htmlspecialchars($extra, ENT_QUOTES, 'UTF-8') . '" '
+         . 'style="width:' . $size . 'px; height:' . $size . 'px; display:inline-flex; align-items:center; justify-content:center; font-weight:600; font-size:' . $fontSize . 'px;" '
+         . 'title="' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '">'
+         . htmlspecialchars(user_initials($name), ENT_QUOTES, 'UTF-8') . '</span>';
+}
+
 function render_header(string $title, array $options = []): void
 {
     $showNavigation = $options['show_navigation'] ?? true;
@@ -349,7 +408,7 @@ function render_header(string $title, array $options = []): void
                     </ul>
                     <div class="dropdown">
                         <button class="app-user-btn dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                            <span class="app-avatar"><?= esc(user_initials($user['name'])) ?></span>
+                            <?= user_avatar_html($user, 36, ['class' => 'app-avatar']) ?>
                             <span class="app-user-meta d-none d-sm-flex">
                                 <span class="name"><?= esc($user['name']) ?></span>
                                 <span class="role"><?= esc(role_label($user['role'])) ?></span>

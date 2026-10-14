@@ -252,23 +252,9 @@ try {
         ORDER BY name ASC")->fetchAll();
 } catch (Throwable $e) {}
 
-/* ---------- Helper: render a user avatar as photo-or-initials ---------- */
-$renderUserAvatar = static function (array $u, int $size = 36): string {
-    $name = (string) ($u['name'] ?? '');
-    $parts = preg_split('/\s+/', trim($name)) ?: [];
-    $initials = strtoupper(mb_substr((string) ($parts[0] ?? 'U'), 0, 1) . (count($parts) > 1 ? mb_substr((string) end($parts), 0, 1) : ''));
-    $photo = (string) ($u['photo_path'] ?? '');
-    if ($photo !== '') {
-        return '<span class="d-inline-block border rounded-circle overflow-hidden" style="width:' . $size . 'px; height:' . $size . 'px;">'
-             . '<img src="/' . esc($photo) . '" alt="' . esc($initials) . '" style="width:100%; height:100%; object-fit:cover;">'
-             . '</span>';
-    }
-    $tone = (string) ($u['avatar_colour'] ?? '');
-    if ($tone === '') $tone = function_exists('task_tracker_default_avatar_colour')
-        ? task_tracker_default_avatar_colour((string) ($u['mobile_number'] ?? $name)) : 'primary';
-    return '<span class="badge rounded-circle text-bg-' . esc($tone) . '" style="width:' . $size . 'px; height:' . $size . 'px; display:inline-flex; align-items:center; justify-content:center; font-weight:600;">'
-         . esc($initials) . '</span>';
-};
+// Shared avatar renderer lives in includes/layout.php (user_avatar_html).
+// Alias keeps this file's call sites short.
+$renderUserAvatar = static fn(array $u, int $size = 36): string => user_avatar_html($u, $size);
 
 render_header('Users');
 render_page_header('User Management', [

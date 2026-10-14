@@ -67,6 +67,14 @@ $tasksStmt = db()->prepare("SELECT
             LEFT JOIN office_hierarchy_officer_history h ON h.node_id = n.id AND h.unassigned_at IS NULL
             LEFT JOIN users u ON u.id = h.officer_id
             WHERE ta.task_id = t.id AND ta.role = 'primary' LIMIT 1) AS primary_officer_colour,
+        (SELECT u.photo_path FROM task_assignment ta INNER JOIN office_hierarchy_nodes n ON n.id = ta.seat_id
+            LEFT JOIN office_hierarchy_officer_history h ON h.node_id = n.id AND h.unassigned_at IS NULL
+            LEFT JOIN users u ON u.id = h.officer_id
+            WHERE ta.task_id = t.id AND ta.role = 'primary' LIMIT 1) AS primary_officer_photo,
+        (SELECT u.id FROM task_assignment ta INNER JOIN office_hierarchy_nodes n ON n.id = ta.seat_id
+            LEFT JOIN office_hierarchy_officer_history h ON h.node_id = n.id AND h.unassigned_at IS NULL
+            LEFT JOIN users u ON u.id = h.officer_id
+            WHERE ta.task_id = t.id AND ta.role = 'primary' LIMIT 1) AS primary_officer_id,
         (SELECT COUNT(*) FROM task_assignment ta WHERE ta.task_id = t.id AND ta.role = 'secondary') AS secondary_count,
         (SELECT COUNT(*) FROM task sub WHERE sub.parent_id = t.id AND sub.is_active = 1) AS subtask_count,
         pt.title AS parent_title, pt.task_number AS parent_task_number
@@ -195,6 +203,12 @@ render_page_header('Project · ' . $project['name'], [
                             $officer = (string) ($t['primary_officer_name'] ?? '');
                             $officerColour = (string) ($t['primary_officer_colour'] ?? 'secondary');
                             if ($officerColour === 'neutral') $officerColour = 'secondary';
+                            $officerAvatar = [
+                                'id' => (int) ($t['primary_officer_id'] ?? 0),
+                                'name' => $officer,
+                                'photo_path' => (string) ($t['primary_officer_photo'] ?? ''),
+                                'avatar_colour' => $officerColour,
+                            ];
                         ?>
                             <div class="tt-card" data-task-id="<?= (int) $t['id'] ?>" data-status-id="<?= $sid ?>" data-open-url="/task_tracker_task_view.php?id=<?= (int) $t['id'] ?>" title="Open task">
                                 <div class="d-flex justify-content-between align-items-start gap-2">
@@ -222,9 +236,7 @@ render_page_header('Project · ' . $project['name'], [
                                         ?>
                                     </div>
                                     <?php if ($officer !== ''): ?>
-                                        <span class="tt-avatar text-bg-<?= esc($officerColour) ?>" title="<?= esc($officer) ?>">
-                                            <?= esc($initials($officer)) ?>
-                                        </span>
+                                        <?= user_avatar_html($officerAvatar, 28) ?>
                                     <?php elseif (!empty($t['primary_seat_name'])): ?>
                                         <span class="tt-avatar text-bg-light border" title="Seat: <?= esc((string) $t['primary_seat_name']) ?>">
                                             <i class="bi bi-person-workspace"></i>

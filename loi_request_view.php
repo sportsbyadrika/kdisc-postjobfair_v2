@@ -95,7 +95,7 @@ if ($req === false) { header('Location: /platform_requests.php'); exit; }
 
 $msgs = [];
 try {
-    $mst = db()->prepare('SELECT m.*, u.name AS author_name, u.avatar_colour
+    $mst = db()->prepare('SELECT m.*, u.name AS author_name, u.avatar_colour, u.photo_path, u.mobile_number
         FROM loi_request_message m
         LEFT JOIN users u ON u.id = m.author_id
         WHERE m.request_id = ?
@@ -190,9 +190,14 @@ render_page_header('Platform Request · ' . ($req['employer_name'] ?? ''), [
                     $isSystem = ((string) $m['kind']) === 'system';
                     $isMine   = ((int) ($m['author_id'] ?? 0)) === $viewerId;
                     $authorName = (string) ($m['author_name'] ?? 'System');
-                    $av = (string) ($m['avatar_colour'] ?? '');
-                    if ($av === '') $av = 'primary';
                     $when = esc(date('d/m/Y H:i', strtotime((string) $m['created_at'])));
+                    $avatarRow = [
+                        'id' => (int) ($m['author_id'] ?? 0),
+                        'name' => $authorName,
+                        'photo_path' => (string) ($m['photo_path'] ?? ''),
+                        'avatar_colour' => (string) ($m['avatar_colour'] ?? ''),
+                        'mobile_number' => (string) ($m['mobile_number'] ?? ''),
+                    ];
                 ?>
                     <?php if ($isSystem): ?>
                         <div class="chat-system text-center text-muted small my-3">
@@ -202,7 +207,7 @@ render_page_header('Platform Request · ' . ($req['employer_name'] ?? ''), [
                     <?php else: ?>
                         <div class="chat-row <?= $isMine ? 'chat-row-mine' : '' ?>">
                             <?php if (!$isMine): ?>
-                                <span class="chat-avatar text-bg-<?= esc($av) ?>"><?= esc($initials($authorName)) ?></span>
+                                <?= user_avatar_html($avatarRow, 32, ['class' => 'chat-avatar']) ?>
                             <?php endif; ?>
                             <div class="chat-bubble <?= $isMine ? 'chat-bubble-mine' : '' ?>">
                                 <?php if (!$isMine): ?>
@@ -212,7 +217,7 @@ render_page_header('Platform Request · ' . ($req['employer_name'] ?? ''), [
                                 <div class="chat-meta small text-muted"><?= $when ?></div>
                             </div>
                             <?php if ($isMine): ?>
-                                <span class="chat-avatar text-bg-<?= esc($av) ?>"><?= esc($initials($authorName)) ?></span>
+                                <?= user_avatar_html($avatarRow, 32, ['class' => 'chat-avatar']) ?>
                             <?php endif; ?>
                         </div>
                     <?php endif; ?>

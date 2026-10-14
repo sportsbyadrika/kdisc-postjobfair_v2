@@ -91,10 +91,10 @@ $hasUserAssignCol = task_tracker_column_exists('task_assignment', 'user_id');
 $astmt = db()->prepare("SELECT ta.role, ta.seat_id,
         " . ($hasUserAssignCol ? 'ta.user_id AS direct_user_id,' : '0 AS direct_user_id,') . "
         n.name AS seat_name, n.seat_number, n.parent_id AS immediate_parent_id,
-        u.id AS officer_id, u.name AS officer_name, u.avatar_colour,
+        u.id AS officer_id, u.name AS officer_name, u.avatar_colour, u.photo_path,
         " . ($hasUserAssignCol
-            ? 'ud.name AS direct_user_name, ud.avatar_colour AS direct_user_avatar'
-            : 'NULL AS direct_user_name, NULL AS direct_user_avatar') . "
+            ? 'ud.name AS direct_user_name, ud.avatar_colour AS direct_user_avatar, ud.photo_path AS direct_user_photo'
+            : 'NULL AS direct_user_name, NULL AS direct_user_avatar, NULL AS direct_user_photo') . "
     FROM task_assignment ta
     LEFT JOIN office_hierarchy_nodes n ON n.id = ta.seat_id AND ta.seat_id > 0
     LEFT JOIN office_hierarchy_officer_history h ON h.node_id = n.id AND h.unassigned_at IS NULL
@@ -113,6 +113,7 @@ foreach ($assignments as $i => $a) {
         $assignments[$i]['officer_id']     = $duid;
         $assignments[$i]['officer_name']   = (string) ($a['direct_user_name'] ?? '');
         $assignments[$i]['avatar_colour']  = (string) ($a['direct_user_avatar'] ?? '');
+        $assignments[$i]['photo_path']     = (string) ($a['direct_user_photo'] ?? '');
         $assignments[$i]['seat_name']      = $assignments[$i]['seat_name'] ?: '(no seat — direct assignment)';
     }
 }
@@ -256,7 +257,7 @@ $files = db()->prepare('SELECT f.*, u.name AS uploaded_by_name
 $files->execute([$taskId]);
 $fileRows = $files->fetchAll();
 
-$remarks = db()->prepare('SELECT r.*, u.name AS by_name, u.avatar_colour
+$remarks = db()->prepare('SELECT r.*, u.name AS by_name, u.avatar_colour, u.photo_path, u.mobile_number
     FROM task_remark r LEFT JOIN users u ON u.id = r.created_by
     WHERE r.task_id = ? ORDER BY r.created_at ASC, r.id ASC');
 $remarks->execute([$taskId]);
@@ -495,14 +496,17 @@ render_page_header($key . ' · ' . $task['title'], [
                 <?php if ($primary === null): ?>
                     <div class="text-muted small">No primary seat assigned.</div>
                 <?php else:
-                    $col = (string) ($primary['avatar_colour'] ?? 'secondary');
-                    if ($col === 'neutral') $col = 'secondary';
                     $offName = (string) ($primary['officer_name'] ?? '');
+                    $avRow = ['id' => (int) ($primary['officer_id'] ?? 0), 'name' => $offName,
+                              'photo_path' => (string) ($primary['photo_path'] ?? ''),
+                              'avatar_colour' => (string) ($primary['avatar_colour'] ?? '')];
                 ?>
                     <div class="d-flex align-items-center gap-3">
-                        <span class="tt-avatar-lg text-bg-<?= esc($col) ?>">
-                            <?= $offName !== '' ? esc($initials($offName)) : '<i class="bi bi-person-workspace"></i>' ?>
-                        </span>
+                        <?php if ($offName !== ''): ?>
+                            <?= user_avatar_html($avRow, 48) ?>
+                        <?php else: ?>
+                            <span class="tt-avatar-lg text-bg-secondary"><i class="bi bi-person-workspace"></i></span>
+                        <?php endif; ?>
                         <div>
                             <div class="fw-semibold"><?= esc($offName !== '' ? $offName : ($primary['seat_name'] ?? '—')) ?></div>
                             <div class="small text-muted">Seat: <?= esc((string) ($primary['seat_name'] ?? '—')) ?></div>
@@ -523,14 +527,17 @@ render_page_header($key . ' · ' . $task['title'], [
                 <div class="card-body">
                     <ul class="list-unstyled mb-0">
                         <?php foreach ($secondaries as $s):
-                            $col = (string) ($s['avatar_colour'] ?? 'secondary');
-                            if ($col === 'neutral') $col = 'secondary';
                             $offName = (string) ($s['officer_name'] ?? '');
+                            $avRow = ['id' => (int) ($s['officer_id'] ?? 0), 'name' => $offName,
+                                      'photo_path' => (string) ($s['photo_path'] ?? ''),
+                                      'avatar_colour' => (string) ($s['avatar_colour'] ?? '')];
                         ?>
                             <li class="d-flex align-items-center gap-2 mb-2">
-                                <span class="tt-avatar text-bg-<?= esc($col) ?>">
-                                    <?= $offName !== '' ? esc($initials($offName)) : '<i class="bi bi-person-workspace"></i>' ?>
-                                </span>
+                                <?php if ($offName !== ''): ?>
+                                    <?= user_avatar_html($avRow, 32) ?>
+                                <?php else: ?>
+                                    <span class="tt-avatar text-bg-secondary"><i class="bi bi-person-workspace"></i></span>
+                                <?php endif; ?>
                                 <div>
                                     <div><?= esc($offName !== '' ? $offName : ($s['seat_name'] ?? '—')) ?></div>
                                     <div class="small text-muted"><?= esc((string) ($s['seat_name'] ?? '—')) ?></div>
@@ -571,12 +578,14 @@ render_page_header($key . ' · ' . $task['title'], [
                 <?php else: ?>
                     <ul class="list-unstyled">
                         <?php foreach ($remarkRows as $r):
-                            $col = (string) ($r['avatar_colour'] ?? 'secondary');
-                            if ($col === 'neutral') $col = 'secondary';
                             $by = (string) ($r['by_name'] ?? '—');
+                            $avRow = ['id' => (int) ($r['created_by'] ?? 0), 'name' => $by,
+                                      'photo_path' => (string) ($r['photo_path'] ?? ''),
+                                      'avatar_colour' => (string) ($r['avatar_colour'] ?? ''),
+                                      'mobile_number' => (string) ($r['mobile_number'] ?? '')];
                         ?>
                             <li class="d-flex gap-2 mb-3">
-                                <span class="tt-avatar text-bg-<?= esc($col) ?>"><?= esc($initials($by)) ?></span>
+                                <?= user_avatar_html($avRow, 32) ?>
                                 <div class="flex-grow-1">
                                     <div class="d-flex justify-content-between">
                                         <strong><?= esc($by) ?></strong>
@@ -622,12 +631,14 @@ render_page_header($key . ' · ' . $task['title'], [
                             $row = $entry['row'];
                             $when = $entry['when'];
                             if ($entry['kind'] === 'comment') {
-                                $col = (string) ($row['avatar_colour'] ?? 'secondary');
-                                if ($col === 'neutral') $col = 'secondary';
                                 $by = (string) ($row['by_name'] ?? '—');
+                                $avRow = ['id' => (int) ($row['created_by'] ?? 0), 'name' => $by,
+                                          'photo_path' => (string) ($row['photo_path'] ?? ''),
+                                          'avatar_colour' => (string) ($row['avatar_colour'] ?? ''),
+                                          'mobile_number' => (string) ($row['mobile_number'] ?? '')];
                         ?>
                             <li class="d-flex gap-2 mb-3">
-                                <span class="tt-avatar text-bg-<?= esc($col) ?>"><?= esc($initials($by)) ?></span>
+                                <?= user_avatar_html($avRow, 32) ?>
                                 <div>
                                     <div><strong><?= esc($by) ?></strong> <span class="small text-muted">commented · <?= esc($fmtDT($when)) ?></span></div>
                                     <div style="white-space:pre-wrap;"><?= esc((string) $row['remark']) ?></div>
