@@ -225,6 +225,15 @@ function meetings_bootstrap(): void
             if (!isset($cols['remarks'])) {
                 $db->query('ALTER TABLE meeting_next_agenda ADD COLUMN remarks TEXT NULL AFTER description');
             }
+            // Mirror link back to a meeting_decision row. When set, this
+            // next-agenda row is the "Add to next-meeting agenda" shadow
+            // of that decision, and the decision save handler keeps it
+            // in sync (title ← heading, description ← remarks, remarks
+            // ← resolved responsible names). Deleting the decision
+            // cascades to this row.
+            if (!isset($cols['linked_decision_id'])) {
+                $db->query('ALTER TABLE meeting_next_agenda ADD COLUMN linked_decision_id INT NULL AFTER meeting_id');
+            }
         } catch (Throwable $e) { /* ALTER refused */ }
 
         // Chairperson approval. A completed meeting is still a draft
@@ -273,6 +282,48 @@ function meetings_column_exists(string $table, string $column): bool
         }
     } catch (Throwable $e) { /* table missing */ }
     return $cache[$key] = false;
+}
+
+/**
+ * Resolve the names of responsible people / seats / teams for the
+ * decision's "Add to next-meeting agenda" shadow row. The resulting
+ * comma-separated string is stored in next_agenda.remarks so the next
+ * meeting's draft already lists who was expected to act.
+ */
+function meetings_resolve_responsible_names(array $userIds, array $seatIds, array $contactIds, array $teamIds): string
+{
+    $names = [];
+    $fetch = static function (string $sql, array $ids) use (&$names): void {
+        if ($ids === []) return;
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        try {
+            $st = db()->prepare(sprintf($sql, $ph));
+            $st->execute($ids);
+            foreach ($st->fetchAll() as $r) {
+                $n = trim((string) ($r['name'] ?? ''));
+                if ($n !== '') $names[] = $n;
+            }
+        } catch (Throwable $e) { /* table missing — skip */ }
+    };
+    $fetch('SELECT name FROM users WHERE id IN (%s)',                              array_values(array_filter(array_map('intval', $userIds))));
+    $fetch('SELECT name FROM contact WHERE id IN (%s)',                            array_values(array_filter(array_map('intval', $contactIds))));
+    $fetch('SELECT name FROM office_hierarchy_nodes WHERE id IN (%s)',             array_values(array_filter(array_map('intval', $seatIds))));
+    // Teams prefix so the reader can tell them apart.
+    if ($teamIds !== []) {
+        $ids = array_values(array_filter(array_map('intval', $teamIds)));
+        if ($ids !== []) {
+            $ph = implode(',', array_fill(0, count($ids), '?'));
+            try {
+                $st = db()->prepare("SELECT name FROM team WHERE id IN ($ph)");
+                $st->execute($ids);
+                foreach ($st->fetchAll() as $r) {
+                    $n = trim((string) ($r['name'] ?? ''));
+                    if ($n !== '') $names[] = 'Team: ' . $n;
+                }
+            } catch (Throwable $e) { /* ignore */ }
+        }
+    }
+    return implode(', ', $names);
 }
 
 function meetings_setting(string $key, string $default = ''): string

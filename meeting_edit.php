@@ -73,6 +73,7 @@ try {
 $existingParticipants = []; $existingAgenda = []; $existingDecisions = []; $existingNextAgenda = []; $existingUrls = [];
 $existingDecisionResp = []; // decision_id => [ [user_id?, contact_id?, seat_id?], ... ]
 $existingAgendaLeads  = []; // agenda_id => [ [user_id?, seat_id?, contact_id?], ... ]
+$decisionIdsWithNextMirror = []; // decision ids that already have a linked next-agenda row
 if ($existing !== null) {
     $mid = (int) $existing['id'];
     try {
@@ -92,6 +93,13 @@ if ($existing !== null) {
             $st = db()->prepare("SELECT * FROM meeting_decision_responsible WHERE decision_id IN ($ph)");
             $st->execute($ids);
             foreach ($st->fetchAll() as $r) $existingDecisionResp[(int) $r['decision_id']][] = $r;
+            // Which of these decisions already have an "Add to next-meeting"
+            // mirror row? Used to pre-tick the checkbox in the modal.
+            if (meetings_column_exists('meeting_next_agenda', 'linked_decision_id')) {
+                $st = db()->prepare("SELECT DISTINCT linked_decision_id FROM meeting_next_agenda WHERE meeting_id = ? AND linked_decision_id IN ($ph)");
+                $st->execute(array_merge([$mid], $ids));
+                foreach ($st->fetchAll() as $r) $decisionIdsWithNextMirror[(int) $r['linked_decision_id']] = true;
+            }
         }
         // Agenda leads (M:N).
         $aids = array_map(static fn($a) => (int) $a['id'], $existingAgenda);
@@ -270,6 +278,10 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
         $insR = $hasRespTeamSave
             ? $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id, team_id) VALUES (?, ?, ?, ?, ?)')
             : $db->prepare('INSERT INTO meeting_decision_responsible (decision_id, user_id, contact_id, seat_id) VALUES (?, ?, ?, ?)');
+        // Collect auto-mirror rows while inserting decisions, so the
+        // next-agenda insert loop below can append them after the manual
+        // rows (preserves their sort_order position).
+        $autoMirrorRows = [];
         $order = 0;
         foreach ((array) ($_POST['decision'] ?? []) as $row) {
             $h = trim((string) ($row['heading'] ?? ''));
@@ -290,10 +302,10 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 $db->prepare('UPDATE meeting_decision SET agenda_id = ? WHERE id = ?')
                     ->execute([$resolvedAgendaId, $newDecId]);
             }
+            $decRemarksRaw = $hasRemarksSave ? trim((string) ($row['remarks'] ?? '')) : '';
             if ($hasRemarksSave) {
-                $remarksRaw = trim((string) ($row['remarks'] ?? ''));
                 $db->prepare('UPDATE meeting_decision SET remarks = ? WHERE id = ?')
-                    ->execute([$remarksRaw === '' ? null : $remarksRaw, $newDecId]);
+                    ->execute([$decRemarksRaw === '' ? null : $decRemarksRaw, $newDecId]);
             }
             if ($hasRespTeamSave) {
                 foreach ((array) ($row['user_ids']    ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, (int) $x, null, null, null]);
@@ -305,11 +317,34 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 foreach ((array) ($row['seat_ids']    ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, null, null, (int) $x]);
                 foreach ((array) ($row['contact_ids'] ?? []) as $x) if ((int) $x > 0) $insR->execute([$newDecId, null, (int) $x, null]);
             }
+            // "Add to next-meeting agenda" mirror row — queued now,
+            // inserted after the manual next-agenda loop below.
+            if (((int) ($row['add_to_next_agenda'] ?? 0)) === 1) {
+                $resolvedNames = meetings_resolve_responsible_names(
+                    (array) ($row['user_ids'] ?? []),
+                    (array) ($row['seat_ids'] ?? []),
+                    (array) ($row['contact_ids'] ?? []),
+                    (array) ($row['team_ids'] ?? [])
+                );
+                $autoMirrorRows[] = [
+                    'linked_decision_id' => $newDecId,
+                    'title'              => $h,
+                    'description'        => $decRemarksRaw === '' ? null : $decRemarksRaw,
+                    'remarks'            => $resolvedNames === '' ? null : $resolvedNames,
+                ];
+            }
         }
 
         // Next-meeting agenda
         $hasNextRemarksSave = false;
-        try { foreach ($db->query('SHOW COLUMNS FROM meeting_next_agenda')->fetchAll() as $c) if (strtolower((string) $c['Field']) === 'remarks') $hasNextRemarksSave = true; } catch (Throwable $e) { /* ignore */ }
+        $hasLinkedCol       = false;
+        try {
+            foreach ($db->query('SHOW COLUMNS FROM meeting_next_agenda')->fetchAll() as $c) {
+                $f = strtolower((string) $c['Field']);
+                if ($f === 'remarks')            $hasNextRemarksSave = true;
+                if ($f === 'linked_decision_id') $hasLinkedCol       = true;
+            }
+        } catch (Throwable $e) { /* ignore */ }
         $insN = $db->prepare('INSERT INTO meeting_next_agenda (meeting_id, sort_order, title, description) VALUES (?, ?, ?, ?)');
         $order = 0;
         foreach ((array) ($_POST['next_agenda'] ?? []) as $row) {
@@ -320,6 +355,17 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 $remarksRaw = trim((string) ($row['remarks'] ?? ''));
                 $db->prepare('UPDATE meeting_next_agenda SET remarks = ? WHERE id = ?')
                     ->execute([$remarksRaw === '' ? null : $remarksRaw, (int) $db->lastInsertId()]);
+            }
+        }
+        // Auto-mirror rows (from "Add to next-meeting agenda" checkbox).
+        foreach ($autoMirrorRows as $m) {
+            $insN->execute([$id, ++$order, $m['title'], $m['description']]);
+            $newNaId = (int) $db->lastInsertId();
+            if ($hasNextRemarksSave) {
+                $db->prepare('UPDATE meeting_next_agenda SET remarks = ? WHERE id = ?')->execute([$m['remarks'], $newNaId]);
+            }
+            if ($hasLinkedCol) {
+                $db->prepare('UPDATE meeting_next_agenda SET linked_decision_id = ? WHERE id = ?')->execute([$m['linked_decision_id'], $newNaId]);
             }
         }
 
@@ -831,7 +877,7 @@ window.__meetingRef = {
                 'user_ids' => $uIds, 'seat_ids' => $sIds, 'contact_ids' => $cIds,
             ];
         }, $existingAgenda)) ?>,
-        decisions: <?= json_encode(array_map(static function ($d) use ($existingDecisionResp) {
+        decisions: <?= json_encode(array_map(static function ($d) use ($existingDecisionResp, $decisionIdsWithNextMirror) {
             $rs = $existingDecisionResp[(int) $d['id']] ?? [];
             return [
                 'id' => (int) $d['id'],
@@ -843,13 +889,14 @@ window.__meetingRef = {
                 'fan_out_teams'    => isset($d['fan_out_teams'])    ? (int) $d['fan_out_teams']    : 0,
                 'remarks'          => (string) ($d['remarks'] ?? ''),
                 'agenda_id'        => isset($d['agenda_id']) ? (int) $d['agenda_id'] : 0,
+                'add_to_next_agenda' => isset($decisionIdsWithNextMirror[(int) $d['id']]) ? 1 : 0,
                 'user_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['user_id'] ?? 0), $rs))),
                 'seat_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['seat_id'] ?? 0), $rs))),
                 'contact_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['contact_id'] ?? 0), $rs))),
                 'team_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['team_id'] ?? 0), $rs))),
             ];
         }, $existingDecisions)) ?>,
-        next_agenda: <?= json_encode(array_map(static fn($n) => ['id' => (int) $n['id'], 'title' => (string) $n['title'], 'description' => (string) ($n['description'] ?? ''), 'remarks' => (string) ($n['remarks'] ?? '')], $existingNextAgenda)) ?>,
+        next_agenda: <?= json_encode(array_map(static fn($n) => ['id' => (int) $n['id'], 'title' => (string) $n['title'], 'description' => (string) ($n['description'] ?? ''), 'remarks' => (string) ($n['remarks'] ?? ''), 'linked_decision_id' => isset($n['linked_decision_id']) ? (int) $n['linked_decision_id'] : 0], $existingNextAgenda)) ?>,
         urls: <?= json_encode(array_map(static fn($u) => ['id' => (int) $u['id'], 'label' => (string) ($u['label'] ?? ''), 'url' => (string) $u['url']], $existingUrls)) ?>,
     },
 };
@@ -1022,6 +1069,12 @@ window.__meetingRef = {
                 <div class="form-check">
                     <input class="form-check-input" type="checkbox" id="dModalFanOut">
                     <label class="form-check-label small" for="dModalFanOut"><strong>Fan out team tasks</strong> — create a task for every team member (default: team head only)</label>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="dModalAddToNext">
+                    <label class="form-check-label small" for="dModalAddToNext"><strong>Add to next-meeting agenda</strong> — mirrors heading → title, remarks → description, responsibles → remarks. Linked, auto-updates on edit/delete.</label>
                 </div>
             </div>
         </div>
@@ -1522,9 +1575,11 @@ window.__meetingRef = {
         const remarksBlock = (d.remarks     || '').trim() === '' ? '' : `<div class="small text-muted mt-1" style="white-space:pre-wrap;"><em>Remarks:</em> ${esc(d.remarks)}</div>`;
         const dueBlock     = (d.due_date    || '').trim() === '' ? '' : `<div class="small text-muted"><i class="bi bi-calendar-event me-1"></i>Due: ${esc(d.due_date)}</div>`;
         const respBlock    = responsibles.length === 0 ? '' : `<div class="small mt-1">Responsible: ${respBadges}</div>`;
+        const nextChip     = Number(d.add_to_next_agenda || 0) === 1
+            ? '<span class="badge text-bg-info-subtle border ms-1" title="Mirrored to next-meeting agenda"><i class="bi bi-calendar-plus me-1"></i>in next</span>' : '';
         return `<div class="meeting-list-item border-bottom pb-2 mb-2 d-flex align-items-start gap-2">
             <div class="flex-grow-1">
-                <strong>${esc(d.heading || '')}</strong>
+                <strong>${esc(d.heading || '')}</strong>${nextChip}
                 ${descBlock}
                 ${dueBlock}
                 ${respBlock}
@@ -1569,6 +1624,7 @@ window.__meetingRef = {
             const createOwn = Number(d.create_own_tasks == null ? 1 : d.create_own_tasks) === 1 ? 1 : 0;
             const priv      = Number(d.status_private || 0) === 1 ? 1 : 0;
             const fanOut    = Number(d.fan_out_teams || 0) === 1 ? 1 : 0;
+            const addToNext = Number(d.add_to_next_agenda || 0) === 1 ? 1 : 0;
             return `<input type="hidden" name="decision[${i}][heading]"       value="${esc(d.heading || '')}">
                     <input type="hidden" name="decision[${i}][description]"   value="${esc(d.description || '')}">
                     <input type="hidden" name="decision[${i}][due_date]"      value="${d.due_date || ''}">
@@ -1576,7 +1632,8 @@ window.__meetingRef = {
                     <input type="hidden" name="decision[${i}][agenda_tmp_id]" value="${esc(d.agenda_tmp_id || '')}">
                     <input type="hidden" name="decision[${i}][create_own_tasks]" value="${createOwn}">
                     <input type="hidden" name="decision[${i}][status_private]"   value="${priv}">
-                    <input type="hidden" name="decision[${i}][fan_out_teams]"    value="${fanOut}">${users}${seats}${conts}${teams}`;
+                    <input type="hidden" name="decision[${i}][fan_out_teams]"    value="${fanOut}">
+                    <input type="hidden" name="decision[${i}][add_to_next_agenda]" value="${addToNext}">${users}${seats}${conts}${teams}`;
         }).join('');
     };
     const renderNextAgenda = () => {
@@ -1584,10 +1641,12 @@ window.__meetingRef = {
         list.innerHTML = state.next_agenda.map((n, i) => {
             const descBlock    = (n.description || '').trim() === '' ? '' : `<div class="small text-muted mt-1" style="white-space:pre-wrap;">${esc(n.description)}</div>`;
             const remarksBlock = (n.remarks     || '').trim() === '' ? '' : `<div class="small text-warning-emphasis mt-1" style="white-space:pre-wrap;"><i class="bi bi-exclamation-triangle me-1"></i><em>Remarks:</em> ${esc(n.remarks)}</div>`;
+            const linkChip = Number(n.linked_decision_id || 0) > 0
+                ? '<span class="badge text-bg-info-subtle border ms-1" title="Mirrored from a decision point — the decision keeps this row in sync, so edits here may be overwritten."><i class="bi bi-link-45deg me-1"></i>from decision</span>' : '';
             return `<div class="meeting-list-item d-flex align-items-start gap-2 py-2 border-bottom">
                 <div class="meeting-sl text-muted small">${i+1}.</div>
                 <div class="flex-grow-1">
-                    <strong>${esc(n.title || '')}</strong>
+                    <strong>${esc(n.title || '')}</strong>${linkChip}
                     ${descBlock}
                     ${remarksBlock}
                 </div>
@@ -1597,10 +1656,15 @@ window.__meetingRef = {
                 </div>
             </div>`;
         }).join('') || '<div class="text-muted small">No next-meeting agenda yet.</div>';
-        document.getElementById('nextAgendaHidden').innerHTML = state.next_agenda.map((n, i) =>
-            `<input type="hidden" name="next_agenda[${i}][title]"       value="${esc(n.title || '')}">
-             <input type="hidden" name="next_agenda[${i}][description]" value="${esc(n.description || '')}">
-             <input type="hidden" name="next_agenda[${i}][remarks]"     value="${esc(n.remarks || '')}">`).join('');
+        // Hidden inputs — SKIP linked rows: the big-save handler
+        // re-synthesises them from each decision's add_to_next_agenda
+        // flag, so re-sending them here would create a duplicate.
+        document.getElementById('nextAgendaHidden').innerHTML = state.next_agenda
+            .filter(n => !Number(n.linked_decision_id || 0))
+            .map((n, i) =>
+                `<input type="hidden" name="next_agenda[${i}][title]"       value="${esc(n.title || '')}">
+                 <input type="hidden" name="next_agenda[${i}][description]" value="${esc(n.description || '')}">
+                 <input type="hidden" name="next_agenda[${i}][remarks]"     value="${esc(n.remarks || '')}">`).join('');
     };
     const renderUrls = () => {
         const list = document.getElementById('urlList');
@@ -1809,6 +1873,7 @@ window.__meetingRef = {
         document.getElementById('dModalCreateOwn').checked = d.create_own_tasks == null ? true : Number(d.create_own_tasks) === 1;
         document.getElementById('dModalPrivate').checked   = Number(d.status_private || 0) === 1;
         document.getElementById('dModalFanOut').checked    = Number(d.fan_out_teams || 0) === 1;
+        document.getElementById('dModalAddToNext').checked = Number(d.add_to_next_agenda || 0) === 1;
         // Four-column layout (participants / internal / external / teams).
         const partPool = sortByName(buildParticipantPool());
         const prePart = [];
@@ -1995,6 +2060,7 @@ window.__meetingRef = {
             create_own_tasks: document.getElementById('dModalCreateOwn').checked ? 1 : 0,
             status_private:   document.getElementById('dModalPrivate').checked   ? 1 : 0,
             fan_out_teams:    document.getElementById('dModalFanOut').checked    ? 1 : 0,
+            add_to_next_agenda: document.getElementById('dModalAddToNext').checked ? 1 : 0,
             user_ids: Array.from(userSet).filter(Boolean),
             seat_ids: [], // seat-as-responsibility UI retired
             contact_ids: Array.from(contactSet).filter(Boolean),
