@@ -333,6 +333,11 @@ if ($action === 'upsert_decision') {
     // Preserve existing remarks if the caller omitted the field entirely
     // (modal save without touching the remarks column, etc.).
     $touchRemarks  = $hasRemarksCol && array_key_exists('remarks', $_POST);
+    // Optional link to the parent agenda item on the same meeting.
+    // Blank / zero means "Other / unmapped".
+    $agendaIdRaw   = array_key_exists('agenda_id', $_POST) ? (int) $_POST['agenda_id'] : -1;
+    $hasAgendaIdCol = meetings_column_exists('meeting_decision', 'agenda_id');
+    $touchAgendaId  = $hasAgendaIdCol && $agendaIdRaw >= 0;
     // Grid-mode saves only touch heading/description/due/remarks and
     // leave the modal-set responsibility rows alone. The modal, by
     // contrast, rewrites the whole responsibility set + fires the
@@ -372,6 +377,10 @@ if ($action === 'upsert_decision') {
                 db()->prepare('UPDATE meeting_decision SET remarks = ? WHERE id = ? AND meeting_id = ?')
                     ->execute([$remarks, $id, $meetingId]);
             }
+            if ($touchAgendaId) {
+                db()->prepare('UPDATE meeting_decision SET agenda_id = ? WHERE id = ? AND meeting_id = ?')
+                    ->execute([$agendaIdRaw > 0 ? $agendaIdRaw : null, $id, $meetingId]);
+            }
         } else {
             $st = db()->prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM meeting_decision WHERE meeting_id = ?');
             $st->execute([$meetingId]);
@@ -390,6 +399,10 @@ if ($action === 'upsert_decision') {
             if ($touchRemarks) {
                 db()->prepare('UPDATE meeting_decision SET remarks = ? WHERE id = ?')
                     ->execute([$remarks, $id]);
+            }
+            if ($touchAgendaId) {
+                db()->prepare('UPDATE meeting_decision SET agenda_id = ? WHERE id = ?')
+                    ->execute([$agendaIdRaw > 0 ? $agendaIdRaw : null, $id]);
             }
         }
         if (!$gridMode) {
