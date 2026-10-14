@@ -399,16 +399,20 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                     $label = $p['user_name'] ?: $p['contact_name'];
                     $sub = $p['contact_name'] ? (string) ($p['institution'] ?? '') : '';
                 ?>
-                    <div class="border-bottom py-2 small">
-                        <strong><?= esc((string) $label) ?></strong>
-                        <?php if ($sub !== ''): ?><div class="text-muted"><?= esc($sub) ?></div><?php endif; ?>
-                        <span class="badge text-bg-<?= (int) $p['is_mandatory'] === 1 ? 'danger' : 'secondary' ?>"><?= (int) $p['is_mandatory'] === 1 ? 'Mandatory' : 'Optional' ?></span>
+                    <div class="border-bottom py-2 small d-flex align-items-center gap-2">
+                        <?php if ((int) $p['is_mandatory'] === 1): ?>
+                            <span class="text-danger fw-bold" title="Mandatory" style="font-size: 1.1rem; line-height: 1;">*</span>
+                        <?php endif; ?>
+                        <div class="flex-grow-1">
+                            <strong><?= esc((string) $label) ?></strong>
+                            <?php if ($sub !== ''): ?><div class="text-muted"><?= esc($sub) ?></div><?php endif; ?>
+                        </div>
                         <?php if ($p['attended'] === null || $p['attended'] === ''): ?>
-                            <span class="badge text-bg-light border">Attendance not recorded</span>
+                            <span class="badge text-bg-light border" title="Attendance not recorded">—</span>
                         <?php elseif ((int) $p['attended'] === 1): ?>
-                            <span class="badge text-bg-success">Present</span>
+                            <span class="badge text-bg-success" title="Present">P</span>
                         <?php else: ?>
-                            <span class="badge text-bg-secondary">Absent</span>
+                            <span class="badge text-bg-danger" title="Absent">A</span>
                         <?php endif; ?>
                     </div>
                 <?php endforeach; ?>

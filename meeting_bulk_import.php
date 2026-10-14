@@ -292,9 +292,27 @@ if (is_post() && ($_POST['action'] ?? '') === 'confirm') {
                 }
                 return ['fatal' => $fatal, 'soft' => $soft];
             };
+            // Compact remarks: just the comma-separated list of names
+            // that couldn't be matched. Pulls them out of the full
+            // error messages ("Internal User not found: A; B" →
+            // "A, B"), de-dupes across all three sources (Internal /
+            // External / Team) so the cell is a clean roster of what
+            // the import skipped.
             $buildRemarksNote = static function (array $errs, string $existingRemarks = ''): ?string {
-                if ($errs === []) return $existingRemarks === '' ? null : $existingRemarks;
-                $tag = '[Bulk import on ' . date('d/m/Y H:i') . '] ' . implode(' | ', $errs);
+                $names = [];
+                foreach ($errs as $e) {
+                    // All our soft errors look like "<Label>: n1; n2; n3".
+                    $pos = strpos($e, ':');
+                    if ($pos === false) continue;
+                    $tail = substr($e, $pos + 1);
+                    foreach (preg_split('/[;,]/', $tail) as $n) {
+                        $n = trim($n);
+                        if ($n !== '' && !in_array($n, $names, true)) $names[] = $n;
+                    }
+                }
+                $tag = implode(', ', $names);
+                if ($tag === '' && $existingRemarks === '') return null;
+                if ($tag === '') return $existingRemarks;
                 $joined = trim(($existingRemarks !== '' ? $existingRemarks . "\n" : '') . $tag);
                 return $joined === '' ? null : $joined;
             };
