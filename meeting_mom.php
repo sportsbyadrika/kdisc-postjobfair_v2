@@ -68,70 +68,101 @@ $parts = db()->prepare('SELECT mp.*, u.name AS user_name, c.name AS contact_name
     WHERE mp.meeting_id = ? ORDER BY mp.id ASC');
 $parts->execute([$id]); $parts = $parts->fetchAll();
 
-$agenda = db()->prepare('SELECT * FROM meeting_agenda WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC');
+$agenda = db()->prepare('SELECT a.*, u.name AS lead_user_name, c.name AS lead_contact_name, n.name AS lead_seat_name
+    FROM meeting_agenda a
+    LEFT JOIN users u ON u.id = a.lead_user_id
+    LEFT JOIN contact c ON c.id = a.lead_contact_id
+    LEFT JOIN office_hierarchy_nodes n ON n.id = a.lead_seat_id
+    WHERE a.meeting_id = ? ORDER BY a.sort_order ASC, a.id ASC');
 $agenda->execute([$id]); $agenda = $agenda->fetchAll();
+
+// Multi-lead rows per agenda item (same shape the view page uses).
+$agendaLeads = [];
+if ($agenda !== []) {
+    $aids = array_map(static fn($a) => (int) $a['id'], $agenda);
+    try {
+        $ph = implode(',', array_fill(0, count($aids), '?'));
+        $st = db()->prepare("SELECT mal.*, u.name AS user_name, c.name AS contact_name, n.name AS seat_name
+            FROM meeting_agenda_lead mal
+            LEFT JOIN users u   ON u.id = mal.user_id
+            LEFT JOIN contact c ON c.id = mal.contact_id
+            LEFT JOIN office_hierarchy_nodes n ON n.id = mal.seat_id
+            WHERE mal.agenda_id IN ($ph)");
+        $st->execute($aids);
+        foreach ($st->fetchAll() as $r) $agendaLeads[(int) $r['agenda_id']][] = $r;
+    } catch (Throwable $e) { /* table may be absent on legacy installs */ }
+}
 
 $decisions = db()->prepare('SELECT * FROM meeting_decision WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC');
 $decisions->execute([$id]); $decisions = $decisions->fetchAll();
 
-// Group decisions by Division of the responsible seat / user. Users
-// without a seat land in "General". Look up each responsibility's
-// division by walking the seat's parents.
+// Responsibilities + team metadata when the column exists (mirrors the
+// view page's query so teams, team heads and fan-out markers survive
+// in the MoM too).
 $decResp = [];
 if ($decisions !== []) {
     $ids = array_map(static fn($d) => (int) $d['id'], $decisions);
     $ph  = implode(',', array_fill(0, count($ids), '?'));
+    $hasTeamCol = false;
+    try {
+        foreach (db()->query('SHOW COLUMNS FROM meeting_decision_responsible')->fetchAll() as $c) {
+            if (strtolower((string) $c['Field']) === 'team_id') { $hasTeamCol = true; break; }
+        }
+    } catch (Throwable $e) { /* ignore */ }
+    $teamSelect = $hasTeamCol ? ', t.name AS team_name, uh.name AS team_head_name' : ', NULL AS team_name, NULL AS team_head_name';
+    $teamJoin   = $hasTeamCol ? ' LEFT JOIN team t ON t.id = mdr.team_id LEFT JOIN users uh ON uh.id = t.head_user_id' : '';
     $r = db()->prepare("SELECT mdr.*,
-            u.name AS user_name, c.name AS contact_name, n.name AS seat_name,
-            usr_seat.node_id AS user_seat_id
+            u.name AS user_name, c.name AS contact_name, n.name AS seat_name$teamSelect
         FROM meeting_decision_responsible mdr
         LEFT JOIN users u ON u.id = mdr.user_id
         LEFT JOIN contact c ON c.id = mdr.contact_id
-        LEFT JOIN office_hierarchy_nodes n ON n.id = mdr.seat_id
-        LEFT JOIN office_hierarchy_officer_history usr_seat ON usr_seat.officer_id = mdr.user_id AND usr_seat.unassigned_at IS NULL
+        LEFT JOIN office_hierarchy_nodes n ON n.id = mdr.seat_id$teamJoin
         WHERE mdr.decision_id IN ($ph)");
     $r->execute($ids);
     foreach ($r->fetchAll() as $x) $decResp[(int) $x['decision_id']][] = $x;
 }
-// Node cache for parent-chain walks.
-$nodeCache = [];
-$fetchNode = static function (int $nid) use (&$nodeCache): ?array {
-    if ($nid <= 0) return null;
-    if (isset($nodeCache[$nid])) return $nodeCache[$nid];
-    $s = db()->prepare('SELECT id, name, parent_id, level_type FROM office_hierarchy_nodes WHERE id = ?');
-    $s->execute([$nid]);
-    return $nodeCache[$nid] = ($s->fetch() ?: null);
-};
-$divisionOfSeat = static function (int $seatId) use ($fetchNode): string {
-    $cursor = $seatId;
-    for ($g = 0; $g < 10 && $cursor > 0; $g++) {
-        $n = $fetchNode($cursor);
-        if ($n === null) break;
-        if ((string) $n['level_type'] === 'division') return (string) $n['name'];
-        $cursor = (int) ($n['parent_id'] ?? 0);
-    }
-    return 'General';
-};
 
-$grouped = [];
-foreach ($decisions as $d) {
-    $rs = $decResp[(int) $d['id']] ?? [];
-    if ($rs === []) { $grouped['General'][] = ['decision' => $d, 'responsibles' => []]; continue; }
-    // A decision may have responsibilities in multiple divisions. To
-    // avoid duplicating the same decision, group under the first
-    // responsible's division (per spec — "division of the seat").
-    $div = 'General';
-    foreach ($rs as $r) {
-        $seatId = (int) ($r['seat_id'] ?? 0);
-        if ($seatId <= 0) $seatId = (int) ($r['user_seat_id'] ?? 0);
-        if ($seatId > 0) { $div = $divisionOfSeat($seatId); break; }
-    }
-    $grouped[$div][] = ['decision' => $d, 'responsibles' => $rs];
+// Linked tasks per decision — same shape the view page uses, so the
+// MoM reflects whatever each Own-Tasks row has advanced to.
+$decisionTasks = [];
+if ($decisions !== []) {
+    $dids = array_map(static fn($d) => (int) $d['id'], $decisions);
+    try {
+        $ph = implode(',', array_fill(0, count($dids), '?'));
+        $st = db()->prepare("SELECT t.id AS task_id, t.meeting_decision_id, t.task_number, t.title,
+                s.name AS status_name, s.colour_token,
+                oh.officer_id, u.name AS officer_name,
+                p.code AS project_code
+            FROM task t
+            LEFT JOIN task_status s ON s.id = t.status_id
+            LEFT JOIN task_assignment ta ON ta.task_id = t.id AND ta.role = 'primary'
+            LEFT JOIN office_hierarchy_officer_history oh ON oh.node_id = ta.seat_id AND oh.unassigned_at IS NULL
+            LEFT JOIN users u ON u.id = oh.officer_id
+            LEFT JOIN project p ON p.id = t.project_id
+            WHERE t.meeting_decision_id IN ($ph) AND t.is_active = 1");
+        $st->execute($dids);
+        foreach ($st->fetchAll() as $t) $decisionTasks[(int) $t['meeting_decision_id']][] = $t;
+    } catch (Throwable $e) { /* link column may not exist on legacy installs */ }
 }
-ksort($grouped);
+
+// Group decisions by their mapped agenda item — mirrors the on-screen
+// view page. Keyed by agenda position (1, 2, 3, …); unmapped go to
+// "Other" at the bottom.
+$grouped = [];
+foreach ($agenda as $ai => $a) $grouped[$ai + 1] = ['label' => '#' . ($ai + 1) . ' — ' . (string) $a['title'], 'items' => []];
+$grouped[0] = ['label' => 'Other', 'items' => []];
+$agendaPosById = [];
+foreach ($agenda as $ai => $a) $agendaPosById[(int) $a['id']] = $ai + 1;
+foreach ($decisions as $d) {
+    $aid = (int) ($d['agenda_id'] ?? 0);
+    $pos = $agendaPosById[$aid] ?? 0;
+    $grouped[$pos]['items'][] = ['decision' => $d, 'responsibles' => $decResp[(int) $d['id']] ?? []];
+}
 
 $nextAg = db()->prepare('SELECT * FROM meeting_next_agenda WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC');
 $nextAg->execute([$id]); $nextAg = $nextAg->fetchAll();
+$urls   = db()->prepare('SELECT * FROM meeting_url WHERE meeting_id = ? ORDER BY id ASC');
+$urls->execute([$id]); $urls = $urls->fetchAll();
 
 $logo    = meetings_setting('mom_logo_url');
 $heading = meetings_setting('mom_heading', 'Minutes of Meeting');
@@ -295,10 +326,23 @@ $chairInst = $meeting['chair_contact_inst'];
     <div style="color:#666; font-size:13px;">— none —</div>
 <?php else: ?>
     <ol>
-        <?php foreach ($agenda as $a): ?>
-            <li>
+        <?php foreach ($agenda as $a):
+            // Collect lead names: prefer the multi-lead table, fall back
+            // to the legacy single-id columns on older rows.
+            $leads = $agendaLeads[(int) $a['id']] ?? [];
+            $leadNames = [];
+            foreach ($leads as $l) $leadNames[] = (string) ($l['user_name'] ?: ($l['contact_name'] ?: $l['seat_name']));
+            $leadNames = array_values(array_filter($leadNames));
+            if ($leadNames === []) {
+                $single = $a['lead_user_name'] ?: ($a['lead_contact_name'] ?: $a['lead_seat_name']);
+                if ($single) $leadNames[] = (string) $single;
+            }
+        ?>
+            <li style="margin-bottom:6px;">
                 <strong><?= $esc((string) $a['title']) ?></strong>
                 <?php if (!empty($a['description'])): ?><div style="color:#444; font-size:12px; white-space:pre-wrap;"><?= $esc((string) $a['description']) ?></div><?php endif; ?>
+                <?php if ($leadNames !== []): ?><div style="color:#555; font-size:11px;"><em>Lead:</em> <?= $esc(implode(', ', $leadNames)) ?></div><?php endif; ?>
+                <?php if (!empty($a['remarks'])): ?><div style="color:#8a6d3b; font-size:11px; white-space:pre-wrap;"><em>Remarks:</em> <?= $esc((string) $a['remarks']) ?></div><?php endif; ?>
             </li>
         <?php endforeach; ?>
     </ol>
@@ -309,21 +353,48 @@ $chairInst = $meeting['chair_contact_inst'];
     <div style="white-space:pre-wrap; font-size:13px;"><?= $esc((string) $meeting['minutes_body']) ?></div>
 <?php endif; ?>
 
-<h3>Decision points (grouped by Division)</h3>
-<?php if ($grouped === []): ?>
+<h3>Decision points (grouped by Agenda)</h3>
+<?php if ($decisions === []): ?>
     <div style="color:#666; font-size:13px;">— none —</div>
 <?php endif; ?>
-<?php foreach ($grouped as $divName => $items): ?>
-    <div class="group-h">Division: <?= $esc($divName) ?></div>
-    <?php foreach ($items as $it): $d = $it['decision']; $rs = $it['responsibles']; ?>
+<?php foreach ($grouped as $pos => $group): if ($group['items'] === []) continue; ?>
+    <div class="group-h"><?= $esc($group['label']) ?></div>
+    <?php foreach ($group['items'] as $it): $d = $it['decision']; $rs = $it['responsibles']; ?>
         <div class="decision">
             <div class="decision-title"><?= $esc((string) $d['heading']) ?></div>
             <?php if (!empty($d['description'])): ?><div style="white-space:pre-wrap;"><?= $esc((string) $d['description']) ?></div><?php endif; ?>
+            <?php if (!empty($d['remarks'])): ?><div style="color:#555; font-size:11px; margin-top:4px; white-space:pre-wrap;"><em>Remarks:</em> <?= $esc((string) $d['remarks']) ?></div><?php endif; ?>
             <div class="meta-row">
-                <?php $names = []; foreach ($rs as $r) $names[] = (string) ($r['user_name'] ?: ($r['contact_name'] ?: $r['seat_name'])); ?>
+                <?php
+                    $names = [];
+                    foreach ($rs as $r) {
+                        if (!empty($r['team_name'])) {
+                            $suffix = !empty($r['team_head_name']) ? ' (head: ' . $r['team_head_name'] . ')' : '';
+                            $names[] = 'Team: ' . $r['team_name'] . $suffix;
+                            continue;
+                        }
+                        $label = $r['user_name'] ?: ($r['contact_name'] ?: $r['seat_name']);
+                        if ($label !== null && $label !== '') $names[] = (string) $label;
+                    }
+                ?>
                 <?php if ($names !== []): ?><strong>Responsible:</strong> <?= $esc(implode(', ', $names)) ?><?php endif; ?>
+                <?php if ((int) ($d['fan_out_teams'] ?? 0) === 1): ?> &nbsp; · &nbsp; <em>fanned out (one task per team member)</em><?php endif; ?>
                 <?php if (!empty($d['due_date'])): ?> &nbsp; · &nbsp; <strong>Due:</strong> <?= $esc($fmtDate((string) $d['due_date'])) ?><?php endif; ?>
             </div>
+            <?php $ts = $decisionTasks[(int) $d['id']] ?? []; if ($ts !== []): ?>
+                <div class="meta-row" style="margin-top:4px;">
+                    <strong>Linked tasks:</strong>
+                    <?php foreach ($ts as $t):
+                        $pfx = (string) ($t['project_code'] ?? 'OWN') . '-' . (int) $t['task_number'];
+                        $owner = (string) ($t['officer_name'] ?? '');
+                        $status = (string) ($t['status_name'] ?? '—');
+                    ?>
+                        <span style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:3px; padding:1px 5px; margin-right:4px; display:inline-block;">
+                            <?= $esc($pfx) ?> · <?= $esc($status) ?><?= $owner !== '' ? ' · ' . $esc($owner) : '' ?>
+                        </span>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
         </div>
     <?php endforeach; ?>
 <?php endforeach; ?>
@@ -337,10 +408,23 @@ $chairInst = $meeting['chair_contact_inst'];
         <div style="font-size:13px; margin-top:6px;"><strong>Agenda:</strong></div>
         <ol>
             <?php foreach ($nextAg as $n): ?>
-                <li><strong><?= $esc((string) $n['title']) ?></strong><?php if (!empty($n['description'])): ?> — <span style="color:#444;"><?= $esc((string) $n['description']) ?></span><?php endif; ?></li>
+                <li style="margin-bottom:4px;">
+                    <strong><?= $esc((string) $n['title']) ?></strong>
+                    <?php if (!empty($n['description'])): ?><div style="color:#444; font-size:12px; white-space:pre-wrap;"><?= $esc((string) $n['description']) ?></div><?php endif; ?>
+                    <?php if (!empty($n['remarks'])): ?><div style="color:#8a6d3b; font-size:11px; white-space:pre-wrap;"><em>Remarks:</em> <?= $esc((string) $n['remarks']) ?></div><?php endif; ?>
+                </li>
             <?php endforeach; ?>
         </ol>
     <?php endif; ?>
+<?php endif; ?>
+
+<?php if ($urls !== []): ?>
+    <h3>Attachment URLs</h3>
+    <ul style="font-size:13px; margin:0 0 0 20px; padding:0;">
+        <?php foreach ($urls as $u): ?>
+            <li><?= $esc((string) ($u['label'] ?? '')) ?: $esc((string) $u['url']) ?> — <a href="<?= $esc((string) $u['url']) ?>" style="color:#0d6efd;"><?= $esc((string) $u['url']) ?></a></li>
+        <?php endforeach; ?>
+    </ul>
 <?php endif; ?>
 
 <div class="sig">
