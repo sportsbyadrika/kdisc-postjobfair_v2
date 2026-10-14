@@ -208,13 +208,18 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
             $insP->execute([$id, $uid > 0 ? $uid : null, $cid > 0 ? $cid : null, $mand, $att, trim((string) ($row['role_label'] ?? '')) ?: null]);
         }
 
-        // Agenda
+        // Agenda. Each client-side agenda row carries a `tmp_id` so a
+        // decision that references it can be re-linked after the row's
+        // DB id changes (the big save does DELETE + re-INSERT and the
+        // agenda IDs flip each time). Build $tmpToAgendaId while we
+        // re-insert, then resolve decision.agenda_id from it below.
         $hasAgendaRemarksSave = false;
         try { foreach ($db->query('SHOW COLUMNS FROM meeting_agenda')->fetchAll() as $c) if (strtolower((string) $c['Field']) === 'remarks') $hasAgendaRemarksSave = true; } catch (Throwable $e) { /* ignore */ }
         $insA = $db->prepare('INSERT INTO meeting_agenda
             (meeting_id, sort_order, title, description, lead_user_id, lead_seat_id, lead_contact_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)');
         $order = 0;
+        $tmpToAgendaId = [];
         foreach ((array) ($_POST['agenda'] ?? []) as $row) {
             $t = trim((string) ($row['title'] ?? ''));
             if ($t === '') continue;
@@ -226,6 +231,8 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 ((int) ($row['lead_contact_id'] ?? 0)) ?: null,
             ]);
             $newAgendaId = (int) $db->lastInsertId();
+            $tmpKey = trim((string) ($row['tmp_id'] ?? ''));
+            if ($tmpKey !== '') $tmpToAgendaId[$tmpKey] = $newAgendaId;
             if ($hasAgendaRemarksSave) {
                 $remarksRaw = trim((string) ($row['remarks'] ?? ''));
                 $db->prepare('UPDATE meeting_agenda SET remarks = ? WHERE id = ?')
@@ -238,13 +245,14 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
         // exist on older installs — detect once and pick SQL
         // accordingly. The responsibility table also has an optional
         // team_id column we populate when available.
-        $hasDecFlagsSave = false; $hasFanOutSave = false; $hasRespTeamSave = false; $hasRemarksSave = false;
+        $hasDecFlagsSave = false; $hasFanOutSave = false; $hasRespTeamSave = false; $hasRemarksSave = false; $hasAgendaIdSave = false;
         try {
             $colsD = [];
             foreach ($db->query('SHOW COLUMNS FROM meeting_decision')->fetchAll() as $c) $colsD[strtolower((string) $c['Field'])] = true;
             $hasDecFlagsSave = isset($colsD['create_own_tasks']) && isset($colsD['status_private']);
             $hasFanOutSave   = isset($colsD['fan_out_teams']);
             $hasRemarksSave  = isset($colsD['remarks']);
+            $hasAgendaIdSave = isset($colsD['agenda_id']);
         } catch (Throwable $e) { /* ignore */ }
         try {
             $colsR = [];
@@ -276,6 +284,12 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
             if ($hasDecFlagsSave && $hasFanOutSave) { $params[] = $fanOutF ? 1 : 0; }
             $insD->execute($params);
             $newDecId = $db->lastInsertId();
+            if ($hasAgendaIdSave) {
+                $agendaTmp = trim((string) ($row['agenda_tmp_id'] ?? ''));
+                $resolvedAgendaId = ($agendaTmp !== '' && isset($tmpToAgendaId[$agendaTmp])) ? $tmpToAgendaId[$agendaTmp] : null;
+                $db->prepare('UPDATE meeting_decision SET agenda_id = ? WHERE id = ?')
+                    ->execute([$resolvedAgendaId, $newDecId]);
+            }
             if ($hasRemarksSave) {
                 $remarksRaw = trim((string) ($row['remarks'] ?? ''));
                 $db->prepare('UPDATE meeting_decision SET remarks = ? WHERE id = ?')
@@ -666,154 +680,113 @@ render_page_header($pageTitle, [
         </div>
 
         <hr class="my-4">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-            <h6 class="text-uppercase small text-muted mb-0"><i class="bi bi-people me-1"></i>Participants</h6>
-            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="participantModal"><i class="bi bi-plus-lg me-1"></i>Add participant</button>
-        </div>
-        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="participantTable">
-            <thead><tr><th>Name</th><th>Type</th><th>Attendance</th><th>Role</th><th class="text-end">Action</th></tr></thead>
-            <tbody></tbody>
-        </table></div>
-        <div id="participantHidden"></div>
-
-        <hr class="my-4">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-            <h6 class="text-uppercase small text-muted mb-0"><i class="bi bi-list-ol me-1"></i>Agenda</h6>
-            <?php if ($existing): ?>
-            <div class="dropdown">
-                <button type="button" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="bi bi-plus-lg me-1"></i>Add agenda
-                </button>
-                <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="/meeting_grid.php?id=<?= (int) $existing['id'] ?>&type=agenda" target="_blank"><i class="bi bi-grid-3x3-gap me-2"></i>Agenda bulk entry <span class="small text-muted">(spreadsheet, new tab)</span></a></li>
-                    <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item" href="#" data-open-modal="agendaModal"><i class="bi bi-plus-lg me-2"></i>Add single agenda item</a></li>
-                </ul>
-            </div>
-            <?php else: ?>
-            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="agendaModal"><i class="bi bi-plus-lg me-1"></i>Add agenda item</button>
-            <?php endif; ?>
-        </div>
-        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 meeting-sub-table" id="agendaTable">
-            <colgroup>
-                <col style="width:36px;">
-                <col style="width:18%;">
-                <col style="width:34%;">
-                <col style="width:16%;">
-                <col style="width:22%;">
-                <col style="width:92px;">
-            </colgroup>
-            <thead><tr>
-                <th>#</th>
-                <th>Title</th>
-                <th>Description</th>
-                <th>Lead</th>
-                <th>Remarks</th>
-                <th class="text-end">Action</th>
-            </tr></thead>
-            <tbody></tbody>
-        </table></div>
-        <div id="agendaHidden"></div>
-
-        <hr class="my-4">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-            <h6 class="text-uppercase small text-muted mb-0"><i class="bi bi-check2-square me-1"></i>Decision points</h6>
-            <?php if ($existing): ?>
-            <div class="dropdown">
-                <button type="button" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="bi bi-plus-lg me-1"></i>Add decision
-                </button>
-                <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="/meeting_grid.php?id=<?= (int) $existing['id'] ?>&type=decision" target="_blank"><i class="bi bi-grid-3x3-gap me-2"></i>Decision points bulk entry <span class="small text-muted">(spreadsheet, new tab)</span></a></li>
-                    <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item" href="#" data-open-modal="decisionModal"><i class="bi bi-plus-lg me-2"></i>Add single decision</a></li>
-                </ul>
-            </div>
-            <?php else: ?>
-            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="decisionModal"><i class="bi bi-plus-lg me-1"></i>Add decision</button>
-            <?php endif; ?>
-        </div>
-        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 meeting-sub-table" id="decisionTable">
-            <colgroup>
-                <col style="width:36px;">
-                <col style="width:16%;">
-                <col style="width:26%;">
-                <col style="width:92px;">
-                <col style="width:20%;">
-                <col style="width:22%;">
-                <col style="width:92px;">
-            </colgroup>
-            <thead><tr>
-                <th>#</th>
-                <th>Heading</th>
-                <th>Description</th>
-                <th>Due</th>
-                <th>Responsible</th>
-                <th>Remarks</th>
-                <th class="text-end">Action</th>
-            </tr></thead>
-            <tbody></tbody>
-        </table></div>
-        <div id="decisionHidden"></div>
-
-        <hr class="my-4">
-        <h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-calendar-plus me-1"></i>Next meeting <span class="small text-muted">(optional)</span></h6>
+        <!-- Two-column shape: main editor on the left, participant +
+             URL rail on the right. Mirrors the view page's layout so
+             the edit screen reads like the meeting it is going to
+             become. -->
         <div class="row g-3">
-            <div class="col-md-3">
-                <label class="form-label">Next meeting date</label>
-                <input type="date" class="form-control" name="next_meeting_date" value="<?= esc((string) $formValues['next_meeting_date']) ?>">
-            </div>
-            <div class="col-md-3">
-                <label class="form-label">Next meeting time</label>
-                <input type="time" class="form-control" name="next_meeting_time" value="<?= esc(substr((string) $formValues['next_meeting_time'], 0, 5)) ?>">
-            </div>
-        </div>
-        <div class="d-flex justify-content-between align-items-center mb-2 mt-3">
-            <span class="small fw-semibold">Next-meeting agenda</span>
-            <?php if ($existing): ?>
-            <div class="dropdown">
-                <button type="button" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="bi bi-plus-lg me-1"></i>Add next-meeting agenda
-                </button>
-                <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="/meeting_grid.php?id=<?= (int) $existing['id'] ?>&type=next_agenda" target="_blank"><i class="bi bi-grid-3x3-gap me-2"></i>Next-meeting agenda bulk entry <span class="small text-muted">(spreadsheet, new tab)</span></a></li>
-                    <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item" href="#" data-open-modal="nextAgendaModal"><i class="bi bi-plus-lg me-2"></i>Add single next-meeting agenda</a></li>
-                </ul>
-            </div>
-            <?php else: ?>
-            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="nextAgendaModal"><i class="bi bi-plus-lg me-1"></i>Add next-meeting agenda</button>
-            <?php endif; ?>
-        </div>
-        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 meeting-sub-table" id="nextAgendaTable">
-            <colgroup>
-                <col style="width:36px;">
-                <col style="width:24%;">
-                <col style="width:46%;">
-                <col style="width:24%;">
-                <col style="width:92px;">
-            </colgroup>
-            <thead><tr>
-                <th>#</th>
-                <th>Title</th>
-                <th>Description</th>
-                <th>Remarks</th>
-                <th class="text-end">Action</th>
-            </tr></thead>
-            <tbody></tbody>
-        </table></div>
-        <div id="nextAgendaHidden"></div>
+            <div class="col-lg-8">
+                <div class="card mb-3 meeting-section">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-list-ol me-1"></i>Agenda</span>
+                        <?php if ($existing): ?>
+                        <div class="dropdown">
+                            <button type="button" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-plus-lg me-1"></i>Add agenda
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item" href="/meeting_grid.php?id=<?= (int) $existing['id'] ?>&type=agenda" target="_blank"><i class="bi bi-grid-3x3-gap me-2"></i>Agenda bulk entry <span class="small text-muted">(spreadsheet, new tab)</span></a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="#" data-open-modal="agendaModal"><i class="bi bi-plus-lg me-2"></i>Add single agenda item</a></li>
+                            </ul>
+                        </div>
+                        <?php else: ?>
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="agendaModal"><i class="bi bi-plus-lg me-1"></i>Add agenda item</button>
+                        <?php endif; ?>
+                    </div>
+                    <div class="card-body" id="agendaList"></div>
+                </div>
+                <div id="agendaHidden"></div>
 
-        <hr class="my-4">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-            <h6 class="text-uppercase small text-muted mb-0"><i class="bi bi-link-45deg me-1"></i>Attachment URLs <span class="small text-muted">(Google Drive / SharePoint / any)</span></h6>
-            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="urlModal"><i class="bi bi-plus-lg me-1"></i>Add URL</button>
+                <div class="card mb-3 meeting-section">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-check2-square me-1"></i>Decision points</span>
+                        <?php if ($existing): ?>
+                        <div class="dropdown">
+                            <button type="button" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-plus-lg me-1"></i>Add decision
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item" href="/meeting_grid.php?id=<?= (int) $existing['id'] ?>&type=decision" target="_blank"><i class="bi bi-grid-3x3-gap me-2"></i>Decision points bulk entry <span class="small text-muted">(spreadsheet, new tab)</span></a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="#" data-open-modal="decisionModal"><i class="bi bi-plus-lg me-2"></i>Add single decision</a></li>
+                            </ul>
+                        </div>
+                        <?php else: ?>
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="decisionModal"><i class="bi bi-plus-lg me-1"></i>Add decision</button>
+                        <?php endif; ?>
+                    </div>
+                    <div class="card-body" id="decisionList"></div>
+                </div>
+                <div id="decisionHidden"></div>
+
+                <div class="card mb-3 meeting-section">
+                    <div class="card-header"><i class="bi bi-calendar-plus me-1"></i>Next meeting <span class="small text-muted">(optional)</span></div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Next meeting date</label>
+                                <input type="date" class="form-control" name="next_meeting_date" value="<?= esc((string) $formValues['next_meeting_date']) ?>">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Next meeting time</label>
+                                <input type="time" class="form-control" name="next_meeting_time" value="<?= esc(substr((string) $formValues['next_meeting_time'], 0, 5)) ?>">
+                            </div>
+                        </div>
+                        <hr class="my-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="small fw-semibold">Next-meeting agenda</span>
+                            <?php if ($existing): ?>
+                            <div class="dropdown">
+                                <button type="button" class="btn btn-sm btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="bi bi-plus-lg me-1"></i>Add
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end">
+                                    <li><a class="dropdown-item" href="/meeting_grid.php?id=<?= (int) $existing['id'] ?>&type=next_agenda" target="_blank"><i class="bi bi-grid-3x3-gap me-2"></i>Next-meeting bulk entry <span class="small text-muted">(spreadsheet, new tab)</span></a></li>
+                                    <li><hr class="dropdown-divider"></li>
+                                    <li><a class="dropdown-item" href="#" data-open-modal="nextAgendaModal"><i class="bi bi-plus-lg me-2"></i>Add single item</a></li>
+                                </ul>
+                            </div>
+                            <?php else: ?>
+                            <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="nextAgendaModal"><i class="bi bi-plus-lg me-1"></i>Add next-meeting item</button>
+                            <?php endif; ?>
+                        </div>
+                        <div id="nextAgendaList"></div>
+                    </div>
+                </div>
+                <div id="nextAgendaHidden"></div>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="card mb-3 meeting-section">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-people me-1"></i>Participants <span class="badge text-bg-light border ms-1" id="participantCount">0</span></span>
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="participantModal"><i class="bi bi-plus-lg"></i></button>
+                    </div>
+                    <div class="card-body p-2" id="participantList"></div>
+                </div>
+                <div id="participantHidden"></div>
+
+                <div class="card mb-3 meeting-section">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-link-45deg me-1"></i>Attachment URLs</span>
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="urlModal"><i class="bi bi-plus-lg"></i></button>
+                    </div>
+                    <div class="card-body p-2" id="urlList"></div>
+                </div>
+                <div id="urlHidden"></div>
+            </div>
         </div>
-        <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0" id="urlTable">
-            <thead><tr><th>Label</th><th>URL</th><th class="text-end">Action</th></tr></thead>
-            <tbody></tbody>
-        </table></div>
-        <div id="urlHidden"></div>
     </div>
     <div class="card-footer d-flex justify-content-end gap-2">
         <a class="btn btn-light" href="<?= $existing ? '/meeting_view.php?id=' . (int) $existing['id'] : '/meetings.php' ?>">Cancel</a>
@@ -869,6 +842,7 @@ window.__meetingRef = {
                 'status_private'   => isset($d['status_private'])   ? (int) $d['status_private']   : 0,
                 'fan_out_teams'    => isset($d['fan_out_teams'])    ? (int) $d['fan_out_teams']    : 0,
                 'remarks'          => (string) ($d['remarks'] ?? ''),
+                'agenda_id'        => isset($d['agenda_id']) ? (int) $d['agenda_id'] : 0,
                 'user_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['user_id'] ?? 0), $rs))),
                 'seat_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['seat_id'] ?? 0), $rs))),
                 'contact_ids' => array_values(array_filter(array_map(static fn($r) => (int) ($r['contact_id'] ?? 0), $rs))),
@@ -962,6 +936,13 @@ window.__meetingRef = {
 .pm-check-list .pm-row label { margin: 0; cursor: pointer; line-height: 1.3; }
 .pm-check-list .pm-row:hover { background: #f8fafc; }
 .pm-check-list .pm-empty { color: #94a3b8; text-align: center; padding: 20px 0; font-size: .85rem; }
+
+/* ---------- View-page-style section lists (replaces the sub-tables) --- */
+.meeting-section .card-header         { font-weight: 600; }
+.meeting-list-item                    { font-size: .9rem; }
+.meeting-list-item:last-child         { border-bottom: 0 !important; }
+.meeting-list-item .meeting-sl        { min-width: 1.75rem; padding-top: 0.1rem; }
+.meeting-group-header                 { letter-spacing: .02em; }
 </style>
 
 <!-- Agenda modal — three checkbox lists for leads (multi-select). -->
@@ -1002,7 +983,14 @@ window.__meetingRef = {
     <div class="mm-header"><span><i class="bi bi-check2-square me-1"></i>Decision point</span><button type="button" class="btn-close" data-close-modal></button></div>
     <div class="mm-body">
         <input type="hidden" id="dModalIdx" value="">
-        <div class="mb-2"><label class="form-label small">Heading *</label><input class="form-control" id="dModalHead"></div>
+        <div class="row g-2 mb-2">
+            <div class="col-md-8"><label class="form-label small">Heading *</label><input class="form-control" id="dModalHead"></div>
+            <div class="col-md-4"><label class="form-label small">Agenda</label>
+                <select class="form-select" id="dModalAgenda" title="Group this decision under one of the meeting's agenda items. Leave as Other for decisions that don't belong to a specific agenda.">
+                    <option value="">Other</option>
+                </select>
+            </div>
+        </div>
         <div class="mb-2"><label class="form-label small">Description</label><textarea class="form-control" id="dModalDesc" rows="3"></textarea></div>
         <div class="mb-2"><label class="form-label small">Remarks <span class="text-muted">(optional)</span></label><textarea class="form-control" id="dModalRemarks" rows="2" placeholder="Internal notes about this decision (not sent to anyone)."></textarea></div>
         <div class="row g-2 mb-3 align-items-end">
@@ -1109,13 +1097,28 @@ window.__meetingRef = {
     const R = window.__meetingRef;
 
     // ============ STATE ARRAYS ============
+    // tmp_id is a client-only stable id used to re-link decisions to
+    // agenda items across the big-save handler's DELETE+INSERT cycle
+    // (the DB id of each agenda row changes on every save, so we can't
+    // reference it in a cross-table way client-side).
+    const makeTmp = () => (crypto && crypto.randomUUID ? crypto.randomUUID() : ('t-' + Math.random().toString(36).slice(2) + Date.now()));
     const state = {
         participants: (R.preset.participants || []).slice(),
-        agenda:       (R.preset.agenda || []).slice(),
+        agenda:       (R.preset.agenda || []).map(a => ({ ...a, tmp_id: makeTmp() })),
         decisions:    (R.preset.decisions || []).slice(),
         next_agenda:  (R.preset.next_agenda || []).slice(),
         urls:         (R.preset.urls || []).slice(),
     };
+    // Seed decision.agenda_tmp_id from the loaded agenda_id -> tmp_id
+    // mapping so edits land on the same agenda after the save flip.
+    (() => {
+        const dbIdToTmp = {};
+        state.agenda.forEach(a => { if (a.id) dbIdToTmp[String(a.id)] = a.tmp_id; });
+        state.decisions.forEach(d => {
+            const aid = Number(d.agenda_id || 0);
+            d.agenda_tmp_id = aid > 0 ? (dbIdToTmp[String(aid)] || '') : '';
+        });
+    })();
     let contactsPool = R.contacts.slice(); // mutable — quick-add + refresh
     let meetingId    = Number(R.meeting_id || 0);
     // ------- Auto-save wiring -------
@@ -1239,27 +1242,48 @@ window.__meetingRef = {
         document.addEventListener('mouseup', () => { dragging = false; modal.classList.remove('mm-dragging'); });
     });
 
-    // ============ TABLE RENDERERS ============
+    // ============ LIST RENDERERS (view-page style) ============
+    // Each section is a stacked block of items with pencil + x icons on
+    // the right. Pencil opens the existing modal; x deletes the row via
+    // the same AJAX endpoint the old table rows used.
     const renderParticipants = () => {
-        const tbody = document.querySelector('#participantTable tbody');
-        tbody.innerHTML = state.participants.map((p, i) => {
+        const list = document.getElementById('participantList');
+        document.getElementById('participantCount').textContent = state.participants.length;
+        list.innerHTML = state.participants.map((p, i) => {
             const name = p.user_id ? nameOf(R.users, p.user_id) : (p.contact_id ? nameOf(contactsPool, p.contact_id) : '—');
-            const type = String(p.is_mandatory) === '1' ? '<span class="badge text-bg-danger">Mandatory</span>' : '<span class="badge text-bg-secondary">Optional</span>';
-            // Inline two-button attendance toggle. Clicking the active
-            // one again clears attendance back to "not recorded" (null).
+            const sub  = p.contact_id ? (findById(contactsPool, p.contact_id)?.inst || '') : '';
+            const role = p.role_label || '';
+            const mandMark = String(p.is_mandatory) === '1'
+                ? '<span class="text-danger fw-bold" title="Mandatory" style="font-size:1.1rem; line-height:1;">*</span>'
+                : '<span class="text-muted" title="Optional" style="width:0.7rem; display:inline-block;"></span>';
             const current = String(p.attended ?? '');
             const presentActive = current === '1';
             const absentActive  = current === '0';
-            const att = `<div class="btn-group btn-group-sm" role="group" aria-label="Attendance for ${esc(name)}">
-                <button type="button" class="btn ${presentActive ? 'btn-success' : 'btn-outline-success'}" data-attend-set="${i}:1" title="${presentActive ? 'Click to clear' : 'Mark as Present'}"><i class="bi bi-check2 me-1"></i>Present</button>
-                <button type="button" class="btn ${absentActive ? 'btn-danger' : 'btn-outline-danger'}" data-attend-set="${i}:0" title="${absentActive ? 'Click to clear' : 'Mark as Absent'}"><i class="bi bi-x me-1"></i>Absent</button>
+            const attendPill = presentActive
+                ? '<span class="badge text-bg-success" title="Present">P</span>'
+                : (absentActive ? '<span class="badge text-bg-danger" title="Absent">A</span>'
+                    : '<span class="badge text-bg-light border" title="Attendance not recorded">—</span>');
+            const subRow = sub ? `<div class="text-muted small">${esc(sub)}</div>` : '';
+            const roleRow = role ? `<div class="text-muted small"><i class="bi bi-tag me-1"></i>${esc(role)}</div>` : '';
+            return `<div class="meeting-list-item d-flex align-items-start gap-2 py-2 px-1 border-bottom">
+                ${mandMark}
+                <div class="flex-grow-1 small">
+                    <strong>${esc(name)}</strong>
+                    ${subRow}
+                    ${roleRow}
+                </div>
+                <div class="d-flex align-items-center gap-1 flex-shrink-0">
+                    <button type="button" class="btn btn-sm btn-link p-0 pe-1" data-attend-set="${i}:1" title="${presentActive ? 'Click to clear' : 'Mark as Present'}">
+                        <span class="${presentActive ? 'badge text-bg-success' : 'badge text-bg-light border'}">P</span>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-link p-0 pe-1" data-attend-set="${i}:0" title="${absentActive ? 'Click to clear' : 'Mark as Absent'}">
+                        <span class="${absentActive ? 'badge text-bg-danger' : 'badge text-bg-light border'}">A</span>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1" data-edit-participant="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger  py-0 px-1" data-del-participant="${i}"  title="Delete"><i class="bi bi-x"></i></button>
+                </div>
             </div>`;
-            return `<tr><td>${esc(name)}</td><td>${type}</td><td>${att}</td><td class="small">${esc(p.role_label || '')}</td>
-                <td class="text-end">
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-participant="${i}"><i class="bi bi-pencil"></i></button>
-                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-participant="${i}"><i class="bi bi-x"></i></button>
-                </td></tr>`;
-        }).join('') || '<tr><td colspan="5" class="text-center text-muted small py-2">No participants yet — click Add participant.</td></tr>';
+        }).join('') || '<div class="text-muted small p-2">No participants yet — click the + to add.</div>';
         const hidden = document.getElementById('participantHidden');
         hidden.innerHTML = state.participants.map((p, i) => {
             return `<input type="hidden" name="participant[${i}][user_id]"      value="${p.user_id || 0}">
@@ -1269,40 +1293,39 @@ window.__meetingRef = {
                     <input type="hidden" name="participant[${i}][role_label]"   value="${esc(p.role_label || '')}">`;
         }).join('');
     };
+    const renderAgendaItem = (a, i) => {
+        const leads = [
+            ...((a.user_ids    || []).map(id => nameOf(R.users,       id))),
+            ...((a.seat_ids    || []).map(id => nameOf(R.seats,       id))),
+            ...((a.contact_ids || []).map(id => nameOf(contactsPool,  id))),
+        ].filter(Boolean);
+        const descBlock    = (a.description || '').trim() === '' ? '' : `<div class="small text-muted mt-1" style="white-space:pre-wrap;">${esc(a.description)}</div>`;
+        const remarksBlock = (a.remarks     || '').trim() === '' ? '' : `<div class="small text-warning-emphasis mt-1" style="white-space:pre-wrap;"><i class="bi bi-exclamation-triangle me-1"></i><em>Remarks:</em> ${esc(a.remarks)}</div>`;
+        const leadsBlock   = leads.length === 0 ? '' : `<div class="small text-muted mt-1"><i class="bi bi-person-check me-1"></i>Lead: ${esc(leads.join(', '))}</div>`;
+        return `<div class="meeting-list-item d-flex align-items-start gap-2 py-2 border-bottom">
+            <div class="meeting-sl text-muted small">${i+1}.</div>
+            <div class="flex-grow-1">
+                <strong>${esc(a.title || '')}</strong>
+                ${descBlock}
+                ${leadsBlock}
+                ${remarksBlock}
+            </div>
+            <div class="d-flex flex-shrink-0 gap-1">
+                <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1" data-edit-agenda="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
+                <button type="button" class="btn btn-sm btn-outline-danger  py-0 px-1" data-del-agenda="${i}"  title="Delete"><i class="bi bi-x"></i></button>
+            </div>
+        </div>`;
+    };
     const renderAgenda = () => {
-        const tbody = document.querySelector('#agendaTable tbody');
-        tbody.innerHTML = state.agenda.map((a, i) => {
-            const leads = [
-                ...((a.user_ids    || []).map(id => nameOf(R.users,       id))),
-                ...((a.seat_ids    || []).map(id => nameOf(R.seats,       id))),
-                ...((a.contact_ids || []).map(id => nameOf(contactsPool,  id))),
-            ].filter(Boolean).map(esc).join(', ');
-            const desc    = a.description || '';
-            const remarks = a.remarks || '';
-            const descCell    = desc    === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(desc)}">${esc(desc)}</div>`;
-            const leadCell    = leads   === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(leads)}">${leads}</div>`;
-            const remarksCell = remarks === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(remarks)}">${esc(remarks)}</div>`;
-            return `<tr>
-                <td class="text-muted">${i+1}</td>
-                <td class="fw-semibold"><div class="cell-clamp" title="${esc(a.title || '')}">${esc(a.title)}</div></td>
-                <td class="text-muted">${descCell}</td>
-                <td>${leadCell}</td>
-                <td class="remarks-cell text-warning-emphasis">${remarksCell}</td>
-                <td class="action-col text-end">
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-agenda="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
-                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-agenda="${i}"  title="Delete"><i class="bi bi-x"></i></button>
-                </td></tr>`;
-        }).join('') || '<tr><td colspan="6" class="text-center text-muted small py-3">No agenda items yet.</td></tr>';
-        // Hidden inputs for the big Save-meeting fallback — keep the
-        // legacy single-value fields so the server-side wholesale
-        // rewrite still works, now derived from the first ticked
-        // entry of each list.
+        const list = document.getElementById('agendaList');
+        list.innerHTML = state.agenda.map(renderAgendaItem).join('') || '<div class="text-muted small">No agenda items yet.</div>';
         const hidden = document.getElementById('agendaHidden');
         hidden.innerHTML = state.agenda.map((a, i) => {
             const u = (a.user_ids    || [])[0] || 0;
             const s = (a.seat_ids    || [])[0] || 0;
             const c = (a.contact_ids || [])[0] || 0;
-            return `<input type="hidden" name="agenda[${i}][title]"           value="${esc(a.title || '')}">
+            return `<input type="hidden" name="agenda[${i}][tmp_id]"          value="${esc(a.tmp_id || '')}">
+                    <input type="hidden" name="agenda[${i}][title]"           value="${esc(a.title || '')}">
                     <input type="hidden" name="agenda[${i}][description]"     value="${esc(a.description || '')}">
                     <input type="hidden" name="agenda[${i}][remarks]"         value="${esc(a.remarks || '')}">
                     <input type="hidden" name="agenda[${i}][lead_user_id]"    value="${u}">
@@ -1310,36 +1333,59 @@ window.__meetingRef = {
                     <input type="hidden" name="agenda[${i}][lead_contact_id]" value="${c}">`;
         }).join('');
     };
+    const renderDecisionCard = (d, origIdx) => {
+        const responsibles = [
+            ...(d.user_ids || []).map(id => nameOf(R.users, id)),
+            ...(d.seat_ids || []).map(id => nameOf(R.seats, id)),
+            ...(d.contact_ids || []).map(id => nameOf(contactsPool, id)),
+            ...(d.team_ids || []).map(id => {
+                const t = (R.teams || []).find(x => x.id === id);
+                return t ? ('Team: ' + t.name) : '';
+            }),
+        ].filter(Boolean);
+        const respBadges = responsibles.map(n => `<span class="badge text-bg-light border me-1">${esc(n)}</span>`).join('');
+        const descBlock    = (d.description || '').trim() === '' ? '' : `<div class="small mt-1" style="white-space:pre-wrap;">${esc(d.description)}</div>`;
+        const remarksBlock = (d.remarks     || '').trim() === '' ? '' : `<div class="small text-muted mt-1" style="white-space:pre-wrap;"><em>Remarks:</em> ${esc(d.remarks)}</div>`;
+        const dueBlock     = (d.due_date    || '').trim() === '' ? '' : `<div class="small text-muted"><i class="bi bi-calendar-event me-1"></i>Due: ${esc(d.due_date)}</div>`;
+        const respBlock    = responsibles.length === 0 ? '' : `<div class="small mt-1">Responsible: ${respBadges}</div>`;
+        return `<div class="meeting-list-item border-bottom pb-2 mb-2 d-flex align-items-start gap-2">
+            <div class="flex-grow-1">
+                <strong>${esc(d.heading || '')}</strong>
+                ${descBlock}
+                ${dueBlock}
+                ${respBlock}
+                ${remarksBlock}
+            </div>
+            <div class="d-flex flex-shrink-0 gap-1">
+                <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1" data-edit-decision="${origIdx}" title="Edit"><i class="bi bi-pencil"></i></button>
+                <button type="button" class="btn btn-sm btn-outline-danger  py-0 px-1" data-del-decision="${origIdx}"  title="Delete"><i class="bi bi-x"></i></button>
+            </div>
+        </div>`;
+    };
     const renderDecisions = () => {
-        const tbody = document.querySelector('#decisionTable tbody');
-        tbody.innerHTML = state.decisions.map((d, i) => {
-            const responsibles = [
-                ...(d.user_ids || []).map(id => nameOf(R.users, id)),
-                ...(d.seat_ids || []).map(id => nameOf(R.seats, id)),
-                ...(d.contact_ids || []).map(id => nameOf(contactsPool, id)),
-                ...(d.team_ids || []).map(id => {
-                    const t = (R.teams || []).find(x => x.id === id);
-                    return t ? ('Team: ' + t.name) : '';
-                }),
-            ].filter(Boolean).map(esc).join(', ');
-            const desc    = d.description || '';
-            const remarks = d.remarks || '';
-            const descCell    = desc    === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(desc)}">${esc(desc)}</div>`;
-            const respCell    = responsibles === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(responsibles)}">${responsibles}</div>`;
-            const remarksCell = remarks === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(remarks)}">${esc(remarks)}</div>`;
-            const dueCell     = (d.due_date || '') === '' ? '<span class="cell-muted-empty"></span>' : esc(d.due_date);
-            return `<tr>
-                <td class="text-muted">${i+1}</td>
-                <td class="fw-semibold"><div class="cell-clamp" title="${esc(d.heading || '')}">${esc(d.heading)}</div></td>
-                <td class="text-muted">${descCell}</td>
-                <td>${dueCell}</td>
-                <td>${respCell}</td>
-                <td class="remarks-cell text-warning-emphasis">${remarksCell}</td>
-                <td class="action-col text-end">
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-decision="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
-                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-decision="${i}"  title="Delete"><i class="bi bi-x"></i></button>
-                </td></tr>`;
-        }).join('') || '<tr><td colspan="7" class="text-center text-muted small py-3">No decision points yet.</td></tr>';
+        const list = document.getElementById('decisionList');
+        if (state.decisions.length === 0) {
+            list.innerHTML = '<div class="text-muted small">No decision points yet.</div>';
+        } else {
+            // Group decisions by their agenda_tmp_id. "Other" bucket at
+            // the bottom. Each group shows the agenda's Sl.no. and title.
+            const groups = new Map();
+            state.agenda.forEach((a, aIdx) => groups.set(a.tmp_id, { title: `#${aIdx+1} — ${a.title || '(untitled)'}`, items: [] }));
+            groups.set('', { title: 'Other', items: [] });
+            state.decisions.forEach((d, dIdx) => {
+                const key = d.agenda_tmp_id && groups.has(d.agenda_tmp_id) ? d.agenda_tmp_id : '';
+                groups.get(key).items.push({ d, dIdx });
+            });
+            const parts = [];
+            for (const [, g] of groups) {
+                if (g.items.length === 0) continue;
+                parts.push(`<div class="mb-3">
+                    <div class="meeting-group-header small text-uppercase text-muted fw-semibold mb-2"><i class="bi bi-folder2 me-1"></i>${esc(g.title)}</div>
+                    ${g.items.map(({ d, dIdx }) => renderDecisionCard(d, dIdx)).join('')}
+                </div>`);
+            }
+            list.innerHTML = parts.join('');
+        }
         const hidden = document.getElementById('decisionHidden');
         hidden.innerHTML = state.decisions.map((d, i) => {
             const users   = (d.user_ids    || []).map(id => `<input type="hidden" name="decision[${i}][user_ids][]"    value="${id}">`).join('');
@@ -1349,46 +1395,50 @@ window.__meetingRef = {
             const createOwn = Number(d.create_own_tasks == null ? 1 : d.create_own_tasks) === 1 ? 1 : 0;
             const priv      = Number(d.status_private || 0) === 1 ? 1 : 0;
             const fanOut    = Number(d.fan_out_teams || 0) === 1 ? 1 : 0;
-            return `<input type="hidden" name="decision[${i}][heading]"     value="${esc(d.heading || '')}">
-                    <input type="hidden" name="decision[${i}][description]" value="${esc(d.description || '')}">
-                    <input type="hidden" name="decision[${i}][due_date]"    value="${d.due_date || ''}">
-                    <input type="hidden" name="decision[${i}][remarks]"     value="${esc(d.remarks || '')}">
+            return `<input type="hidden" name="decision[${i}][heading]"       value="${esc(d.heading || '')}">
+                    <input type="hidden" name="decision[${i}][description]"   value="${esc(d.description || '')}">
+                    <input type="hidden" name="decision[${i}][due_date]"      value="${d.due_date || ''}">
+                    <input type="hidden" name="decision[${i}][remarks]"       value="${esc(d.remarks || '')}">
+                    <input type="hidden" name="decision[${i}][agenda_tmp_id]" value="${esc(d.agenda_tmp_id || '')}">
                     <input type="hidden" name="decision[${i}][create_own_tasks]" value="${createOwn}">
                     <input type="hidden" name="decision[${i}][status_private]"   value="${priv}">
                     <input type="hidden" name="decision[${i}][fan_out_teams]"    value="${fanOut}">${users}${seats}${conts}${teams}`;
         }).join('');
     };
     const renderNextAgenda = () => {
-        const tbody = document.querySelector('#nextAgendaTable tbody');
-        tbody.innerHTML = state.next_agenda.map((n, i) => {
-            const desc    = n.description || '';
-            const remarks = n.remarks || '';
-            const descCell    = desc    === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(desc)}">${esc(desc)}</div>`;
-            const remarksCell = remarks === '' ? '<span class="cell-muted-empty"></span>' : `<div class="cell-clamp" title="${esc(remarks)}">${esc(remarks)}</div>`;
-            return `<tr>
-                <td class="text-muted">${i+1}</td>
-                <td class="fw-semibold"><div class="cell-clamp" title="${esc(n.title || '')}">${esc(n.title)}</div></td>
-                <td class="text-muted">${descCell}</td>
-                <td class="remarks-cell text-warning-emphasis">${remarksCell}</td>
-                <td class="action-col text-end">
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-next="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
-                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-next="${i}"  title="Delete"><i class="bi bi-x"></i></button>
-                </td></tr>`;
-        }).join('') || '<tr><td colspan="5" class="text-center text-muted small py-3">No next-meeting agenda yet.</td></tr>';
+        const list = document.getElementById('nextAgendaList');
+        list.innerHTML = state.next_agenda.map((n, i) => {
+            const descBlock    = (n.description || '').trim() === '' ? '' : `<div class="small text-muted mt-1" style="white-space:pre-wrap;">${esc(n.description)}</div>`;
+            const remarksBlock = (n.remarks     || '').trim() === '' ? '' : `<div class="small text-warning-emphasis mt-1" style="white-space:pre-wrap;"><i class="bi bi-exclamation-triangle me-1"></i><em>Remarks:</em> ${esc(n.remarks)}</div>`;
+            return `<div class="meeting-list-item d-flex align-items-start gap-2 py-2 border-bottom">
+                <div class="meeting-sl text-muted small">${i+1}.</div>
+                <div class="flex-grow-1">
+                    <strong>${esc(n.title || '')}</strong>
+                    ${descBlock}
+                    ${remarksBlock}
+                </div>
+                <div class="d-flex flex-shrink-0 gap-1">
+                    <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1" data-edit-next="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger  py-0 px-1" data-del-next="${i}"  title="Delete"><i class="bi bi-x"></i></button>
+                </div>
+            </div>`;
+        }).join('') || '<div class="text-muted small">No next-meeting agenda yet.</div>';
         document.getElementById('nextAgendaHidden').innerHTML = state.next_agenda.map((n, i) =>
             `<input type="hidden" name="next_agenda[${i}][title]"       value="${esc(n.title || '')}">
              <input type="hidden" name="next_agenda[${i}][description]" value="${esc(n.description || '')}">
              <input type="hidden" name="next_agenda[${i}][remarks]"     value="${esc(n.remarks || '')}">`).join('');
     };
     const renderUrls = () => {
-        const tbody = document.querySelector('#urlTable tbody');
-        tbody.innerHTML = state.urls.map((u, i) => {
-            return `<tr><td class="small">${esc(u.label || '')}</td><td class="small"><a href="${esc(u.url)}" target="_blank">${esc(u.url)}</a></td>
-                <td class="text-end">
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-edit-url="${i}"><i class="bi bi-pencil"></i></button>
-                    <button type="button" class="btn btn-sm btn-outline-danger"  data-del-url="${i}"><i class="bi bi-x"></i></button>
-                </td></tr>`;
-        }).join('') || '<tr><td colspan="3" class="text-center text-muted small py-2">No URLs yet.</td></tr>';
+        const list = document.getElementById('urlList');
+        list.innerHTML = state.urls.map((u, i) => {
+            const label = u.label || u.url || '';
+            return `<div class="meeting-list-item d-flex align-items-center gap-2 py-2 border-bottom small">
+                <i class="bi bi-link-45deg text-muted"></i>
+                <a href="${esc(u.url)}" target="_blank" rel="noopener" class="flex-grow-1 text-truncate" title="${esc(u.url)}">${esc(label)}</a>
+                <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1" data-edit-url="${i}" title="Edit"><i class="bi bi-pencil"></i></button>
+                <button type="button" class="btn btn-sm btn-outline-danger  py-0 px-1" data-del-url="${i}"  title="Delete"><i class="bi bi-x"></i></button>
+            </div>`;
+        }).join('') || '<div class="text-muted small p-2">No URLs yet.</div>';
         document.getElementById('urlHidden').innerHTML = state.urls.map((u, i) =>
             `<input type="hidden" name="url[${i}][label]" value="${esc(u.label || '')}">
              <input type="hidden" name="url[${i}][url]"   value="${esc(u.url || '')}">`).join('');
@@ -1563,6 +1613,14 @@ window.__meetingRef = {
         document.getElementById('dModalDesc').value = d.description || '';
         document.getElementById('dModalDue').value  = d.due_date || '';
         document.getElementById('dModalRemarks').value = d.remarks || '';
+        // Fill the agenda dropdown from the current state.agenda list,
+        // using tmp_id as the stable value. "Other" (blank) is the
+        // first option.
+        const aSel = document.getElementById('dModalAgenda');
+        const current = d.agenda_tmp_id || '';
+        aSel.innerHTML = '<option value="">Other</option>' + state.agenda.map((a, i) =>
+            `<option value="${esc(a.tmp_id)}" ${a.tmp_id === current ? 'selected' : ''}>#${i+1} — ${esc(a.title || '(untitled)')}</option>`
+        ).join('');
         document.getElementById('dModalCreateOwn').checked = d.create_own_tasks == null ? true : Number(d.create_own_tasks) === 1;
         document.getElementById('dModalPrivate').checked   = Number(d.status_private || 0) === 1;
         document.getElementById('dModalFanOut').checked    = Number(d.fan_out_teams || 0) === 1;
@@ -1637,6 +1695,12 @@ window.__meetingRef = {
             const j = await ajax({ action: endpoint, meeting_id: meetingId, ...payload });
             if (!j.ok) { alert('Save failed: ' + (j.error || '')); setStatus('Save error', 'danger'); return; }
             const row = { ...payload, id: j.item_id };
+            // Agenda rows need a stable tmp_id for cross-table linking;
+            // keep the previous one on edit, mint a fresh one on add.
+            if (listName === 'agenda') {
+                const prevTmp = idxRaw === '' ? '' : (state.agenda[+idxRaw]?.tmp_id || '');
+                row.tmp_id = prevTmp || makeTmp();
+            }
             if (idxRaw === '') state[listName].push(row); else state[listName][+idxRaw] = row;
             renderAll(); closeAllModals();
             setStatus('Saved', 'success');
@@ -1732,10 +1796,17 @@ window.__meetingRef = {
         document.querySelectorAll('#dListUsers input:checked').forEach(c => userSet.add(Number(c.value)));
         document.querySelectorAll('#dListContacts input:checked').forEach(c => contactSet.add(Number(c.value)));
         document.querySelectorAll('#dListTeams input:checked').forEach(c => teamSet.add(Number(c.value)));
+        // Resolve the picked agenda tmp_id to the agenda's current DB id
+        // (if any) so the ajax upsert can persist agenda_id directly.
+        const pickedAgendaTmp = document.getElementById('dModalAgenda').value || '';
+        const pickedAgenda = pickedAgendaTmp ? state.agenda.find(a => a.tmp_id === pickedAgendaTmp) : null;
+        const pickedAgendaId = pickedAgenda ? (pickedAgenda.id || 0) : 0;
         upsertRow('upsert_decision', {
             id: existingId, heading, description: document.getElementById('dModalDesc').value.trim(),
             due_date: document.getElementById('dModalDue').value,
             remarks: document.getElementById('dModalRemarks').value.trim(),
+            agenda_id: pickedAgendaId,
+            agenda_tmp_id: pickedAgendaTmp,
             create_own_tasks: document.getElementById('dModalCreateOwn').checked ? 1 : 0,
             status_private:   document.getElementById('dModalPrivate').checked   ? 1 : 0,
             fan_out_teams:    document.getElementById('dModalFanOut').checked    ? 1 : 0,

@@ -200,6 +200,12 @@ function meetings_bootstrap(): void
             if (!isset($cols['remarks'])) {
                 $db->query('ALTER TABLE meeting_decision ADD COLUMN remarks TEXT NULL AFTER due_date');
             }
+            // Optional link to the parent agenda item on the same
+            // meeting. NULL means "Other / unmapped" — the edit UI
+            // groups unmapped decisions under that bucket.
+            if (!isset($cols['agenda_id'])) {
+                $db->query('ALTER TABLE meeting_decision ADD COLUMN agenda_id INT NULL AFTER meeting_id');
+            }
         } catch (Throwable $e) { /* ALTER refused — decision modal still works without the toggles */ }
 
         // Remarks column on agenda + next_agenda — populated by the
