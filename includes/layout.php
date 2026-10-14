@@ -423,6 +423,7 @@ function render_header(string $title, array $options = []): void
                                 <?php endif; ?>
                             </li>
                             <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/my_profile.php"><i class="bi bi-person-circle me-2"></i>My Profile</a></li>
                             <li><a class="dropdown-item" href="/change_password.php"><i class="bi bi-key me-2"></i>Change Password</a></li>
                             <li><a class="dropdown-item text-danger" href="/logout.php"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
                         </ul>

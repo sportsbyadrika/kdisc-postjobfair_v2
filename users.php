@@ -13,6 +13,7 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/task_tracker_helpers.php';
 require_once __DIR__ . '/includes/rbac.php';
+require_once __DIR__ . '/includes/user_photo_helpers.php';
 require_admin();
 
 /* ---------- One-time self-migrations ---------- */
@@ -31,9 +32,7 @@ try {
 } catch (Throwable $e) { /* ALTER refused — new fields silently absent on hosted install */ }
 task_tracker_bootstrap();
 
-/* ---------- Upload dir for photos ---------- */
-const USER_PHOTO_DIR = __DIR__ . '/uploads/user_photo';
-if (!is_dir(USER_PHOTO_DIR)) @mkdir(USER_PHOTO_DIR, 0775, true);
+/* Upload dir + save_cropped_photo() come from includes/user_photo_helpers.php. */
 
 $user = current_user();
 $viewerIsSuperAdmin = (int) ($user['is_super_admin'] ?? 0) === 1;
@@ -46,28 +45,6 @@ function parse_assigned_districts(): ?string
     if (!is_array($arr)) return null;
     $clean = array_values(array_filter(array_map(static fn($v) => trim((string) $v), $arr), static fn($v) => $v !== ''));
     return $clean === [] ? null : implode(',', $clean);
-}
-
-/** Decode a data: URL image into a file on disk. Returns the stored
- *  relative path, or null on failure. */
-function save_cropped_photo(string $dataUrl, int $userId): ?string
-{
-    if ($dataUrl === '' || !str_starts_with($dataUrl, 'data:image/')) return null;
-    $pos = strpos($dataUrl, 'base64,');
-    if ($pos === false) return null;
-    $bin = base64_decode(substr($dataUrl, $pos + 7), true);
-    if ($bin === false || strlen($bin) < 100) return null;
-    // Basic JPEG / PNG magic sniff.
-    $isJpeg = str_starts_with($bin, "\xFF\xD8\xFF");
-    $isPng  = str_starts_with($bin, "\x89PNG\r\n\x1a\n");
-    if (!$isJpeg && !$isPng) return null;
-    // Cap at 2 MiB — Cropper's canvas output of a 400x514 JPEG is 20-80 KiB.
-    if (strlen($bin) > 2 * 1024 * 1024) return null;
-    $ext  = $isPng ? 'png' : 'jpg';
-    $name = $userId . '_' . bin2hex(random_bytes(3)) . '.' . $ext;
-    $dest = USER_PHOTO_DIR . '/' . $name;
-    if (file_put_contents($dest, $bin) === false) return null;
-    return 'uploads/user_photo/' . $name;
 }
 
 /* ---------- POST handlers ---------- */
