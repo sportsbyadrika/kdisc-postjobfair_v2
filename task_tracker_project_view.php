@@ -282,19 +282,40 @@ render_page_header('Project · ' . $project['name'], [
 
 <style>
 .tt-board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; }
-.tt-column { flex: 0 0 300px; background: #f4f6fa; border-radius: 10px; display: flex; flex-direction: column; max-height: 76vh; }
+.tt-column { flex: 0 0 300px; background: #f4f6fa; border-radius: 10px; display: flex; flex-direction: column; max-height: 76vh; transition: background .15s, box-shadow .15s; }
 .tt-column-header { padding: 10px 12px; border-radius: 10px 10px 0 0; }
-.tt-column-body { padding: 10px; flex: 1; overflow-y: auto; min-height: 60px; display: flex; flex-direction: column; gap: 8px; }
+.tt-column-body { padding: 10px; flex: 1; overflow-y: auto; min-height: 60px; display: flex; flex-direction: column; gap: 8px; border-radius: 0 0 10px 10px; transition: background .15s, outline .15s; }
 .tt-card { position: relative; background: #fff; border: 1px solid #e3e6ee; border-radius: 8px; padding: 10px 12px; cursor: grab; box-shadow: 0 1px 2px rgba(30,42,66,.04); transition: box-shadow .15s ease, transform .05s ease; user-select: none; touch-action: none; }
 .tt-card:hover { box-shadow: 0 2px 6px rgba(30,42,66,.08); }
 .tt-card:active { cursor: grabbing; }
 .tt-card-title { font-weight: 600; line-height: 1.3; }
 .tt-empty { text-align: center; padding: 12px; border: 1px dashed #cfd6e4; border-radius: 8px; background: #fff; }
 .tt-avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; font-size: 12px; font-weight: 700; }
-.tt-ghost { opacity: .5; }
-.tt-drag { transform: rotate(1deg); }
+
+/* ---------- Drag feedback ---------- */
+/* `.tt-drag-mode` on the board = a card is being dragged somewhere.
+   Every column body dims slightly + gains a dashed outline to say
+   "you can drop here". The column currently under the pointer
+   receives `.tt-drop-active` from Sortable.onMove and lights up. */
+.tt-drag-mode .tt-column-body { outline: 2px dashed #cbd5e1; outline-offset: -4px; background: #fafbfd; }
+.tt-drag-mode .tt-column-body.tt-drop-active { outline-color: #0d6efd; outline-style: solid; background: #eff6ff; }
+.tt-ghost { opacity: .4; background: #e2e8f0 !important; border-style: dashed !important; box-shadow: none !important; }
+.tt-ghost > * { visibility: hidden; }
+.tt-drag  { transform: rotate(1.5deg) scale(1.02); box-shadow: 0 8px 20px rgba(30,42,66,.18) !important; border-color: #0d6efd !important; cursor: grabbing !important; }
 .tt-card.stretched-link { text-decoration: none; color: inherit; }
+
+/* ---------- Toasts (success / warn / fail) ---------- */
+.tt-toast-wrap { position: fixed; top: 72px; right: 20px; z-index: 1080; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.tt-toast      { background: #0f172a; color: #fff; padding: 10px 14px; border-radius: 8px; box-shadow: 0 10px 24px rgba(15,23,42,.25); font-size: .9rem; max-width: 320px; opacity: 0; transform: translateX(16px); transition: opacity .2s, transform .2s; pointer-events: auto; }
+.tt-toast.show { opacity: 1; transform: translateX(0); }
+.tt-toast.tt-toast-success { background: #166534; }
+.tt-toast.tt-toast-warn    { background: #92400e; }
+.tt-toast.tt-toast-danger  { background: #991b1b; }
+.tt-toast i                { margin-right: 6px; }
 </style>
+
+<!-- Toast tray for drag feedback. One container, reused for every message. -->
+<div class="tt-toast-wrap" id="ttToastWrap" aria-live="polite" aria-atomic="true"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"
     crossorigin="anonymous" referrerpolicy="no-referrer"></script>
@@ -337,6 +358,32 @@ function ttInitBoard () {
     const modalEl = document.getElementById('terminalModal');
     const modal   = modalEl ? new bootstrap.Modal(modalEl) : null;
     let pendingMove = null;   // { card, oldParent, oldNext, taskId, newStatusId, prevId, nextId, statusName }
+
+    // Small toast system — replaces alert() for non-blocking feedback.
+    const toastWrap = document.getElementById('ttToastWrap');
+    const toast = (msg, tone = 'success', timeout = 2600) => {
+        if (!toastWrap) return;
+        const el = document.createElement('div');
+        const icon = tone === 'danger' ? 'bi-exclamation-octagon-fill'
+                   : tone === 'warn'    ? 'bi-info-circle-fill'
+                   : 'bi-check2-circle';
+        el.className = 'tt-toast tt-toast-' + tone;
+        el.innerHTML = '<i class="bi ' + icon + '"></i>' + msg;
+        toastWrap.appendChild(el);
+        requestAnimationFrame(() => el.classList.add('show'));
+        setTimeout(() => {
+            el.classList.remove('show');
+            setTimeout(() => el.remove(), 250);
+        }, timeout);
+    };
+
+    // Column highlight while a card is being dragged. Toggled from
+    // Sortable's onChoose/onUnchoose + onMove below.
+    const setDragMode = (on) => { board.classList.toggle('tt-drag-mode', !!on); if (!on) board.querySelectorAll('.tt-drop-active').forEach(el => el.classList.remove('tt-drop-active')); };
+    const highlightCol = (colEl) => {
+        board.querySelectorAll('.tt-drop-active').forEach(el => el.classList.remove('tt-drop-active'));
+        if (colEl) colEl.classList.add('tt-drop-active');
+    };
 
     const revert = () => {
         if (!pendingMove) return;
@@ -386,8 +433,9 @@ function ttInitBoard () {
             // Update the card's status_id attr so a subsequent move computes correctly.
             const card = board.querySelector(`.tt-card[data-task-id="${payload.task_id}"]`);
             if (card) card.setAttribute('data-status-id', String(payload.new_status_id));
+            toast('Moved to <strong>' + (payload.status_name || 'column') + '</strong>', 'success');
         } catch (e) {
-            alert('Move failed: ' + (e.message || e));
+            toast('Move failed: ' + (e.message || e), 'danger', 4000);
             revert();
         } finally {
             pendingMove = null;
@@ -401,7 +449,7 @@ function ttInitBoard () {
     document.getElementById('terminalConfirm')?.addEventListener('click', () => {
         if (!pendingMove) return;
         const date = document.getElementById('terminalDate').value;
-        if (!date) { alert('Pick a completion date, or cancel.'); return; }
+        if (!date) { toast('Pick a completion date, or cancel.', 'warn'); return; }
         const p = pendingMove; pendingMove = null;
         modal?.hide();
         send({
@@ -410,6 +458,7 @@ function ttInitBoard () {
             prev_task_id: p.prevId,
             next_task_id: p.nextId,
             actual_end: date,
+            status_name: p.statusName,
         });
     });
 
@@ -441,13 +490,19 @@ function ttInitBoard () {
             draggable: '.tt-card',
             filter:    '.tt-empty',
             preventOnFilter: false,
+            onChoose: () => setDragMode(true),
+            onUnchoose: () => setDragMode(false),
+            onMove: (evt) => {
+                // Highlight whichever column body the cursor is over
+                // so the user has a clear "I'll land here" signal.
+                highlightCol(evt.to);
+                return true;
+            },
             onStart: (evt) => {
-                // Remove any "drop tasks here" placeholder in the source col.
                 const empties = evt.from.querySelectorAll('.tt-empty');
                 empties.forEach(e => e.remove());
             },
             onAdd: (evt) => {
-                // Also strip the placeholder in the destination column.
                 const empties = evt.to.querySelectorAll('.tt-empty');
                 empties.forEach(e => e.remove());
             },
@@ -457,9 +512,12 @@ function ttInitBoard () {
                 // to the dropped card's detail page.
                 window.__ttJustDragged = true;
                 setTimeout(() => { window.__ttJustDragged = false; }, 300);
+                setDragMode(false);
                 const card = evt.item;
                 const newCol = evt.to;
                 const oldCol = evt.from;
+                const sameCol = (newCol === oldCol);
+                const samePos = sameCol && evt.oldIndex === evt.newIndex;
                 const newStatusId = Number(newCol.getAttribute('data-status-id') || 0);
                 const isTerminal  = newCol.closest('.tt-column')?.getAttribute('data-is-terminal') === '1';
                 const statusName  = newCol.closest('.tt-column')?.getAttribute('data-status-name') || '';
@@ -468,6 +526,14 @@ function ttInitBoard () {
                 const nextEl      = card.nextElementSibling     && card.nextElementSibling.classList.contains('tt-card')     ? card.nextElementSibling     : null;
                 const prevId      = prevEl ? Number(prevEl.getAttribute('data-task-id') || 0) : 0;
                 const nextId      = nextEl ? Number(nextEl.getAttribute('data-task-id') || 0) : 0;
+
+                // Dropped at exactly the same spot → no-op, no server call.
+                // Keeps the user from racking up zero-change audit rows and
+                // gives them visible confirmation the drop registered.
+                if (samePos) {
+                    toast('No change — dropped back in the same spot.', 'warn', 1800);
+                    return;
+                }
 
                 // Restore empty placeholder in the source col if it's now empty.
                 if (oldCol !== newCol && !oldCol.querySelector('.tt-card')) {
@@ -494,6 +560,7 @@ function ttInitBoard () {
                     new_status_id: p.newStatusId,
                     prev_task_id: p.prevId,
                     next_task_id: p.nextId,
+                    status_name: p.statusName,
                 });
             },
         });
