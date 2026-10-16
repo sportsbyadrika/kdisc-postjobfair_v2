@@ -216,6 +216,27 @@ if ($action === 'delete_agenda') {
     echo json_encode(['ok' => true]); exit;
 }
 
+// Reorder agenda rows after a drag-and-drop. Payload: ids[] in the
+// desired display order. Each row's sort_order is set to its 1-based
+// position; rows not in the payload are left alone. All writes in one
+// transaction so partial-reorder failures don't half-renumber the list.
+if ($action === 'reorder_agenda') {
+    $ids = (array) ($_POST['ids'] ?? []);
+    $ids = array_values(array_filter(array_map('intval', $ids)));
+    if ($ids === []) { echo json_encode(['ok' => true, 'moved' => 0]); exit; }
+    db()->query('START TRANSACTION');
+    try {
+        $upd = db()->prepare('UPDATE meeting_agenda SET sort_order = ? WHERE id = ? AND meeting_id = ?');
+        $pos = 0;
+        foreach ($ids as $aid) $upd->execute([++$pos, $aid, $meetingId]);
+        db()->query('COMMIT');
+        echo json_encode(['ok' => true, 'moved' => count($ids)]); exit;
+    } catch (Throwable $e) {
+        try { db()->query('ROLLBACK'); } catch (Throwable $r) { /* ignore */ }
+        $sendError($e->getMessage(), 500);
+    }
+}
+
 /**
  * Thin wrapper around meetings_sync_decision_tasks() — keeps the
  * existing closure name in use further down this file so edits
@@ -338,6 +359,11 @@ if ($action === 'upsert_decision') {
     $agendaIdRaw   = array_key_exists('agenda_id', $_POST) ? (int) $_POST['agenda_id'] : -1;
     $hasAgendaIdCol = meetings_column_exists('meeting_decision', 'agenda_id');
     $touchAgendaId  = $hasAgendaIdCol && $agendaIdRaw >= 0;
+    // Mirror the decision into the next-meeting agenda when the checkbox
+    // is ticked. The mirror row is linked by meeting_next_agenda.linked_decision_id.
+    $addToNext        = isset($_POST['add_to_next_agenda']) ? (int) $_POST['add_to_next_agenda'] : 0;
+    $hasLinkedNextCol = meetings_column_exists('meeting_next_agenda', 'linked_decision_id');
+    $touchAddToNext   = $hasLinkedNextCol && array_key_exists('add_to_next_agenda', $_POST);
     // Grid-mode saves only touch heading/description/due/remarks and
     // leave the modal-set responsibility rows alone. The modal, by
     // contrast, rewrites the whole responsibility set + fires the
@@ -422,6 +448,27 @@ if ($action === 'upsert_decision') {
                 foreach ($contactIds as $x) $insR->execute([$id, null, $x, null]);
             }
         }
+        // "Add to next-meeting agenda" mirror sync. The mirror row is
+        // linked by meeting_next_agenda.linked_decision_id. Toggling the
+        // checkbox off deletes the row; toggling on upserts it with
+        // title ← heading, description ← remarks, remarks ← names.
+        if ($touchAddToNext) {
+            db()->prepare('DELETE FROM meeting_next_agenda WHERE linked_decision_id = ? AND meeting_id = ?')
+                ->execute([$id, $meetingId]);
+            if ($addToNext === 1) {
+                $names = meetings_resolve_responsible_names($userIds, $seatIds, $contactIds, $teamIds);
+                $hasRemarksNextCol = meetings_column_exists('meeting_next_agenda', 'remarks');
+                $st = db()->prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM meeting_next_agenda WHERE meeting_id = ?');
+                $st->execute([$meetingId]);
+                $newSort = (int) ($st->fetchColumn() ?: 1);
+                db()->prepare('INSERT INTO meeting_next_agenda (meeting_id, sort_order, title, description, linked_decision_id) VALUES (?, ?, ?, ?, ?)')
+                    ->execute([$meetingId, $newSort, $heading, $remarks, $id]);
+                if ($hasRemarksNextCol) {
+                    db()->prepare('UPDATE meeting_next_agenda SET remarks = ? WHERE linked_decision_id = ? AND meeting_id = ?')
+                        ->execute([$names === '' ? null : $names, $id, $meetingId]);
+                }
+            }
+        }
         db()->query('COMMIT');
         // Sync Own Tasks only if the operator ticked the box AND this
         // was a modal save — grid saves don't touch responsibility, so
@@ -444,6 +491,11 @@ if ($action === 'upsert_decision') {
 if ($action === 'delete_decision') {
     $id = (int) ($_POST['id'] ?? 0);
     db()->prepare('DELETE FROM meeting_decision_responsible WHERE decision_id = ?')->execute([$id]);
+    // Cascade to the "Add to next-meeting agenda" mirror row, if any.
+    if (meetings_column_exists('meeting_next_agenda', 'linked_decision_id')) {
+        db()->prepare('DELETE FROM meeting_next_agenda WHERE linked_decision_id = ? AND meeting_id = ?')
+            ->execute([$id, $meetingId]);
+    }
     db()->prepare('DELETE FROM meeting_decision WHERE id = ? AND meeting_id = ?')->execute([$id, $meetingId]);
     // Deactivate all linked tasks so the owner no longer sees them.
     try { db()->prepare('UPDATE task SET is_active = 0, updated_at = NOW(), updated_by = ? WHERE meeting_decision_id = ?')->execute([$viewerId, $id]); } catch (Throwable $e) { /* ignore */ }

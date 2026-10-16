@@ -402,7 +402,12 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                     <div class="small text-muted mb-1">Agenda</div>
                     <ul class="mb-0">
                         <?php foreach ($nextAg as $n): ?>
-                            <li><strong><?= esc((string) $n['title']) ?></strong><?php if (!empty($n['description'])): ?><div class="small text-muted"><?= esc((string) $n['description']) ?></div><?php endif; ?>
+                            <li>
+                                <strong><?= esc((string) $n['title']) ?></strong>
+                                <?php if (!empty($n['linked_decision_id'])): ?>
+                                    <span class="badge text-bg-info-subtle border ms-1" title="Mirrored from a decision point — kept in sync automatically"><i class="bi bi-link-45deg me-1"></i>from decision</span>
+                                <?php endif; ?>
+                                <?php if (!empty($n['description'])): ?><div class="small text-muted"><?= esc((string) $n['description']) ?></div><?php endif; ?>
                                 <?php if (!empty($n['remarks'])): ?><div class="small text-warning-emphasis mt-1" style="white-space:pre-wrap;"><i class="bi bi-exclamation-triangle me-1"></i><em>Remarks:</em> <?= esc((string) $n['remarks']) ?></div><?php endif; ?>
                             </li>
                         <?php endforeach; ?>
