@@ -1165,6 +1165,10 @@ window.__meetingRef = {
 .mm-modal.mm-dragging { transition: none; }
 </style>
 
+<!-- SortableJS must load before the main editor script below, which
+     calls initAgendaSortable() on first renderAll(). -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+
 <script>
 (function () {
     const R = window.__meetingRef;
@@ -2204,7 +2208,6 @@ window.__meetingRef = {
      auto-save flow keeps working against the same field names. -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tom-select/2.3.1/css/tom-select.bootstrap5.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tom-select/2.3.1/js/tom-select.complete.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     if (typeof TomSelect === 'undefined') return;
