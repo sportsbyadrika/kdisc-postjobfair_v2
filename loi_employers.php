@@ -416,6 +416,7 @@ render_page_header('LOI & Jobs · Employers', [
                             <label class="form-label">State / UT</label>
                             <select class="form-select" id="eModalState" name="state">
                                 <option value="">— select state / UT —</option>
+                                <option value="Outside India">🌐 Outside India</option>
                                 <?php
                                 $lastKind = null;
                                 foreach ($stateRows as $s):
@@ -429,10 +430,18 @@ render_page_header('LOI & Jobs · Employers', [
                             </select>
                         </div>
                         <div class="col-md-4">
-                            <label class="form-label">District</label>
+                            <label class="form-label" id="eModalDistLabel">District</label>
+                            <!-- Standard India districts picker (default). -->
                             <select class="form-select" id="eModalDist" name="district">
                                 <option value="">— select a state first —</option>
                             </select>
+                            <!-- Country name free-text input, swapped in when
+                                 the operator picks "Outside India" above. Both
+                                 fields share name="district" — the JS below
+                                 enables one and disables the other, and
+                                 disabled inputs are skipped by form submission,
+                                 so no schema change is needed. -->
+                            <input type="text" class="form-control d-none" id="eModalCountry" name="district" maxlength="120" placeholder="e.g. United Arab Emirates" disabled>
                             <div class="small text-muted" id="eModalDistHint" style="display:none;"></div>
                         </div>
                         <div class="col-md-4">
@@ -511,21 +520,49 @@ render_page_header('LOI & Jobs · Employers', [
     const setC = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
     const stateSel = document.getElementById('eModalState');
     const distSel  = document.getElementById('eModalDist');
+    const countryIn = document.getElementById('eModalCountry');
+    const distLbl  = document.getElementById('eModalDistLabel');
     const hint     = document.getElementById('eModalDistHint');
+
+    // Toggle between the India districts dropdown and the free-text
+    // Country name input, driven by the State / UT selection. Only
+    // ONE of the two inputs is enabled at a time so form submission
+    // picks the correct one for name="district".
+    const applyOutsideIndiaMode = (preselectCountry) => {
+        const isOutside = (stateSel?.value || '') === 'Outside India';
+        if (isOutside) {
+            distSel.classList.add('d-none');     distSel.disabled   = true;
+            countryIn.classList.remove('d-none'); countryIn.disabled = false;
+            if (distLbl) distLbl.textContent = 'Country name';
+            if (preselectCountry != null) countryIn.value = preselectCountry;
+        } else {
+            countryIn.classList.add('d-none');   countryIn.disabled = true;
+            distSel.classList.remove('d-none');  distSel.disabled   = false;
+            if (distLbl) distLbl.textContent = 'District';
+            countryIn.value = '';
+        }
+        if (hint) { hint.style.display = 'none'; hint.textContent = ''; }
+    };
 
     // Load districts for a state via AJAX, then (optionally) select
     // the given district value. Returns a promise so the edit flow
     // can wait before pre-selecting.
     const loadDistricts = (stateName, preselectDistrict) => {
         if (!distSel) return Promise.resolve();
+        // Outside India uses the country text input instead of this
+        // dropdown — nothing to fetch.
+        if (stateName === 'Outside India') return Promise.resolve();
         distSel.innerHTML = '<option value="">— loading… —</option>';
-        hint.style.display = 'none'; hint.textContent = '';
+        if (hint) { hint.style.display = 'none'; hint.textContent = ''; }
         if (!stateName) {
             distSel.innerHTML = '<option value="">— select a state first —</option>';
             return Promise.resolve();
         }
         return fetch('/loi_locations_ajax.php?action=districts&state=' + encodeURIComponent(stateName), { credentials: 'same-origin' })
-            .then(r => r.json())
+            .then(r => {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
             .then(j => {
                 const list = (j && j.ok && Array.isArray(j.districts)) ? j.districts : [];
                 let html = '<option value="">— select district —</option>';
@@ -540,15 +577,43 @@ render_page_header('LOI & Jobs · Employers', [
                 // option so the edit doesn't silently drop the value.
                 if (preselectDistrict && !matched) {
                     html += '<option value="' + preselectDistrict.replace(/"/g, '&quot;') + '" selected>' + preselectDistrict.replace(/</g, '&lt;') + ' (not in master)</option>';
-                    hint.style.display = ''; hint.textContent = 'This district is not in the India master list — admins can add it in a future SBU-style master page.';
+                    if (hint) { hint.style.display = ''; hint.textContent = 'This district is not in the India master list — admins can add it in a future master page.'; }
+                }
+                if (list.length === 0 && !preselectDistrict) {
+                    html = '<option value="">— no districts seeded for this state —</option>';
+                    if (hint) { hint.style.display = ''; hint.textContent = 'The india_district table has no rows for "' + stateName + '". Admins — reload the server to re-run the seeder, or add districts manually.'; }
                 }
                 distSel.innerHTML = html;
             })
             .catch(e => {
                 distSel.innerHTML = '<option value="">— could not load —</option>';
+                if (hint) { hint.style.display = ''; hint.textContent = 'District fetch failed: ' + (e && e.message ? e.message : e) + '. If this keeps happening, re-login (your session may have expired).'; }
             });
     };
-    stateSel?.addEventListener('change', () => loadDistricts(stateSel.value, null));
+    // Both change and input events — some browsers fire only one of
+    // them when a native select is manipulated via keyboard vs. mouse.
+    const onStateChange = () => {
+        applyOutsideIndiaMode(null);
+        loadDistricts(stateSel.value, null);
+    };
+    stateSel?.addEventListener('change', onStateChange);
+    stateSel?.addEventListener('input',  onStateChange);
+
+    // Auto-open the edit modal when ?open=<id> is present (the Edit
+    // employer button on /loi_employer_view.php bounces here with that
+    // query). Finds the right Edit row by payload id and simulates a
+    // click so the show.bs.modal hydrator below runs the same way as
+    // a user-driven open.
+    (function () {
+        const q = new URLSearchParams(window.location.search);
+        const openId = Number(q.get('open') || 0);
+        if (!openId) return;
+        const row = Array.from(document.querySelectorAll('.js-edit-emp')).find(b => {
+            try { return (JSON.parse(b.getAttribute('data-payload') || '{}').id | 0) === openId; }
+            catch (e) { return false; }
+        });
+        if (row) { try { row.click(); } catch (e) {} }
+    })();
 
     modalEl?.addEventListener('show.bs.modal', (ev) => {
         const t = ev.relatedTarget; if (!t) return;
@@ -558,6 +623,9 @@ render_page_header('LOI & Jobs · Employers', [
             ['eModalId','eModalName','eModalSbu','eModalSector','eModalDwmsId','eModalAddr','eModalState',
              'eModalCnum','eModalCmail','eModalHrName','eModalHrMob','eModalHrMail',
              'eModalLoiDate','eModalLoiDocUrl','eModalNotes'].forEach(k => setV(k, k === 'eModalId' ? '0' : (k === 'eModalSbu' ? '0' : '')));
+            // Reset the district / country pair to the default India
+            // mode with an empty state.
+            applyOutsideIndiaMode(null);
             if (distSel) distSel.innerHTML = '<option value="">— select a state first —</option>';
             setC('eModalLoi', false); setC('eModalRegDwms', false); setC('eModalJobsDwms', false); setC('eModalActive', true);
         } else if (t.classList.contains('js-edit-emp')) {
@@ -568,9 +636,12 @@ render_page_header('LOI & Jobs · Employers', [
             setV('eModalDwmsId', d.dwms_employer_id);
             setV('eModalAddr', d.address_of_communication);
             setV('eModalState', d.state || '');
-            // Fire the AJAX load after the modal is shown; the state
-            // dropdown's value is set above, districts fetched here.
-            loadDistricts(d.state || '', d.district || '');
+            // Pre-select the right mode (India districts vs. Country
+            // name) based on the loaded state value.
+            applyOutsideIndiaMode(d.district || '');
+            if ((d.state || '') !== 'Outside India') {
+                loadDistricts(d.state || '', d.district || '');
+            }
             setV('eModalCnum', d.contact_number); setV('eModalCmail', d.contact_email);
             setV('eModalHrName', d.hr_manager_name); setV('eModalHrMob', d.hr_manager_mobile); setV('eModalHrMail', d.hr_manager_email);
             setV('eModalLoiDate', (d.loi_received_date || '').substring(0, 10));
