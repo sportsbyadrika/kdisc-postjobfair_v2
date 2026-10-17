@@ -93,7 +93,14 @@ if (is_post() && ($_POST['action'] ?? '') === 'save_job') {
     ];
     // Multi-select locations — array of ids from the checkbox list.
     $locationIds = array_values(array_filter(array_map('intval', (array) ($_POST['location_ids'] ?? []))));
+    // Per-job sector + Applications-as-on date (new fields). Captured
+    // separately so a hosted install without the ALTER still saves the
+    // base row without erroring.
+    $jobSector         = trim((string) ($_POST['job_sector'] ?? ''));
+    $appsCountAsOnRaw  = trim((string) ($_POST['applications_count_as_on'] ?? ''));
+    $appsCountAsOn     = ($appsCountAsOnRaw !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $appsCountAsOnRaw)) ? $appsCountAsOnRaw : null;
     if ($data['job_role'] === '') $flashAndBack('Job role is required.', 'danger', $id, 'jobs');
+    if ($data['dwms_job_id'] === null || $data['dwms_job_id'] === '') $flashAndBack('DWMS Job ID is required.', 'danger', $id, 'jobs');
 
     // Convert the mobilisation checkboxes into timestamps on first flip;
     // keep previous timestamps on subsequent saves.
@@ -142,6 +149,9 @@ if (is_post() && ($_POST['action'] ?? '') === 'save_job') {
             db()->prepare('DELETE FROM loi_job_location WHERE job_id = ?')->execute([$jobId]);
             $insLoc = db()->prepare('INSERT INTO loi_job_location (job_id, location_id) VALUES (?, ?)');
             foreach ($locationIds as $lid) try { $insLoc->execute([$jobId, $lid]); } catch (Throwable $e) { /* dup */ }
+            // Late-added columns — tolerated when absent.
+            try { db()->prepare('UPDATE loi_job SET job_sector = ?, applications_count_as_on = ? WHERE id = ? AND employer_id = ?')
+                ->execute([$jobSector === '' ? null : $jobSector, $appsCountAsOn, $jobId, $id]); } catch (Throwable $e) { /* columns missing */ }
             $flashAndBack('Job updated.', 'success', $id, 'jobs');
         } else {
             db()->prepare('INSERT INTO loi_job
@@ -174,6 +184,8 @@ if (is_post() && ($_POST['action'] ?? '') === 'save_job') {
             // Locations bridge for the fresh job row.
             $insLoc = db()->prepare('INSERT INTO loi_job_location (job_id, location_id) VALUES (?, ?)');
             foreach ($locationIds as $lid) try { $insLoc->execute([$newId, $lid]); } catch (Throwable $e) { /* dup */ }
+            try { db()->prepare('UPDATE loi_job SET job_sector = ?, applications_count_as_on = ? WHERE id = ?')
+                ->execute([$jobSector === '' ? null : $jobSector, $appsCountAsOn, $newId]); } catch (Throwable $e) { /* columns missing */ }
             $flashAndBack('Job added.', 'success', $id, 'jobs');
         }
     } catch (Throwable $e) {
@@ -187,6 +199,79 @@ if (is_post() && ($_POST['action'] ?? '') === 'toggle_job') {
     db()->prepare('UPDATE loi_job SET is_active = 1 - is_active, updated_at = NOW(), updated_by = ? WHERE id = ? AND employer_id = ?')
         ->execute([$viewerId, $jobId, $id]);
     $flashAndBack('Toggled.', 'success', $id, 'jobs');
+}
+
+/* ---------- Interview CRUD (per-job rows under this employer) ---- */
+if (is_post() && ($_POST['action'] ?? '') === 'save_interview') {
+    csrf_check_or_die();
+    if (!$canEdit) $flashAndBack('Not permitted.', 'danger', $id, 'interviews');
+    $ivId  = (int) ($_POST['interview_id'] ?? 0);
+    $jobIdPost = (int) ($_POST['job_id'] ?? 0);
+    $iDate    = trim((string) ($_POST['interview_date'] ?? ''));
+    $iDate    = ($iDate !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $iDate)) ? $iDate : null;
+    $modeTx   = trim((string) ($_POST['mode_text'] ?? ''));
+    $desc     = trim((string) ($_POST['description'] ?? ''));
+    $att      = trim((string) ($_POST['applicants_attended'] ?? ''));
+    $sel      = trim((string) ($_POST['selected_count'] ?? ''));
+    $rej      = trim((string) ($_POST['rejected_count'] ?? ''));
+    $pUrl     = trim((string) ($_POST['participants_url'] ?? ''));
+
+    if ($jobIdPost <= 0)  $flashAndBack('Pick a job for this interview.', 'danger', $id, 'interviews');
+    if ($iDate === null)  $flashAndBack('Interview date is required.', 'danger', $id, 'interviews');
+
+    try {
+        if ($ivId > 0) {
+            db()->prepare('UPDATE loi_interview SET
+                    job_id = ?, interview_date = ?, mode_text = ?, description = ?,
+                    applicants_attended = ?, selected_count = ?, rejected_count = ?,
+                    participants_url = ?, updated_at = NOW(), updated_by = ?
+                WHERE id = ? AND employer_id = ?')
+                ->execute([
+                    $jobIdPost, $iDate,
+                    $modeTx === '' ? null : $modeTx,
+                    $desc === '' ? null : $desc,
+                    $att === '' ? null : (int) $att,
+                    $sel === '' ? null : (int) $sel,
+                    $rej === '' ? null : (int) $rej,
+                    $pUrl === '' ? null : $pUrl,
+                    $viewerId, $ivId, $id,
+                ]);
+            $flashAndBack('Interview updated.', 'success', $id, 'interviews');
+        } else {
+            // scheduled_at keeps compatibility with the legacy ENUM-mode
+            // table shape — mirror interview_date into it so pre-existing
+            // reports keyed on scheduled_at still see the row.
+            db()->prepare('INSERT INTO loi_interview
+                (employer_id, job_id, scheduled_at, interview_date, mode_text, description,
+                 applicants_attended, selected_count, rejected_count, participants_url,
+                 is_active, created_at, updated_at, created_by, updated_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)')
+                ->execute([
+                    $id, $jobIdPost,
+                    $iDate . ' 09:00:00',
+                    $iDate,
+                    $modeTx === '' ? null : $modeTx,
+                    $desc === '' ? null : $desc,
+                    $att === '' ? null : (int) $att,
+                    $sel === '' ? null : (int) $sel,
+                    $rej === '' ? null : (int) $rej,
+                    $pUrl === '' ? null : $pUrl,
+                    $viewerId, $viewerId,
+                ]);
+            $flashAndBack('Interview added.', 'success', $id, 'interviews');
+        }
+    } catch (Throwable $e) {
+        $flashAndBack('Save failed: ' . $e->getMessage(), 'danger', $id, 'interviews');
+    }
+}
+
+if (is_post() && ($_POST['action'] ?? '') === 'delete_interview') {
+    csrf_check_or_die();
+    if (!$canEdit) $flashAndBack('Not permitted.', 'danger', $id, 'interviews');
+    $ivId = (int) ($_POST['interview_id'] ?? 0);
+    try { db()->prepare('DELETE FROM loi_interview WHERE id = ? AND employer_id = ?')->execute([$ivId, $id]); }
+    catch (Throwable $e) { /* ignore */ }
+    $flashAndBack('Interview deleted.', 'success', $id, 'interviews');
 }
 
 $jobs = [];
@@ -324,6 +409,8 @@ render_page_header($emp['name'], [
                             'id'                     => (int) $j['id'],
                             'job_role'               => (string) $j['job_role'],
                             'dwms_job_id'            => (string) ($j['dwms_job_id'] ?? ''),
+                            'job_sector'             => (string) ($j['job_sector'] ?? ''),
+                            'applications_count_as_on' => (string) ($j['applications_count_as_on'] ?? ''),
                             'vacancy_count'          => $j['vacancy_count'],
                             'expiry_date'            => (string) ($j['expiry_date'] ?? ''),
                             'qualification'          => (string) ($j['qualification'] ?? ''),
@@ -420,9 +507,11 @@ render_page_header($emp['name'], [
                     <div class="modal-body">
                         <div class="row g-3">
                             <div class="col-md-5"><label class="form-label">Job role <span class="text-danger">*</span></label><input class="form-control" id="jModalRole" name="job_role" required maxlength="200"></div>
-                            <div class="col-md-3"><label class="form-label">DWMS Job ID <span class="small text-muted">(optional)</span></label><input class="form-control" id="jModalDwmsId" name="dwms_job_id" maxlength="80" placeholder="e.g. JOB-01234"></div>
+                            <div class="col-md-3"><label class="form-label">DWMS Job ID <span class="text-danger">*</span></label><input class="form-control" id="jModalDwmsId" name="dwms_job_id" required maxlength="80" placeholder="e.g. JOB-01234"></div>
                             <div class="col-md-2"><label class="form-label">Openings</label><input type="number" min="0" class="form-control" id="jModalVac" name="vacancy_count"></div>
-                            <div class="col-md-2"><label class="form-label">Applications</label><input type="number" min="0" class="form-control" id="jModalApps" name="applications_count"></div>
+                            <div class="col-md-2"><label class="form-label">Job Sector</label><input class="form-control" id="jModalJobSector" name="job_sector" maxlength="120" placeholder="e.g. Logistics"></div>
+                            <div class="col-md-3"><label class="form-label">Applications</label><input type="number" min="0" class="form-control" id="jModalApps" name="applications_count"></div>
+                            <div class="col-md-3"><label class="form-label">Applications count as on</label><input type="date" class="form-control" id="jModalAppsAsOn" name="applications_count_as_on"></div>
 
                             <div class="col-md-5"><label class="form-label">Candidate qualification</label><input class="form-control" id="jModalQual" name="qualification" maxlength="300" placeholder="Free-text qualification note"></div>
                             <div class="col-md-3"><label class="form-label">Qualification category</label>
@@ -522,7 +611,7 @@ render_page_header($emp['name'], [
             const title = document.getElementById('jModalTitle');
             if (t.classList.contains('js-new-job')) {
                 title.innerHTML = '<i class="bi bi-plus-lg me-1"></i>New job';
-                ['jModalId','jModalRole','jModalDwmsId','jModalVac','jModalExp','jModalApps',
+                ['jModalId','jModalRole','jModalDwmsId','jModalJobSector','jModalVac','jModalExp','jModalApps','jModalAppsAsOn',
                  'jModalQual','jModalDesc','jModalSkills','jModalEFrom','jModalETo','jModalETill']
                     .forEach(k => setV(k, k === 'jModalId' ? '0' : ''));
                 setV('jModalPref', 'either'); setV('jModalStatus', 'active');
@@ -535,9 +624,11 @@ render_page_header($emp['name'], [
                 setV('jModalId', String(d.id || 0));
                 setV('jModalRole', d.job_role);
                 setV('jModalDwmsId', d.dwms_job_id);
+                setV('jModalJobSector', d.job_sector || '');
                 setV('jModalVac', d.vacancy_count);
                 setV('jModalExp', (d.expiry_date || '').substring(0, 10));
                 setV('jModalApps', d.applications_count);
+                setV('jModalAppsAsOn', (d.applications_count_as_on || '').substring(0, 10));
                 setV('jModalQual', d.qualification);
                 setV('jModalQCat', String(d.qualification_category_id || 0));
                 setV('jModalDesc', d.job_description);
@@ -556,10 +647,203 @@ render_page_header($emp['name'], [
     })();
     </script>
     <?php endif; ?>
-<?php elseif ($tab === 'interviews'): ?>
-    <div class="card"><div class="card-body">
-        <div class="alert alert-info mb-0"><i class="bi bi-hourglass-split me-1"></i>Interview CRUD lands in <strong>Phase 2</strong> alongside the Candidate roster. Jobs are usable now — add them under the Jobs tab.</div>
-    </div></div>
+<?php elseif ($tab === 'interviews'):
+    $interviews = [];
+    try {
+        $is = db()->prepare('SELECT i.*, j.job_role, j.dwms_job_id
+            FROM loi_interview i
+            LEFT JOIN loi_job j ON j.id = i.job_id
+            WHERE i.employer_id = ? AND i.is_active = 1
+            ORDER BY COALESCE(i.interview_date, DATE(i.scheduled_at)) DESC, i.id DESC');
+        $is->execute([$id]);
+        $interviews = $is->fetchAll();
+    } catch (Throwable $e) { /* empty */ }
+    $templateFile = loi_setting('participants_template_file', '');
+    $templateUrl  = $templateFile !== '' ? '/uploads/loi/' . rawurlencode($templateFile) : '';
+    $jobsForPicker = [];
+    try {
+        $js = db()->prepare('SELECT id, job_role, dwms_job_id FROM loi_job WHERE employer_id = ? AND is_active = 1 ORDER BY job_role ASC');
+        $js->execute([$id]);
+        $jobsForPicker = $js->fetchAll();
+    } catch (Throwable $e) { /* empty */ }
+?>
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-calendar-event text-primary me-1"></i>Interviews</span>
+            <div class="d-flex gap-2">
+                <?php if ($templateUrl !== ''): ?>
+                    <a class="btn btn-sm btn-outline-primary" href="<?= esc($templateUrl) ?>" target="_blank"><i class="bi bi-download me-1"></i>Download Participants Template</a>
+                <?php else: ?>
+                    <a class="btn btn-sm btn-outline-secondary" href="/loi_settings.php" title="No template uploaded yet. An admin can upload one from LOI settings."><i class="bi bi-cloud-upload me-1"></i>Upload template (admin)</a>
+                <?php endif; ?>
+                <?php if ($canEdit && $jobsForPicker !== []): ?>
+                    <button class="btn btn-sm btn-primary js-new-iv" type="button" data-bs-toggle="modal" data-bs-target="#ivModal"><i class="bi bi-plus-lg me-1"></i>New interview</button>
+                <?php elseif ($canEdit): ?>
+                    <span class="small text-muted align-self-center">Add a job first before scheduling an interview.</span>
+                <?php endif; ?>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th style="width: 120px;">Date</th>
+                        <th>Job</th>
+                        <th>Mode</th>
+                        <th class="text-end">Attended</th>
+                        <th class="text-end">Selected</th>
+                        <th class="text-end">Rejected</th>
+                        <th>Participants</th>
+                        <th class="text-end" style="width: 150px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if ($interviews === []): ?>
+                        <tr><td colspan="8"><div class="empty-state"><i class="bi bi-inbox"></i>No interviews yet.</div></td></tr>
+                    <?php endif; ?>
+                    <?php foreach ($interviews as $iv):
+                        $ivPayload = htmlspecialchars(json_encode([
+                            'id'                  => (int) $iv['id'],
+                            'job_id'              => (int) ($iv['job_id'] ?? 0),
+                            'interview_date'      => (string) ($iv['interview_date'] ?? ''),
+                            'mode_text'           => (string) ($iv['mode_text'] ?? ''),
+                            'description'         => (string) ($iv['description'] ?? ''),
+                            'applicants_attended' => $iv['applicants_attended'],
+                            'selected_count'      => $iv['selected_count'],
+                            'rejected_count'      => $iv['rejected_count'],
+                            'participants_url'    => (string) ($iv['participants_url'] ?? ''),
+                        ], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES);
+                        $dateDisp = (string) ($iv['interview_date'] ?? '');
+                        if ($dateDisp === '' && !empty($iv['scheduled_at'])) $dateDisp = substr((string) $iv['scheduled_at'], 0, 10);
+                    ?>
+                        <tr>
+                            <td class="small"><?= $dateDisp !== '' ? esc(date('d/m/Y', strtotime($dateDisp))) : '—' ?></td>
+                            <td>
+                                <?php if (!empty($iv['job_role'])): ?>
+                                    <strong><?= esc((string) $iv['job_role']) ?></strong>
+                                    <?php if (!empty($iv['dwms_job_id'])): ?><div class="small text-muted"><?= esc((string) $iv['dwms_job_id']) ?></div><?php endif; ?>
+                                <?php else: ?>
+                                    <span class="text-muted small">— job removed —</span>
+                                <?php endif; ?>
+                                <?php if (!empty($iv['description'])): ?>
+                                    <div class="small text-muted" style="white-space:pre-wrap;"><?= esc((string) $iv['description']) ?></div>
+                                <?php endif; ?>
+                            </td>
+                            <td class="small"><?= esc((string) ($iv['mode_text'] ?? '—') ?: '—') ?></td>
+                            <td class="text-end"><?= $iv['applicants_attended'] === null ? '—' : (int) $iv['applicants_attended'] ?></td>
+                            <td class="text-end"><?= $iv['selected_count']      === null ? '—' : (int) $iv['selected_count'] ?></td>
+                            <td class="text-end"><?= $iv['rejected_count']      === null ? '—' : (int) $iv['rejected_count'] ?></td>
+                            <td class="small"><?php if (!empty($iv['participants_url'])): ?><a href="<?= esc((string) $iv['participants_url']) ?>" target="_blank" rel="noopener"><i class="bi bi-link-45deg me-1"></i>Open</a><?php else: ?><span class="text-muted">—</span><?php endif; ?></td>
+                            <td class="text-end">
+                                <?php if ($canEdit): ?>
+                                    <button class="btn btn-sm btn-outline-secondary js-edit-iv" data-bs-toggle="modal" data-bs-target="#ivModal" data-payload='<?= $ivPayload ?>'><i class="bi bi-pencil"></i></button>
+                                    <form method="post" class="d-inline" onsubmit="return confirm('Delete this interview record?');">
+                                        <?php csrf_field(); ?>
+                                        <input type="hidden" name="action" value="delete_interview">
+                                        <input type="hidden" name="interview_id" value="<?= (int) $iv['id'] ?>">
+                                        <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                                    </form>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <?php if ($canEdit && $jobsForPicker !== []): ?>
+    <div class="modal fade" id="ivModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <form class="modal-content" method="post">
+                <?php csrf_field(); ?>
+                <input type="hidden" name="action" value="save_interview">
+                <input type="hidden" name="interview_id" id="ivModalId" value="0">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="ivModalTitle"><i class="bi bi-plus-lg me-1"></i>New interview</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Job <span class="text-danger">*</span></label>
+                            <select class="form-select" id="ivModalJob" name="job_id" required>
+                                <option value="">— select job —</option>
+                                <?php foreach ($jobsForPicker as $j): ?>
+                                    <option value="<?= (int) $j['id'] ?>"><?= esc((string) $j['job_role']) ?><?= !empty($j['dwms_job_id']) ? ' · ' . esc((string) $j['dwms_job_id']) : '' ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Interview Date <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control" id="ivModalDate" name="interview_date" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Mode of Interview</label>
+                            <input type="text" class="form-control" id="ivModalMode" name="mode_text" maxlength="80" placeholder="e.g. In-person, Online, Hybrid">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-control" id="ivModalDesc" name="description" rows="2"></textarea>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Applicants attended</label>
+                            <input type="number" min="0" class="form-control" id="ivModalAtt" name="applicants_attended">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Selected candidates</label>
+                            <input type="number" min="0" class="form-control" id="ivModalSel" name="selected_count">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Rejected candidates</label>
+                            <input type="number" min="0" class="form-control" id="ivModalRej" name="rejected_count">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label d-flex justify-content-between align-items-center">
+                                <span>Participants list <span class="small text-muted">(Google Drive URL)</span></span>
+                                <?php if ($templateUrl !== ''): ?>
+                                    <a class="small" href="<?= esc($templateUrl) ?>" target="_blank"><i class="bi bi-download me-1"></i>Download template</a>
+                                <?php endif; ?>
+                            </label>
+                            <input type="url" class="form-control" id="ivModalPUrl" name="participants_url" maxlength="500" placeholder="https://drive.google.com/…">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i>Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script>
+    (function () {
+        const modalEl = document.getElementById('ivModal');
+        const setV = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
+        modalEl?.addEventListener('show.bs.modal', (ev) => {
+            const t = ev.relatedTarget; if (!t) return;
+            const title = document.getElementById('ivModalTitle');
+            if (t.classList.contains('js-new-iv')) {
+                title.innerHTML = '<i class="bi bi-plus-lg me-1"></i>New interview';
+                ['ivModalId','ivModalJob','ivModalDate','ivModalMode','ivModalDesc',
+                 'ivModalAtt','ivModalSel','ivModalRej','ivModalPUrl'].forEach(k => setV(k, k === 'ivModalId' ? '0' : ''));
+            } else if (t.classList.contains('js-edit-iv')) {
+                let d = {}; try { d = JSON.parse(t.getAttribute('data-payload') || '{}'); } catch (e) {}
+                title.innerHTML = '<i class="bi bi-pencil-square me-1"></i>Edit interview';
+                setV('ivModalId', String(d.id || 0));
+                setV('ivModalJob', String(d.job_id || ''));
+                setV('ivModalDate', (d.interview_date || '').substring(0, 10));
+                setV('ivModalMode', d.mode_text);
+                setV('ivModalDesc', d.description);
+                setV('ivModalAtt',  d.applicants_attended);
+                setV('ivModalSel',  d.selected_count);
+                setV('ivModalRej',  d.rejected_count);
+                setV('ivModalPUrl', d.participants_url);
+            }
+        });
+    })();
+    </script>
+    <?php endif; ?>
 <?php elseif ($tab === 'candidates'): ?>
     <div class="card"><div class="card-body">
         <div class="alert alert-info mb-0"><i class="bi bi-hourglass-split me-1"></i>Candidate roster lands in <strong>Phase 2</strong>. Each row will capture Name / Mobile / Email / Qualification / Experience / Outcome against a specific interview-job pair.</div>
