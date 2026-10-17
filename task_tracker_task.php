@@ -114,12 +114,49 @@ $defaultStatusId = 0;
 foreach ($statuses as $s) { if ((string) $s['category'] === 'todo' && (int) $s['is_terminal'] === 0) { $defaultStatusId = (int) $s['id']; break; } }
 if ($defaultStatusId === 0 && $statuses !== []) $defaultStatusId = (int) $statuses[0]['id'];
 
-$activitiesStmt = db()->prepare('SELECT id, task_number, title FROM task
-    WHERE project_id = ? AND (parent_id IS NULL OR parent_id = 0) AND is_active = 1
-      AND id <> ?
+// Build the Parent Activity dropdown as the full task tree for this
+// project, not just top-level activities. The DB already allows a
+// task's parent_id to point at another task of any depth, so we can
+// nest sub-activities under sub-activities. We render each option
+// with a left prefix like "  └ " proportional to depth so the
+// hierarchy reads at a glance.
+$projectTasksStmt = db()->prepare('SELECT id, parent_id, task_number, title FROM task
+    WHERE project_id = ? AND is_active = 1
     ORDER BY task_number ASC');
-$activitiesStmt->execute([$projectId, $taskId]);
-$activities = $activitiesStmt->fetchAll();
+$projectTasksStmt->execute([$projectId]);
+$projectTasksAll = $projectTasksStmt->fetchAll();
+
+// Index by parent for a tree walk; also compute the set of tasks we
+// must exclude from the dropdown on edit — the task itself plus every
+// descendant, otherwise picking a descendant as parent would create a
+// cycle.
+$childrenByParent = [];
+foreach ($projectTasksAll as $t) {
+    $pid = (int) ($t['parent_id'] ?? 0);
+    $childrenByParent[$pid][] = $t;
+}
+$excludeIds = [];
+if ($taskId > 0) {
+    $stack = [$taskId];
+    while ($stack !== []) {
+        $nid = array_pop($stack);
+        $excludeIds[$nid] = true;
+        foreach (($childrenByParent[$nid] ?? []) as $c) $stack[] = (int) $c['id'];
+    }
+}
+
+// Depth-first walk producing a flat list of [row, depth] pairs.
+$activities = [];
+$walk = static function (int $parent, int $depth) use (&$walk, &$activities, $childrenByParent, $excludeIds): void {
+    foreach (($childrenByParent[$parent] ?? []) as $t) {
+        $tid = (int) $t['id'];
+        if (isset($excludeIds[$tid])) continue;
+        $t['_depth'] = $depth;
+        $activities[] = $t;
+        $walk($tid, $depth + 1);
+    }
+};
+$walk(0, 0);
 
 $treeRows = db()->query("SELECT id, parent_id, level_type, name, seat_number, active_status
     FROM office_hierarchy_nodes
@@ -564,14 +601,20 @@ render_page_header($pageTitle, [
             <div class="col-md-9" id="parentActivityWrap" style="display:none;">
                 <label class="form-label" for="parentActivity">Parent activity <span class="text-danger">*</span></label>
                 <select class="form-select" id="parentActivity" name="parent_id">
-                    <option value="">— Select activity —</option>
-                    <?php foreach ($activities as $a): ?>
+                    <option value="">— Select parent —</option>
+                    <?php foreach ($activities as $a):
+                        $depth  = (int) ($a['_depth'] ?? 0);
+                        // Non-breaking spaces so the browser doesn't collapse
+                        // the indent on <option> text, plus a corner-arrow
+                        // prefix on nested items.
+                        $prefix = $depth === 0 ? '' : str_repeat("\u{00A0}\u{00A0}\u{00A0}\u{00A0}", $depth) . '└ ';
+                    ?>
                         <option value="<?= (int) $a['id'] ?>" <?= (int) $a['id'] === $formValues['parent_id'] ? 'selected' : '' ?>>
-                            <?= esc((string) $project['code']) ?>-<?= (int) $a['task_number'] ?> · <?= esc((string) $a['title']) ?>
+                            <?= $prefix ?><?= esc((string) $project['code']) ?>-<?= (int) $a['task_number'] ?> · <?= esc((string) $a['title']) ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
-                <div class="small text-muted mt-1">Only activities in the same project appear here.</div>
+                <div class="small text-muted mt-1">Pick any task in this project — the new sub-activity will nest directly under it. Indent shows the current hierarchy.</div>
             </div>
 
             <div class="col-12">
