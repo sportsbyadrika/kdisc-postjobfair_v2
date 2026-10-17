@@ -90,6 +90,13 @@ function loi_jobs_bootstrap(): void
             if (!isset($cols['dwms_employer_id'])) {
                 $db->query('ALTER TABLE loi_employer ADD COLUMN dwms_employer_id VARCHAR(80) NULL AFTER name');
             }
+            // Google Drive URL for the uploaded LOI document — the
+            // employer form captures this alongside the LOI received
+            // flag/date so the formal letter is one click away from the
+            // employer card without us having to host the file.
+            if (!isset($cols['loi_document_url'])) {
+                $db->query('ALTER TABLE loi_employer ADD COLUMN loi_document_url VARCHAR(500) NULL AFTER loi_file_path');
+            }
         } catch (Throwable $e) { /* ALTER refused */ }
 
         $db->query("CREATE TABLE IF NOT EXISTS loi_job (
@@ -351,6 +358,8 @@ function loi_dashboard_counts(): array
         'active_jobs'           => 0,
         'mobilisation_in_prog'  => 0,
         'interviews_this_week'  => 0,
+        'active_openings'       => 0,
+        'total_openings'        => 0,
     ];
     try {
         $out['active_employers'] = (int) db()->query('SELECT COUNT(*) FROM loi_employer WHERE is_active = 1')->fetchColumn();
@@ -367,6 +376,15 @@ function loi_dashboard_counts(): array
             WHERE is_active = 1 AND status = 'scheduled'
               AND scheduled_at >= CURDATE()
               AND scheduled_at <  DATE_ADD(CURDATE(), INTERVAL 7 DAY)")->fetchColumn();
+    } catch (Throwable $e) { /* ignore */ }
+    // Vacancy roll-ups: sum of vacancy_count across jobs. "Active" is
+    // active + status='active'; "Total" is every active row regardless
+    // of status (closed roles stay counted toward the lifetime total).
+    try {
+        $out['active_openings'] = (int) db()->query("SELECT COALESCE(SUM(vacancy_count), 0) FROM loi_job WHERE is_active = 1 AND status = 'active'")->fetchColumn();
+    } catch (Throwable $e) { /* ignore */ }
+    try {
+        $out['total_openings'] = (int) db()->query("SELECT COALESCE(SUM(vacancy_count), 0) FROM loi_job WHERE is_active = 1")->fetchColumn();
     } catch (Throwable $e) { /* ignore */ }
     return $out;
 }
