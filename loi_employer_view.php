@@ -373,124 +373,129 @@ render_page_header($emp['name'], [
                 <button type="button" class="btn btn-sm btn-primary js-new-job" data-bs-toggle="modal" data-bs-target="#jobModal"><i class="bi bi-plus-lg me-1"></i>Add job</button>
             <?php endif; ?>
         </div>
-        <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
-                <thead><tr>
-                    <th>Job role</th>
-                    <th>DWMS Job ID</th>
-                    <th>Openings</th>
-                    <th>Qualification</th>
-                    <th>Experience</th>
-                    <th>Preferred</th>
-                    <th>Gender</th>
-                    <th>Salary</th>
-                    <th>Locations</th>
-                    <th>Mobilisation</th>
-                    <th>Valid From → To</th>
-                    <th>Status</th>
-                    <?php if ($canEdit): ?><th class="text-end">Action</th><?php endif; ?>
-                </tr></thead>
-                <tbody>
-                    <?php if ($jobs === []): ?>
-                        <tr><td colspan="<?= $canEdit ? 13 : 12 ?>"><div class="empty-state"><i class="bi bi-inbox"></i>No jobs added yet.</div></td></tr>
-                    <?php endif; ?>
-                    <?php foreach ($jobs as $j):
-                        $active = ((int) $j['is_active']) === 1;
-                        $jLocIds = $jobLocationIds[(int) $j['id']] ?? [];
-                        $qcName = '';
-                        if (!empty($j['qualification_category_id'])) {
-                            foreach ($qualCategoryRows as $qc) if ((int) $qc['id'] === (int) $j['qualification_category_id']) { $qcName = (string) $qc['name']; break; }
-                        }
-                        $srName = '';
-                        if (!empty($j['salary_range_id'])) {
-                            foreach ($salaryRangeRows as $sr) if ((int) $sr['id'] === (int) $j['salary_range_id']) { $srName = (string) $sr['name']; break; }
-                        }
-                        $payload = htmlspecialchars(json_encode([
-                            'id'                     => (int) $j['id'],
-                            'job_role'               => (string) $j['job_role'],
-                            'dwms_job_id'            => (string) ($j['dwms_job_id'] ?? ''),
-                            'job_sector'             => (string) ($j['job_sector'] ?? ''),
-                            'applications_count_as_on' => (string) ($j['applications_count_as_on'] ?? ''),
-                            'vacancy_count'          => $j['vacancy_count'],
-                            'expiry_date'            => (string) ($j['expiry_date'] ?? ''),
-                            'qualification'          => (string) ($j['qualification'] ?? ''),
-                            'qualification_category_id' => (int) ($j['qualification_category_id'] ?? 0),
-                            'job_description'        => (string) ($j['job_description'] ?? ''),
-                            'skills_required'        => (string) ($j['skills_required'] ?? ''),
-                            'gender'                 => (string) ($j['gender'] ?? ''),
-                            'salary_range_id'        => (int) ($j['salary_range_id'] ?? 0),
-                            'experience_from_years'  => $j['experience_from_years'],
-                            'experience_to_years'    => $j['experience_to_years'],
-                            'experience_valid_till'  => (string) ($j['experience_valid_till'] ?? ''),
-                            'preferred_candidates'   => (string) ($j['preferred_candidates'] ?? 'either'),
-                            'status'                 => (string) ($j['status'] ?? 'active'),
-                            'mobilisation_commenced' => !empty($j['mobilisation_commenced_at']) ? 1 : 0,
-                            'mobilisation_completed' => !empty($j['mobilisation_completed_at']) ? 1 : 0,
-                            'applications_count'     => $j['applications_count'],
-                            'location_ids'           => $jLocIds,
-                        ], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES);
-                    ?>
-                        <tr class="<?= $active ? '' : 'text-muted' ?>">
-                            <td class="fw-semibold"><?= esc((string) $j['job_role']) ?></td>
-                            <td class="small font-monospace"><?= esc((string) ($j['dwms_job_id'] ?? '—')) ?></td>
-                            <td class="small"><?= $j['vacancy_count'] === null ? '—' : (int) $j['vacancy_count'] ?></td>
-                            <td class="small">
-                                <?= esc((string) ($j['qualification'] ?? '—')) ?>
-                                <?php if ($qcName !== ''): ?><div class="text-muted small">[<?= esc($qcName) ?>]</div><?php endif; ?>
-                            </td>
-                            <td class="small">
-                                <?php
-                                    $ef = $j['experience_from_years']; $et = $j['experience_to_years'];
-                                    if ($ef === null && $et === null) echo '—';
-                                    else echo esc(($ef ?? '0') . '–' . ($et ?? '—') . ' yrs');
-                                ?>
-                            </td>
-                            <td class="small"><?= esc(loi_pref_label((string) $j['preferred_candidates'])) ?></td>
-                            <td class="small"><?= esc(loi_gender_label($j['gender'] ?? null)) ?></td>
-                            <td class="small"><?= $srName === '' ? '<span class="text-muted">—</span>' : esc($srName) ?></td>
-                            <td class="small">
-                                <?php if ($jLocIds === []): ?><span class="text-muted">—</span><?php else:
-                                    foreach ($jLocIds as $lid):
-                                        $nm = $locationName[$lid] ?? ''; if ($nm === '') continue; ?>
-                                        <span class="badge bg-light text-dark border me-1 mb-1"><?= esc($nm) ?></span>
-                                    <?php endforeach;
-                                endif; ?>
-                            </td>
-                            <td class="small">
-                                <?php
-                                    $comm = !empty($j['mobilisation_commenced_at']);
-                                    $done = !empty($j['mobilisation_completed_at']);
-                                    if ($comm && $done) echo '<span class="badge text-bg-success">Completed</span>';
-                                    elseif ($comm)      echo '<span class="badge text-bg-warning">In progress</span>';
-                                    else                echo '<span class="badge text-bg-light border">Not started</span>';
-                                ?>
-                            </td>
-                            <td class="small">
-                                <?= esc($fmtDate($j['expiry_date'] ?? '')) ?>
-                                <?php if (!empty($j['experience_valid_till'])): ?>
-                                    <div class="text-muted">→ <?= esc($fmtDate($j['experience_valid_till'])) ?></div>
-                                <?php endif; ?>
-                            </td>
-                            <td class="small"><span class="badge text-bg-<?= esc(loi_job_status_tone((string) $j['status'])) ?>"><?= esc(ucfirst((string) $j['status'])) ?></span></td>
-                            <?php if ($canEdit): ?>
-                                <td class="text-end">
-                                    <div class="d-inline-flex gap-1">
-                                        <button type="button" class="btn btn-sm btn-outline-primary js-edit-job" data-payload="<?= $payload ?>" data-bs-toggle="modal" data-bs-target="#jobModal"><i class="bi bi-pencil"></i></button>
-                                        <form method="post" class="d-inline" onsubmit="return confirm('Toggle job status?');">
-                                            <?php csrf_field(); ?>
-                                            <input type="hidden" name="action" value="toggle_job">
-                                            <input type="hidden" name="job_id" value="<?= (int) $j['id'] ?>">
-                                            <button class="btn btn-sm <?= $active ? 'btn-outline-danger' : 'btn-outline-success' ?>"><i class="bi <?= $active ? 'bi-slash-circle' : 'bi-check2-circle' ?>"></i></button>
-                                        </form>
+        <div class="card-body">
+            <?php if ($jobs === []): ?>
+                <div class="empty-state"><i class="bi bi-inbox"></i>No jobs added yet.</div>
+            <?php else: ?>
+                <div class="row g-3 loi-job-grid">
+                <?php foreach ($jobs as $j):
+                    $active = ((int) $j['is_active']) === 1;
+                    $jLocIds = $jobLocationIds[(int) $j['id']] ?? [];
+                    $qcName = '';
+                    if (!empty($j['qualification_category_id'])) {
+                        foreach ($qualCategoryRows as $qc) if ((int) $qc['id'] === (int) $j['qualification_category_id']) { $qcName = (string) $qc['name']; break; }
+                    }
+                    $srName = '';
+                    if (!empty($j['salary_range_id'])) {
+                        foreach ($salaryRangeRows as $sr) if ((int) $sr['id'] === (int) $j['salary_range_id']) { $srName = (string) $sr['name']; break; }
+                    }
+                    $payload = htmlspecialchars(json_encode([
+                        'id'                     => (int) $j['id'],
+                        'job_role'               => (string) $j['job_role'],
+                        'dwms_job_id'            => (string) ($j['dwms_job_id'] ?? ''),
+                        'job_sector'             => (string) ($j['job_sector'] ?? ''),
+                        'applications_count_as_on' => (string) ($j['applications_count_as_on'] ?? ''),
+                        'vacancy_count'          => $j['vacancy_count'],
+                        'expiry_date'            => (string) ($j['expiry_date'] ?? ''),
+                        'qualification'          => (string) ($j['qualification'] ?? ''),
+                        'qualification_category_id' => (int) ($j['qualification_category_id'] ?? 0),
+                        'job_description'        => (string) ($j['job_description'] ?? ''),
+                        'skills_required'        => (string) ($j['skills_required'] ?? ''),
+                        'gender'                 => (string) ($j['gender'] ?? ''),
+                        'salary_range_id'        => (int) ($j['salary_range_id'] ?? 0),
+                        'experience_from_years'  => $j['experience_from_years'],
+                        'experience_to_years'    => $j['experience_to_years'],
+                        'experience_valid_till'  => (string) ($j['experience_valid_till'] ?? ''),
+                        'preferred_candidates'   => (string) ($j['preferred_candidates'] ?? 'either'),
+                        'status'                 => (string) ($j['status'] ?? 'active'),
+                        'mobilisation_commenced' => !empty($j['mobilisation_commenced_at']) ? 1 : 0,
+                        'mobilisation_completed' => !empty($j['mobilisation_completed_at']) ? 1 : 0,
+                        'applications_count'     => $j['applications_count'],
+                        'location_ids'           => $jLocIds,
+                    ], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES);
+                    $comm = !empty($j['mobilisation_commenced_at']);
+                    $done = !empty($j['mobilisation_completed_at']);
+                    if ($comm && $done) { $mobBadge = '<span class="badge text-bg-success">Completed</span>'; }
+                    elseif ($comm)      { $mobBadge = '<span class="badge text-bg-warning">In progress</span>'; }
+                    else                { $mobBadge = '<span class="badge text-bg-light border">Not started</span>'; }
+                ?>
+                    <div class="col-12 col-xl-6">
+                        <div class="loi-job-card card h-100 <?= $active ? '' : 'loi-job-inactive' ?>">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                    <div class="flex-grow-1 min-w-0">
+                                        <div class="loi-job-role fw-semibold"><?= esc((string) $j['job_role']) ?></div>
+                                        <div class="small text-muted mt-1 d-flex flex-wrap gap-2 align-items-center">
+                                            <?php if (!empty($j['dwms_job_id'])): ?>
+                                                <span class="font-monospace"><i class="bi bi-hash"></i><?= esc((string) $j['dwms_job_id']) ?></span>
+                                            <?php endif; ?>
+                                            <?php if (!empty($j['job_sector'])): ?>
+                                                <span><i class="bi bi-briefcase me-1"></i><?= esc((string) $j['job_sector']) ?></span>
+                                            <?php endif; ?>
+                                        </div>
                                     </div>
-                                </td>
+                                    <span class="badge text-bg-<?= esc(loi_job_status_tone((string) $j['status'])) ?> flex-shrink-0"><?= esc(ucfirst((string) $j['status'])) ?></span>
+                                </div>
+
+                                <dl class="loi-job-kv row g-1 small mb-0">
+                                    <dt class="col-5 col-sm-4 text-muted">Openings</dt>
+                                    <dd class="col-7 col-sm-8 mb-0 fw-semibold"><?= $j['vacancy_count'] === null ? '—' : (int) $j['vacancy_count'] ?></dd>
+
+                                    <dt class="col-5 col-sm-4 text-muted">Applications</dt>
+                                    <dd class="col-7 col-sm-8 mb-0">
+                                        <?= $j['applications_count'] === null ? '—' : (int) $j['applications_count'] ?>
+                                        <?php if (!empty($j['applications_count_as_on'])): ?>
+                                            <span class="text-muted small">(as on <?= esc($fmtDate($j['applications_count_as_on'])) ?>)</span>
+                                        <?php endif; ?>
+                                    </dd>
+
+                                    <dt class="col-5 col-sm-4 text-muted">Qualification</dt>
+                                    <dd class="col-7 col-sm-8 mb-0">
+                                        <?= esc((string) ($j['qualification'] ?? '—') ?: '—') ?>
+                                        <?php if ($qcName !== ''): ?><div class="text-muted small">[<?= esc($qcName) ?>]</div><?php endif; ?>
+                                    </dd>
+
+                                    <dt class="col-5 col-sm-4 text-muted">Salary</dt>
+                                    <dd class="col-7 col-sm-8 mb-0"><?= $srName === '' ? '<span class="text-muted">—</span>' : esc($srName) ?></dd>
+
+                                    <dt class="col-5 col-sm-4 text-muted">Mobilisation</dt>
+                                    <dd class="col-7 col-sm-8 mb-0"><?= $mobBadge ?></dd>
+
+                                    <dt class="col-5 col-sm-4 text-muted">Valid From → To</dt>
+                                    <dd class="col-7 col-sm-8 mb-0">
+                                        <?= esc($fmtDate($j['expiry_date'] ?? '')) ?>
+                                        <?php if (!empty($j['experience_valid_till'])): ?>
+                                            <span class="text-muted">→ <?= esc($fmtDate($j['experience_valid_till'])) ?></span>
+                                        <?php endif; ?>
+                                    </dd>
+                                </dl>
+                            </div>
+                            <?php if ($canEdit): ?>
+                                <div class="card-footer bg-transparent d-flex justify-content-end gap-1 py-2">
+                                    <button type="button" class="btn btn-sm btn-outline-primary js-edit-job" data-payload="<?= $payload ?>" data-bs-toggle="modal" data-bs-target="#jobModal"><i class="bi bi-pencil me-1"></i>Edit</button>
+                                    <form method="post" class="d-inline" onsubmit="return confirm('Toggle job status?');">
+                                        <?php csrf_field(); ?>
+                                        <input type="hidden" name="action" value="toggle_job">
+                                        <input type="hidden" name="job_id" value="<?= (int) $j['id'] ?>">
+                                        <button class="btn btn-sm <?= $active ? 'btn-outline-danger' : 'btn-outline-success' ?>"><i class="bi <?= $active ? 'bi-slash-circle me-1' : 'bi-check2-circle me-1' ?>"></i><?= $active ? 'Deactivate' : 'Activate' ?></button>
+                                    </form>
+                                </div>
                             <?php endif; ?>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
+    <style>
+    .loi-job-grid .loi-job-card         { border: 1px solid #e2e8f0; border-radius: 10px; transition: box-shadow .15s; }
+    .loi-job-grid .loi-job-card:hover   { box-shadow: 0 4px 14px rgba(30,42,66,.08); }
+    .loi-job-grid .loi-job-inactive     { opacity: .65; }
+    .loi-job-grid .loi-job-role         { font-size: 1.1rem; line-height: 1.3; word-break: break-word; }
+    .loi-job-kv dt                      { font-weight: 500; }
+    .loi-job-kv dd                      { word-break: break-word; }
+    </style>
 
     <?php if ($canEdit): ?>
     <div class="modal fade" id="jobModal" tabindex="-1" aria-hidden="true">
