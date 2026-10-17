@@ -1078,6 +1078,22 @@ render_header('Dashboard');
             </div>
         </div>
     </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-success h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Active Openings</p><p class="stat-value"><?= number_format((int) $loiCounts['active_openings']) ?></p></div>
+                <span class="stat-icon-box tone-success"><i class="bi bi-person-check"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-slate h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100"><p class="stat-label">Total Openings</p><p class="stat-value"><?= number_format((int) $loiCounts['total_openings']) ?></p></div>
+                <span class="stat-icon-box tone-slate"><i class="bi bi-people-fill"></i></span>
+            </div>
+        </div>
+    </div>
 </div>
 <?php endif; /* loi_jobs */ ?>
 <?php $cardBlocks['loi_jobs'] = ob_get_clean(); ob_start(); ?>

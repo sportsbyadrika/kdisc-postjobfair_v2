@@ -67,6 +67,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     $hrMob    = trim((string) ($_POST['hr_manager_mobile'] ?? ''));
     $hrMail   = trim((string) ($_POST['hr_manager_email'] ?? ''));
     $sector   = trim((string) ($_POST['sector'] ?? ''));
+    $loiDocUrl = trim((string) ($_POST['loi_document_url'] ?? ''));
     $loiRecv  = isset($_POST['loi_received']) ? 1 : 0;
     $loiDate  = trim((string) ($_POST['loi_received_date'] ?? ''));
     $regDwms  = isset($_POST['registered_in_dwms']) ? 1 : 0;
@@ -76,7 +77,8 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     $loiDate  = ($loiDate !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $loiDate)) ? $loiDate : null;
 
     try {
-        if ($id > 0) {
+        $isAdd = ($id === 0);
+        if (!$isAdd) {
             db()->prepare('UPDATE loi_employer SET
                     sbu_id = ?, name = ?, dwms_employer_id = ?, address_of_communication = ?, state = ?, district = ?,
                     contact_number = ?, contact_email = ?,
@@ -96,7 +98,6 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                     $regDwms, $jobsDwms,
                     $notes === '' ? null : $notes, $isActive, $viewerId, $id,
                 ]);
-            $flashAndBack('Employer updated.', 'success', $id);
         } else {
             db()->prepare('INSERT INTO loi_employer
                 (sbu_id, name, dwms_employer_id, address_of_communication, state, district, contact_number, contact_email,
@@ -116,9 +117,19 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                     $regDwms, $jobsDwms, $notes === '' ? null : $notes,
                     $viewerId, $viewerId,
                 ]);
-            $newId = db()->lastInsertId();
-            $flashAndBack('Employer added. You can now add Jobs, Interviews and Candidates on the detail page.', 'success', $newId);
+            $id = (int) db()->lastInsertId();
         }
+        // Persist loi_document_url separately — tolerated when the
+        // column is absent (older install, ALTER refused).
+        try {
+            db()->prepare('UPDATE loi_employer SET loi_document_url = ? WHERE id = ?')
+                ->execute([$loiDocUrl === '' ? null : $loiDocUrl, $id]);
+        } catch (Throwable $e) { /* column missing — ignore */ }
+        $flashAndBack(
+            $isAdd ? 'Employer added. You can now add Jobs, Interviews and Candidates on the detail page.' : 'Employer updated.',
+            'success',
+            $id
+        );
     } catch (Throwable $e) {
         $flashAndBack('Save failed: ' . $e->getMessage(), 'danger');
     }
@@ -297,6 +308,7 @@ render_page_header('LOI & Jobs · Employers', [
                         'loi_received_date'  => (string) ($r['loi_received_date'] ?? ''),
                         'registered_in_dwms' => (int) ($r['registered_in_dwms'] ?? 0),
                         'jobs_added_in_dwms' => (int) ($r['jobs_added_in_dwms'] ?? 0),
+                        'loi_document_url'   => (string) ($r['loi_document_url'] ?? ''),
                         'notes'              => (string) ($r['notes'] ?? ''),
                         'is_active'          => (int) ($r['is_active'] ?? 0),
                     ], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES);
@@ -374,7 +386,7 @@ render_page_header('LOI & Jobs · Employers', [
                 <div class="modal-body">
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <label class="form-label">Employer name <span class="text-danger">*</span></label>
+                            <label class="form-label">Employer name <span class="small text-muted">(Same as in DWMS)</span> <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="eModalName" name="name" required maxlength="200">
                         </div>
                         <div class="col-md-3">
@@ -387,7 +399,7 @@ render_page_header('LOI & Jobs · Employers', [
                             </select>
                         </div>
                         <div class="col-md-3">
-                            <label class="form-label">Sector</label>
+                            <label class="form-label">Employer Sector</label>
                             <input type="text" class="form-control" id="eModalSector" name="sector" maxlength="120">
                         </div>
 
@@ -454,6 +466,10 @@ render_page_header('LOI & Jobs · Employers', [
                         <div class="col-md-3">
                             <label class="form-label">LOI received date</label>
                             <input type="date" class="form-control" id="eModalLoiDate" name="loi_received_date">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Upload LOI document <span class="small text-muted">(Google Drive URL)</span></label>
+                            <input type="url" class="form-control" id="eModalLoiDocUrl" name="loi_document_url" maxlength="500" placeholder="https://drive.google.com/…">
                         </div>
                         <div class="col-md-3">
                             <div class="form-check mt-md-4">
@@ -541,7 +557,7 @@ render_page_header('LOI & Jobs · Employers', [
             title.innerHTML = '<i class="bi bi-plus-lg me-1"></i>New employer';
             ['eModalId','eModalName','eModalSbu','eModalSector','eModalDwmsId','eModalAddr','eModalState',
              'eModalCnum','eModalCmail','eModalHrName','eModalHrMob','eModalHrMail',
-             'eModalLoiDate','eModalNotes'].forEach(k => setV(k, k === 'eModalId' ? '0' : (k === 'eModalSbu' ? '0' : '')));
+             'eModalLoiDate','eModalLoiDocUrl','eModalNotes'].forEach(k => setV(k, k === 'eModalId' ? '0' : (k === 'eModalSbu' ? '0' : '')));
             if (distSel) distSel.innerHTML = '<option value="">— select a state first —</option>';
             setC('eModalLoi', false); setC('eModalRegDwms', false); setC('eModalJobsDwms', false); setC('eModalActive', true);
         } else if (t.classList.contains('js-edit-emp')) {
@@ -558,6 +574,7 @@ render_page_header('LOI & Jobs · Employers', [
             setV('eModalCnum', d.contact_number); setV('eModalCmail', d.contact_email);
             setV('eModalHrName', d.hr_manager_name); setV('eModalHrMob', d.hr_manager_mobile); setV('eModalHrMail', d.hr_manager_email);
             setV('eModalLoiDate', (d.loi_received_date || '').substring(0, 10));
+            setV('eModalLoiDocUrl', d.loi_document_url || '');
             setV('eModalNotes', d.notes);
             setC('eModalLoi',       d.loi_received === 1);
             setC('eModalRegDwms',   d.registered_in_dwms === 1);
