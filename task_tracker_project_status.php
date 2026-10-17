@@ -78,16 +78,45 @@ if ($tab === 'tree') {
     }
 }
 
-// Aggregate money / progress totals per project (across all active
-// tasks) — used on the project row summary. Only needed on the tree
-// tab.
+// Effective progress per task: a parent task's progress is the average
+// of its direct children's effective progress (recursive). A leaf uses
+// its own progress_pct, falling back to 100 for terminal statuses / 0
+// for the rest. This fixes the previous bug where an "In Progress"
+// activity reported 0% while all its sub-activities were 100%.
+$taskChildren     = []; // parent_id => [row, row, …]
+$taskEffective    = []; // task_id => float 0..100
+if ($tab === 'tree') {
+    foreach ($tasks as $t) {
+        $parent = (int) ($t['parent_id'] ?? 0);
+        if ($parent > 0) $taskChildren[$parent][] = $t;
+    }
+    $computeProgress = static function (array $t) use (&$taskChildren, &$taskEffective, &$computeProgress): float {
+        $tid = (int) $t['id'];
+        if (isset($taskEffective[$tid])) return $taskEffective[$tid];
+        $kids = $taskChildren[$tid] ?? [];
+        if ($kids !== []) {
+            $sum = 0.0;
+            foreach ($kids as $k) $sum += $computeProgress($k);
+            return $taskEffective[$tid] = $sum / count($kids);
+        }
+        $own = $t['progress_pct'] !== null ? (float) $t['progress_pct']
+            : ((int) ($t['is_terminal'] ?? 0) === 1 ? 100.0 : 0.0);
+        return $taskEffective[$tid] = $own;
+    };
+    foreach ($tasks as $t) $computeProgress($t);
+}
+
+// Aggregate money / progress totals per project. The project row's
+// progress is now the average of its top-level activities' effective
+// progress (so sub-activity completion propagates up through parent
+// activities the same way the activity row itself computes).
 if ($tab === 'tree'):
 foreach ($projects as $p) {
     $pid = (int) $p['id'];
     $projectTasks = [];
     foreach (($byProject[$pid] ?? []) as $group) foreach ($group as $t) $projectTasks[] = $t;
     $sumShare = 0.0; $sumProjected = 0.0; $sumTarget = 0.0; $sumActual = 0.0;
-    $totalTasks = 0; $completedTasks = 0; $weightedProgress = 0.0;
+    $totalTasks = 0; $completedTasks = 0;
     foreach ($projectTasks as $t) {
         $totalTasks++;
         $sumShare     += (float) ($t['share_amount']       ?? 0);
@@ -95,11 +124,13 @@ foreach ($projects as $p) {
         $sumTarget    += (float) ($t['target_expenditure'] ?? 0);
         $sumActual    += (float) ($t['actual_expenditure'] ?? 0);
         if ((int) ($t['is_terminal'] ?? 0) === 1) $completedTasks++;
-        // Weight progress by 1 per task — either explicit progress_pct
-        // or 100 for terminal statuses / 0 for the rest.
-        $pct = $t['progress_pct'] !== null ? (int) $t['progress_pct']
-            : ((int) ($t['is_terminal'] ?? 0) === 1 ? 100 : 0);
-        $weightedProgress += $pct;
+    }
+    $topActivities = $byProject[$pid][0] ?? [];
+    $projProgress  = 0.0;
+    if ($topActivities !== []) {
+        $sum = 0.0;
+        foreach ($topActivities as $a) $sum += $taskEffective[(int) $a['id']] ?? 0.0;
+        $projProgress = $sum / count($topActivities);
     }
     $projectSummary[$pid] = [
         'budget'            => $p['budget_amount'] !== null ? (float) $p['budget_amount'] : null,
@@ -110,7 +141,7 @@ foreach ($projects as $p) {
         'balance'           => $p['budget_amount'] !== null ? ((float) $p['budget_amount'] - $sumActual) : null,
         'total_tasks'       => $totalTasks,
         'completed_tasks'   => $completedTasks,
-        'progress_avg'      => $totalTasks > 0 ? $weightedProgress / $totalTasks : 0.0,
+        'progress_avg'      => $projProgress,
     ];
 }
 endif; // $tab === 'tree'
@@ -172,12 +203,18 @@ render_page_header('Task Tracker · Project Status', [
                 ?>
                     <tr class="tt-row-project" data-level="project" data-project-id="<?= $pid ?>">
                         <td>
-                            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 me-2 tt-toggle" data-target="project-<?= $pid ?>" aria-expanded="false">
-                                <i class="bi bi-plus-square"></i>
-                            </button>
-                            <span class="badge text-bg-light border font-monospace me-2"><?= esc((string) $p['code']) ?></span>
-                            <a href="/task_tracker_project_view.php?id=<?= $pid ?>" class="fw-semibold text-decoration-none text-body"><?= esc((string) $p['name']) ?></a>
-                            <div class="small text-muted mt-1"><?= (int) $sum['total_tasks'] ?> task<?= $sum['total_tasks'] === 1 ? '' : 's' ?> · <?= (int) $sum['completed_tasks'] ?> completed</div>
+                            <div class="tt-tree-cell" data-depth="0">
+                                <div class="tt-tree-content">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 tt-toggle" data-target="project-<?= $pid ?>" aria-expanded="false">
+                                            <i class="bi bi-plus-square"></i>
+                                        </button>
+                                        <span class="badge text-bg-light border font-monospace"><?= esc((string) $p['code']) ?></span>
+                                        <a href="/task_tracker_project_view.php?id=<?= $pid ?>" class="fw-semibold text-decoration-none text-body"><?= esc((string) $p['name']) ?></a>
+                                    </div>
+                                    <div class="small text-muted mt-1 tt-tree-meta"><?= (int) $sum['total_tasks'] ?> task<?= $sum['total_tasks'] === 1 ? '' : 's' ?> · <?= (int) $sum['completed_tasks'] ?> completed</div>
+                                </div>
+                            </div>
                         </td>
                         <td><span class="badge text-bg-<?= ((int) $p['is_active']) === 1 ? 'success' : 'secondary' ?>"><?= ((int) $p['is_active']) === 1 ? 'Active' : 'Inactive' ?></span></td>
                         <td class="text-end small font-monospace"><?= esc($fmtMoney($sum['share_total'])) ?></td>
@@ -210,26 +247,35 @@ render_page_header('Task Tracker · Project Status', [
                         $aActual    = $a['actual_expenditure'] !== null ? (float) $a['actual_expenditure'] : null;
                         $aBalance   = ($aTarget === null && $aActual === null) ? null : (($aTarget ?? 0) - ($aActual ?? 0));
                         $aTone      = (string) ($a['status_colour'] ?? 'secondary'); if ($aTone === 'neutral') $aTone = 'secondary';
-                        $aPct       = $a['progress_pct'] !== null ? (int) $a['progress_pct']
-                            : ((int) ($a['is_terminal'] ?? 0) === 1 ? 100 : 0);
+                        // Rolled-up progress: for an activity with sub-activities,
+                        // show the average of its children (recursive via $taskEffective).
+                        $aPct       = isset($taskEffective[$aid]) ? (int) round($taskEffective[$aid])
+                            : ($a['progress_pct'] !== null ? (int) $a['progress_pct']
+                                : ((int) ($a['is_terminal'] ?? 0) === 1 ? 100 : 0));
                         $aBarTone   = $aPct >= 80 ? 'success' : ($aPct >= 50 ? 'info' : ($aPct >= 25 ? 'warning' : 'danger'));
                         $subCount   = count($byProject[$pid][$aid] ?? []);
                     ?>
                         <tr class="tt-row-activity d-none" data-level="activity" data-project-id="<?= $pid ?>" data-activity-id="<?= $aid ?>" data-parent-toggle="project-<?= $pid ?>">
                             <td>
-                                <span style="display:inline-block; width:24px;"></span>
-                                <?php if ($subCount > 0): ?>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 me-2 tt-toggle" data-target="activity-<?= $aid ?>" aria-expanded="false">
-                                        <i class="bi bi-plus-square"></i>
-                                    </button>
-                                <?php else: ?>
-                                    <span class="d-inline-block" style="width:36px;"></span>
-                                <?php endif; ?>
-                                <span class="badge text-bg-light border font-monospace me-1"><?= esc((string) $p['code']) ?>-<?= (int) $a['task_number'] ?></span>
-                                <a href="/task_tracker_task_view.php?id=<?= $aid ?>" class="text-decoration-none text-body"><?= esc((string) $a['title']) ?></a>
-                                <div class="small text-muted mt-1">
-                                    <i class="bi bi-calendar-event me-1"></i><?= esc($fmtDate($a['planned_start'] ?? '')) ?> → <?= esc($fmtDate($a['planned_end'] ?? '')) ?>
-                                    <?php if ($subCount > 0): ?> · <span class="badge text-bg-secondary"><?= $subCount ?> sub-activit<?= $subCount === 1 ? 'y' : 'ies' ?></span><?php endif; ?>
+                                <div class="tt-tree-cell" data-depth="1">
+                                    <div class="tt-tree-indent"></div>
+                                    <div class="tt-tree-content">
+                                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                                            <?php if ($subCount > 0): ?>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 tt-toggle" data-target="activity-<?= $aid ?>" aria-expanded="false">
+                                                    <i class="bi bi-plus-square"></i>
+                                                </button>
+                                            <?php else: ?>
+                                                <span class="d-inline-block tt-leaf-dot" title="Leaf activity"></span>
+                                            <?php endif; ?>
+                                            <span class="badge text-bg-light border font-monospace"><?= esc((string) $p['code']) ?>-<?= (int) $a['task_number'] ?></span>
+                                            <a href="/task_tracker_task_view.php?id=<?= $aid ?>" class="text-decoration-none text-body"><?= esc((string) $a['title']) ?></a>
+                                        </div>
+                                        <div class="small text-muted mt-1 tt-tree-meta">
+                                            <i class="bi bi-calendar-event me-1"></i><?= esc($fmtDate($a['planned_start'] ?? '')) ?> → <?= esc($fmtDate($a['planned_end'] ?? '')) ?>
+                                            <?php if ($subCount > 0): ?> · <span class="badge text-bg-secondary"><?= $subCount ?> sub-activit<?= $subCount === 1 ? 'y' : 'ies' ?></span><?php endif; ?>
+                                        </div>
+                                    </div>
                                 </div>
                             </td>
                             <td><span class="badge text-bg-<?= esc($aTone) ?>"><?= esc((string) ($a['status_name'] ?? '—')) ?></span></td>
@@ -258,18 +304,26 @@ render_page_header('Task Tracker · Project Status', [
                             $sActual    = $s['actual_expenditure'] !== null ? (float) $s['actual_expenditure'] : null;
                             $sBalance   = ($sTarget === null && $sActual === null) ? null : (($sTarget ?? 0) - ($sActual ?? 0));
                             $sTone      = (string) ($s['status_colour'] ?? 'secondary'); if ($sTone === 'neutral') $sTone = 'secondary';
-                            $sPct       = $s['progress_pct'] !== null ? (int) $s['progress_pct']
-                                : ((int) ($s['is_terminal'] ?? 0) === 1 ? 100 : 0);
+                            $sPct       = isset($taskEffective[$sid]) ? (int) round($taskEffective[$sid])
+                                : ($s['progress_pct'] !== null ? (int) $s['progress_pct']
+                                    : ((int) ($s['is_terminal'] ?? 0) === 1 ? 100 : 0));
                             $sBarTone   = $sPct >= 80 ? 'success' : ($sPct >= 50 ? 'info' : ($sPct >= 25 ? 'warning' : 'danger'));
                         ?>
                             <tr class="tt-row-sub d-none" data-level="sub" data-project-id="<?= $pid ?>" data-activity-id="<?= $aid ?>" data-parent-toggle="activity-<?= $aid ?>" data-project-toggle="project-<?= $pid ?>">
                                 <td>
-                                    <span style="display:inline-block; width:60px;"></span>
-                                    <span class="text-muted me-1">↳</span>
-                                    <span class="badge text-bg-light border font-monospace me-1"><?= esc((string) $p['code']) ?>-<?= (int) $s['task_number'] ?></span>
-                                    <a href="/task_tracker_task_view.php?id=<?= $sid ?>" class="text-decoration-none text-body"><?= esc((string) $s['title']) ?></a>
-                                    <div class="small text-muted mt-1">
-                                        <i class="bi bi-calendar-event me-1"></i><?= esc($fmtDate($s['planned_start'] ?? '')) ?> → <?= esc($fmtDate($s['planned_end'] ?? '')) ?>
+                                    <div class="tt-tree-cell" data-depth="2">
+                                        <div class="tt-tree-indent"></div>
+                                        <div class="tt-tree-indent"></div>
+                                        <div class="tt-tree-content">
+                                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                <span class="tt-leaf-dot" title="Sub-activity"></span>
+                                                <span class="badge text-bg-light border font-monospace"><?= esc((string) $p['code']) ?>-<?= (int) $s['task_number'] ?></span>
+                                                <a href="/task_tracker_task_view.php?id=<?= $sid ?>" class="text-decoration-none text-body"><?= esc((string) $s['title']) ?></a>
+                                            </div>
+                                            <div class="small text-muted mt-1 tt-tree-meta">
+                                                <i class="bi bi-calendar-event me-1"></i><?= esc($fmtDate($s['planned_start'] ?? '')) ?> → <?= esc($fmtDate($s['planned_end'] ?? '')) ?>
+                                            </div>
+                                        </div>
                                     </div>
                                 </td>
                                 <td><span class="badge text-bg-<?= esc($sTone) ?>"><?= esc((string) ($s['status_name'] ?? '—')) ?></span></td>
@@ -605,6 +659,22 @@ document.addEventListener('DOMContentLoaded', function () {
 .tt-row-activity   td { background: #ffffff; }
 .tt-row-sub        td { background: #fbfcfe; }
 .tt-status-tree .tt-toggle { line-height: 1; }
+
+/* ---------- Tree-table indentation ---------- */
+/* Each row's first cell is a flex strip: zero or more .tt-tree-indent
+   rails on the left (one per depth), then the content column. Puts
+   the title and the secondary metadata line on the same indent so the
+   hierarchy reads unambiguously, with a thin dashed guide line on
+   each level drop. */
+.tt-tree-cell                        { display: flex; align-items: stretch; }
+.tt-tree-cell .tt-tree-indent        { width: 24px; flex: 0 0 24px; border-left: 1px dashed #cbd5e1; margin-right: 0; }
+.tt-tree-cell .tt-tree-indent:first-child { margin-left: 8px; }
+.tt-tree-cell .tt-tree-content       { flex: 1 1 auto; min-width: 0; }
+.tt-tree-cell .tt-tree-meta          { line-height: 1.3; }
+.tt-tree-cell[data-depth="0"] .tt-tree-content { padding-left: 0; }
+.tt-tree-cell[data-depth="1"] .tt-tree-content,
+.tt-tree-cell[data-depth="2"] .tt-tree-content { padding-left: 12px; }
+.tt-leaf-dot                         { width: 10px; height: 10px; display: inline-block; border-radius: 50%; background: #cbd5e1; flex: 0 0 10px; }
 
 /* Persistent horizontal scrollbar under the Gantt chart, matching the
    marked spot in the screenshot. overflow-x:scroll (not auto) forces
