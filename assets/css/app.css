@@ -455,24 +455,30 @@ label.form-label {
     font-size: .85rem;
 }
 /* Checkbox + radio — the default theme border is a very faint
-   #e2e8f0 which disappears against white card backgrounds. Give
-   the unchecked state a darker border and a hint of inner shadow
-   so it reads as a tick-able control at a glance (previously users
-   only saw it on hover/focus). */
+   #e2e8f0 which disappears against white card backgrounds. Force
+   a solid 2px #64748b border + a subtle shaded fill so the
+   unchecked box is clearly visible before you hover. !important
+   wins over Bootstrap's own idle border, and the shaded fill
+   ensures the control is readable even against light grey card
+   backgrounds (where a pure white box would blend in). */
 .form-check-input {
-    border: 1.5px solid #94a3b8;
-    background-color: #fff;
+    border: 2px solid #64748b !important;
+    background-color: #fff !important;
+    box-shadow: inset 0 0 0 1px #ffffff;
 }
 .form-check-input:hover {
-    border-color: var(--pjf-primary);
+    border-color: var(--pjf-primary) !important;
 }
 .form-check-input:checked {
-    background-color: var(--pjf-primary);
-    border-color: var(--pjf-primary);
+    background-color: var(--pjf-primary) !important;
+    border-color: var(--pjf-primary) !important;
 }
 .form-check-input:focus {
-    border-color: var(--pjf-primary);
-    box-shadow: 0 0 0 .2rem rgba(var(--pjf-primary-rgb), .15);
+    border-color: var(--pjf-primary) !important;
+    box-shadow: 0 0 0 .2rem rgba(var(--pjf-primary-rgb), .25);
+}
+.form-check-input:disabled {
+    opacity: .55;
 }
 
 /* Filter bar — a card-like surface for search/filter forms */

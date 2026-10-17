@@ -550,6 +550,22 @@ render_page_header('LOI & Jobs · Employers', [
     };
     stateSel?.addEventListener('change', () => loadDistricts(stateSel.value, null));
 
+    // Auto-open the edit modal when ?open=<id> is present (the Edit
+    // employer button on /loi_employer_view.php bounces here with that
+    // query). Finds the right Edit row by payload id and simulates a
+    // click so the show.bs.modal hydrator below runs the same way as
+    // a user-driven open.
+    (function () {
+        const q = new URLSearchParams(window.location.search);
+        const openId = Number(q.get('open') || 0);
+        if (!openId) return;
+        const row = Array.from(document.querySelectorAll('.js-edit-emp')).find(b => {
+            try { return (JSON.parse(b.getAttribute('data-payload') || '{}').id | 0) === openId; }
+            catch (e) { return false; }
+        });
+        if (row) { try { row.click(); } catch (e) {} }
+    })();
+
     modalEl?.addEventListener('show.bs.modal', (ev) => {
         const t = ev.relatedTarget; if (!t) return;
         const title = document.getElementById('eModalTitle');
