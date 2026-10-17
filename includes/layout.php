@@ -384,7 +384,7 @@ function render_header(string $title, array $options = []): void
                             <?php /* ============ Module: Administration ============ */ ?>
                             <?php if ($canAdminMod || is_manage_admin($user)): ?>
                                 <li class="nav-item dropdown">
-                                    <a class="nav-link dropdown-toggle<?= $isActive(['users.php','role_groups.php','reports.php','office_hierarchy.php','office_hierarchy_trash.php','teams.php','dashboard_settings.php','meeting_cleanup.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['users.php','role_groups.php','reports.php','office_hierarchy.php','office_hierarchy_trash.php','teams.php','dashboard_settings.php','meeting_cleanup.php','task_tracker_cleanup.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-shield-lock me-1"></i>Administration</a>
                                     <ul class="dropdown-menu">
                                         <li><h6 class="dropdown-header">Users &amp; access</h6></li>
                                         <li><a class="dropdown-item ps-4" href="/users.php"><i class="bi bi-people me-2"></i>Users</a></li>
@@ -398,6 +398,7 @@ function render_header(string $title, array $options = []): void
                                         <li><h6 class="dropdown-header">Settings</h6></li>
                                         <li><a class="dropdown-item ps-4" href="/dashboard_settings.php"><i class="bi bi-sliders2 me-2"></i>Dashboard settings</a></li>
                                         <li><a class="dropdown-item ps-4" href="/meeting_cleanup.php"><i class="bi bi-trash me-2"></i>Meeting cleanup <span class="small text-muted">(unapproved)</span></a></li>
+                                        <li><a class="dropdown-item ps-4" href="/task_tracker_cleanup.php"><i class="bi bi-trash me-2"></i>Project / task cleanup</a></li>
                                         <li><hr class="dropdown-divider"></li>
                                         <li><h6 class="dropdown-header">Reports</h6></li>
                                         <li><a class="dropdown-item ps-4" href="/reports.php"><i class="bi bi-clock-history me-2"></i>Login Reports</a></li>

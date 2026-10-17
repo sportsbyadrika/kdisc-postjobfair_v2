@@ -346,9 +346,24 @@ $renderTree = function (array $nodes, ?int $selectedId) use (&$renderTree): void
             // Spacer so leaf names line up with branch names.
             echo '<span class="oh-spacer d-inline-block me-1" style="width:14px;">&nbsp;</span>';
         }
-        echo '<a href="/office_hierarchy.php?node=' . $id . '" class="' . $labelCls . ' text-decoration-none">';
+        // Hover tooltip surfaces the assigned officer so an operator
+        // doesn't have to click into each node to see who holds it.
+        // Only seat-level nodes carry an officer; other levels show the
+        // level label.
+        $officerName = trim((string) ($n['officer_name'] ?? ''));
+        if ($level === 'seat') {
+            $tooltip = $officerName !== ''
+                ? 'Assigned: ' . $officerName
+                : 'Seat — vacant';
+        } else {
+            $tooltip = ucwords(str_replace('_', ' ', $level)) . ': ' . (string) $n['name'];
+        }
+        echo '<a href="/office_hierarchy.php?node=' . $id . '" class="' . $labelCls . ' text-decoration-none" title="' . htmlspecialchars($tooltip, ENT_QUOTES, 'UTF-8') . '">';
         echo '<i class="bi ' . htmlspecialchars($icon, ENT_QUOTES, 'UTF-8') . ' me-1"></i>';
         echo htmlspecialchars((string) $n['name'], ENT_QUOTES, 'UTF-8');
+        if ($level === 'seat' && $officerName !== '') {
+            echo ' <span class="text-muted small">· ' . htmlspecialchars($officerName, ENT_QUOTES, 'UTF-8') . '</span>';
+        }
         echo '</a>';
         if ($hasKids) {
             echo '<div class="oh-children">';

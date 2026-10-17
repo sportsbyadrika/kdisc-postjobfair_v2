@@ -454,6 +454,18 @@ label.form-label {
     color: var(--pjf-muted);
     font-size: .85rem;
 }
+/* Checkbox + radio — the default theme border is a very faint
+   #e2e8f0 which disappears against white card backgrounds. Give
+   the unchecked state a darker border and a hint of inner shadow
+   so it reads as a tick-able control at a glance (previously users
+   only saw it on hover/focus). */
+.form-check-input {
+    border: 1.5px solid #94a3b8;
+    background-color: #fff;
+}
+.form-check-input:hover {
+    border-color: var(--pjf-primary);
+}
 .form-check-input:checked {
     background-color: var(--pjf-primary);
     border-color: var(--pjf-primary);
