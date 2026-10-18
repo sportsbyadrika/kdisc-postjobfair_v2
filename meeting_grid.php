@@ -57,8 +57,11 @@ try {
         $st->execute([$meetingId]);
         $rows = $st->fetchAll();
     } elseif ($type === 'decision') {
-        $hasRemarks = meetings_column_exists('meeting_decision', 'remarks');
-        $cols = 'id, heading, description, due_date' . ($hasRemarks ? ', remarks' : ', NULL AS remarks');
+        $hasRemarks  = meetings_column_exists('meeting_decision', 'remarks');
+        $hasAgendaId = meetings_column_exists('meeting_decision', 'agenda_id');
+        $cols = 'id, heading, description, due_date'
+              . ($hasRemarks  ? ', remarks'   : ', NULL AS remarks')
+              . ($hasAgendaId ? ', agenda_id' : ', NULL AS agenda_id');
         $st = db()->prepare("SELECT $cols FROM meeting_decision WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC");
         $st->execute([$meetingId]);
         $rows = $st->fetchAll();
@@ -68,6 +71,18 @@ try {
         $rows = $st->fetchAll();
     }
 } catch (Throwable $e) { /* empty */ }
+
+// Agenda list for the Decision grid's new Agenda dropdown. One row per
+// agenda item on this meeting; the client renders them as options and
+// writes agenda_id back to the server on every save.
+$agendaForDecision = [];
+if ($type === 'decision') {
+    try {
+        $st = db()->prepare('SELECT id, title, sort_order FROM meeting_agenda WHERE meeting_id = ? ORDER BY sort_order ASC, id ASC');
+        $st->execute([$meetingId]);
+        $agendaForDecision = $st->fetchAll();
+    } catch (Throwable $e) { /* table missing */ }
+}
 
 $labels = [
     'agenda'      => ['Agenda · Bulk entry',             'bi-list-ol'],
@@ -106,15 +121,24 @@ render_page_header($title . ' · ' . $meeting['reference_no'], [
 
 <style>
 .grid-tbl th { font-size: .78rem; text-transform: uppercase; letter-spacing: .02em; }
-.grid-tbl td { padding: 2px; vertical-align: top; }
-.grid-tbl td.grid-num { padding: 6px 8px; width: 44px; color: #94a3b8; font-variant-numeric: tabular-nums; text-align: right; }
+/* Cells have no padding of their own — the input stretches edge to
+   edge so the focused outline + save-state background fill the whole
+   cell with no visible gap around them. */
+.grid-tbl td { padding: 0; vertical-align: top; }
+.grid-tbl td.grid-num { padding: 8px 8px; width: 44px; color: #94a3b8; font-variant-numeric: tabular-nums; text-align: right; }
 .grid-tbl td.grid-act { padding: 4px 6px; width: 44px; text-align: center; }
-.grid-tbl .grid-cell { width: 100%; border: none; padding: 6px 8px; background: transparent; font-size: .9rem; }
-.grid-tbl .grid-cell:focus { outline: 2px solid #3b82f6; outline-offset: -2px; background: #f0f9ff; }
-.grid-tbl textarea.grid-cell { resize: vertical; min-height: 32px; }
+.grid-tbl .grid-cell { width: 100%; display: block; border: none; padding: 8px 10px; background: transparent; font-size: .9rem; border-radius: 0; }
+.grid-tbl .grid-cell:focus { outline: none; background: #f0f9ff; box-shadow: inset 0 0 0 2px #3b82f6; }
+.grid-tbl textarea.grid-cell { resize: vertical; min-height: 32px; line-height: 1.35; }
+.grid-tbl select.grid-cell { appearance: auto; }
 .grid-tbl tr.saving td { background: #fef9c3; }
 .grid-tbl tr.saved  td { transition: background .3s ease; }
 .grid-tbl tr.error  td { background: #fee2e2; }
+/* Horizontal scroll for narrower screens — the Decision grid has
+   enough columns to overflow a laptop. table-responsive already
+   wraps the table but force a sticky scrollbar so overflow is obvious. */
+.grid-tbl { min-width: 100%; }
+.table-responsive { overflow-x: auto; }
 </style>
 
 <script>
@@ -124,6 +148,10 @@ render_page_header($title . ' · ' . $meeting['reference_no'], [
         type: <?= json_encode($type) ?>,
         csrf: <?= json_encode(csrf_token()) ?>,
         rows: <?= json_encode($rows, JSON_UNESCAPED_UNICODE) ?>,
+        agendaOptions: <?= json_encode(array_map(static fn($a) => [
+            'id'    => (int) $a['id'],
+            'label' => '#' . (int) ($a['sort_order'] ?: 0) . ' — ' . (string) $a['title'],
+        ], $agendaForDecision ?? []), JSON_UNESCAPED_UNICODE) ?>,
     };
 
     // Column specs per type.
@@ -140,7 +168,11 @@ render_page_header($title . ' · ' . $meeting['reference_no'], [
             action: 'upsert_decision',
             del:    'delete_decision',
             cols: [
-                {key: 'heading',     label: 'Heading',     type: 'text',     wide: 3},
+                {key: 'agenda_id',   label: 'Agenda',      type: 'select',   wide: 2, options: [
+                    {value: '', label: 'Other'},
+                    ...(G.agendaOptions || []).map(a => ({value: String(a.id), label: a.label})),
+                ]},
+                {key: 'heading',     label: 'Heading',     type: 'text',     wide: 2},
                 {key: 'description', label: 'Description', type: 'textarea', wide: 4},
                 {key: 'due_date',    label: 'Due date',    type: 'date',     wide: 1},
                 {key: 'remarks',     label: 'Remarks',     type: 'textarea', wide: 2},
@@ -185,7 +217,18 @@ render_page_header($title . ' · ' . $meeting['reference_no'], [
             let el;
             if (c.type === 'textarea') {
                 el = document.createElement('textarea');
-                el.rows = 1;
+                // Description benefits from 2 lines by default so the
+                // typical "two-sentence context" shows without needing
+                // to drag the resize handle.
+                el.rows = (c.key === 'description') ? 2 : 1;
+            } else if (c.type === 'select') {
+                el = document.createElement('select');
+                (c.options || []).forEach(opt => {
+                    const o = document.createElement('option');
+                    o.value = String(opt.value);
+                    o.textContent = String(opt.label);
+                    el.appendChild(o);
+                });
             } else {
                 el = document.createElement('input');
                 el.type = c.type;
