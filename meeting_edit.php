@@ -595,8 +595,14 @@ render_page_header($pageTitle, [
     'icon' => 'bi-calendar2-week',
     'subtitle' => $existing ? 'Edit fields, participants, agenda, decisions. Saves in one transaction.' : 'Create a new meeting. A reference number is allocated automatically from the division.',
     'actions' => ($existing
-            ? '<a class="btn btn-outline-success" href="/meeting_bulk_import.php?id=' . (int) $existing['id'] . '"><i class="bi bi-file-earmark-arrow-up me-1"></i>Bulk upload minutes</a>'
-                . '<button type="button" class="btn btn-outline-primary ms-2" data-bs-toggle="modal" data-bs-target="#copyMeetingModal"><i class="bi bi-copy me-1"></i>Copy to new meeting</button>'
+            ? '<div class="dropdown d-inline-block">'
+                . '<button type="button" class="btn btn-outline-secondary" data-bs-toggle="dropdown" aria-expanded="false" title="More actions"><i class="bi bi-three-dots-vertical"></i></button>'
+                . '<ul class="dropdown-menu dropdown-menu-end">'
+                    . '<li><a class="dropdown-item" href="/meeting_mom.php?id=' . (int) $existing['id'] . '" target="_blank"><i class="bi bi-file-earmark-text me-2"></i>View MoM (printable)</a></li>'
+                    . '<li><a class="dropdown-item" href="/meeting_bulk_import.php?id=' . (int) $existing['id'] . '"><i class="bi bi-file-earmark-arrow-up me-2"></i>Bulk upload minutes</a></li>'
+                    . '<li><button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#copyMeetingModal"><i class="bi bi-copy me-2"></i>Copy to new meeting</button></li>'
+                . '</ul>'
+              . '</div>'
             : '')
         . '<a class="btn btn-light ms-2" href="/meetings.php"><i class="bi bi-arrow-left me-1"></i>Back to Meetings</a>',
 ]);

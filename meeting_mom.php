@@ -61,11 +61,20 @@ $esc     = static fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 // quotes/backslashes and no newlines.
 $cssEsc  = static fn($s) => addslashes(preg_replace('/[\r\n]+/', ' ', (string) $s));
 
-$parts = db()->prepare('SELECT mp.*, u.name AS user_name, c.name AS contact_name, c.institution
+// Pull designation from the users table when present (internal
+// participants) so the MoM reflects the person's current title, not
+// the role_label (which is a per-meeting override). External
+// participants fall back to contact.designation when the column exists.
+$hasUserDesignation    = meetings_column_exists('users', 'designation');
+$hasContactDesignation = meetings_column_exists('contact', 'designation');
+$userDesigSel    = $hasUserDesignation    ? 'u.designation AS user_designation' : "NULL AS user_designation";
+$contactDesigSel = $hasContactDesignation ? 'c.designation AS contact_designation' : "NULL AS contact_designation";
+$parts = db()->prepare("SELECT mp.*, u.name AS user_name, c.name AS contact_name, c.institution,
+        $userDesigSel, $contactDesigSel
     FROM meeting_participant mp
     LEFT JOIN users u ON u.id = mp.user_id
     LEFT JOIN contact c ON c.id = mp.contact_id
-    WHERE mp.meeting_id = ? ORDER BY mp.id ASC');
+    WHERE mp.meeting_id = ? ORDER BY mp.id ASC");
 $parts->execute([$id]); $parts = $parts->fetchAll();
 
 $agenda = db()->prepare('SELECT a.*, u.name AS lead_user_name, c.name AS lead_contact_name, n.name AS lead_seat_name
@@ -298,23 +307,27 @@ $chairInst = $meeting['chair_contact_inst'];
 <h3>Participants</h3>
 <table>
     <thead>
-        <tr><th style="width:6%;">Sl</th><th>Name</th><th>Institution</th><th>Designation</th><th style="width:12%;">Type</th><th style="width:12%;">Status</th></tr>
+        <tr><th style="width:6%;">Sl</th><th>Name</th><th>Designation</th><th style="width:14%;">Status</th></tr>
     </thead>
     <tbody>
         <?php if ($parts === []): ?>
-            <tr><td colspan="6" style="text-align:center; color:#666;">— none —</td></tr>
+            <tr><td colspan="4" style="text-align:center; color:#666;">— none —</td></tr>
         <?php endif; ?>
         <?php $i = 1; foreach ($parts as $p):
             $name = (string) ($p['user_name'] ?: $p['contact_name']);
-            $inst = (string) ($p['institution'] ?? '');
+            // Designation: prefer users.designation / contact.designation
+            // from the master record. If both are empty, fall back to the
+            // per-meeting role_label so the column isn't blank for the
+            // common "guest invited for one meeting" case.
+            $designation = (string) ($p['user_designation'] ?? '');
+            if ($designation === '') $designation = (string) ($p['contact_designation'] ?? '');
+            if ($designation === '') $designation = (string) ($p['role_label'] ?? '');
             $status = $p['attended'] === null || $p['attended'] === '' ? '—' : ((int) $p['attended'] === 1 ? 'Present' : ((int) $p['is_mandatory'] === 1 ? 'Apologies' : 'Absent'));
         ?>
             <tr>
                 <td><?= $i++ ?></td>
                 <td><?= $esc($name) ?></td>
-                <td><?= $esc($inst) ?></td>
-                <td><?= $esc((string) ($p['role_label'] ?? '')) ?></td>
-                <td><?= (int) $p['is_mandatory'] === 1 ? 'Mandatory' : 'Optional' ?></td>
+                <td><?= $esc($designation) ?></td>
                 <td><?= $esc($status) ?></td>
             </tr>
         <?php endforeach; ?>
