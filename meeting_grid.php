@@ -120,25 +120,30 @@ render_page_header($title . ' · ' . $meeting['reference_no'], [
 </div>
 
 <style>
-.grid-tbl th { font-size: .78rem; text-transform: uppercase; letter-spacing: .02em; }
+/* ---------- Google-Sheets-style bulk entry ----------
+   Columns use fixed pixel widths. The sum exceeds the viewport on
+   the wider grids (Decision) → .table-responsive scrolls horizontally
+   so Remarks and Description get real room instead of being crushed
+   into column-percentages. */
+.grid-tbl                   { table-layout: fixed; border-collapse: separate; border-spacing: 0; }
+.grid-tbl th, .grid-tbl td  { border: 1px solid #e5e7eb; }
+.grid-tbl th                { font-size: .78rem; text-transform: uppercase; letter-spacing: .02em; background: #f8fafc; padding: 8px 10px; }
 /* Cells have no padding of their own — the input stretches edge to
    edge so the focused outline + save-state background fill the whole
    cell with no visible gap around them. */
-.grid-tbl td { padding: 0; vertical-align: top; }
-.grid-tbl td.grid-num { padding: 8px 8px; width: 44px; color: #94a3b8; font-variant-numeric: tabular-nums; text-align: right; }
-.grid-tbl td.grid-act { padding: 4px 6px; width: 44px; text-align: center; }
-.grid-tbl .grid-cell { width: 100%; display: block; border: none; padding: 8px 10px; background: transparent; font-size: .9rem; border-radius: 0; }
-.grid-tbl .grid-cell:focus { outline: none; background: #f0f9ff; box-shadow: inset 0 0 0 2px #3b82f6; }
-.grid-tbl textarea.grid-cell { resize: vertical; min-height: 32px; line-height: 1.35; }
-.grid-tbl select.grid-cell { appearance: auto; }
-.grid-tbl tr.saving td { background: #fef9c3; }
-.grid-tbl tr.saved  td { transition: background .3s ease; }
-.grid-tbl tr.error  td { background: #fee2e2; }
-/* Horizontal scroll for narrower screens — the Decision grid has
-   enough columns to overflow a laptop. table-responsive already
-   wraps the table but force a sticky scrollbar so overflow is obvious. */
-.grid-tbl { min-width: 100%; }
-.table-responsive { overflow-x: auto; }
+.grid-tbl td                { padding: 0; vertical-align: top; }
+.grid-tbl td.grid-num       { padding: 8px 8px; width: 44px; color: #94a3b8; font-variant-numeric: tabular-nums; text-align: right; background: #f8fafc; }
+.grid-tbl td.grid-act       { padding: 4px 6px; width: 44px; text-align: center; background: #f8fafc; }
+.grid-tbl .grid-cell        { width: 100%; display: block; box-sizing: border-box; border: none; padding: 8px 10px; background: transparent; font-size: .9rem; border-radius: 0; }
+.grid-tbl .grid-cell:focus  { outline: none; background: #f0f9ff; box-shadow: inset 0 0 0 2px #3b82f6; }
+.grid-tbl textarea.grid-cell { resize: vertical; min-height: 36px; line-height: 1.35; }
+.grid-tbl select.grid-cell  { appearance: auto; }
+.grid-tbl tr.saving td      { background: #fef9c3; }
+.grid-tbl tr.saved  td      { transition: background .3s ease; }
+.grid-tbl tr.error  td      { background: #fee2e2; }
+/* Horizontal scrollbar on the wrapper. overflow-x:auto triggers only
+   when the inner table's fixed widths exceed the viewport. */
+.table-responsive           { overflow-x: auto; }
 </style>
 
 <script>
@@ -154,36 +159,38 @@ render_page_header($title . ' · ' . $meeting['reference_no'], [
         ], $agendaForDecision ?? []), JSON_UNESCAPED_UNICODE) ?>,
     };
 
-    // Column specs per type.
+    // Column specs per type. w = fixed pixel width per column; the
+    // table's min-width is the sum of these so wide grids overflow
+    // horizontally rather than being squeezed into column-percent.
     const SPECS = {
         agenda: {
             action: 'upsert_agenda',
             del:    'delete_agenda',
             cols: [
-                {key: 'title',       label: 'Title',       type: 'text',     wide: 3},
-                {key: 'description', label: 'Description', type: 'textarea', wide: 6},
+                {key: 'title',       label: 'Title',       type: 'text',     w: 260},
+                {key: 'description', label: 'Description', type: 'textarea', w: 520},
             ],
         },
         decision: {
             action: 'upsert_decision',
             del:    'delete_decision',
             cols: [
-                {key: 'agenda_id',   label: 'Agenda',      type: 'select',   wide: 2, options: [
+                {key: 'agenda_id',   label: 'Agenda',      type: 'select',   w: 220, options: [
                     {value: '', label: 'Other'},
                     ...(G.agendaOptions || []).map(a => ({value: String(a.id), label: a.label})),
                 ]},
-                {key: 'heading',     label: 'Heading',     type: 'text',     wide: 2},
-                {key: 'description', label: 'Description', type: 'textarea', wide: 4},
-                {key: 'due_date',    label: 'Due date',    type: 'date',     wide: 1},
-                {key: 'remarks',     label: 'Remarks',     type: 'textarea', wide: 2},
+                {key: 'heading',     label: 'Heading',     type: 'text',     w: 240},
+                {key: 'description', label: 'Description', type: 'textarea', w: 420},
+                {key: 'due_date',    label: 'Due date',    type: 'date',     w: 150},
+                {key: 'remarks',     label: 'Remarks',     type: 'textarea', w: 360},
             ],
         },
         next_agenda: {
             action: 'upsert_next_agenda',
             del:    'delete_next_agenda',
             cols: [
-                {key: 'title',       label: 'Title',       type: 'text',     wide: 3},
-                {key: 'description', label: 'Description', type: 'textarea', wide: 6},
+                {key: 'title',       label: 'Title',       type: 'text',     w: 260},
+                {key: 'description', label: 'Description', type: 'textarea', w: 520},
             ],
         },
     };
@@ -202,8 +209,14 @@ render_page_header($title . ' · ' . $meeting['reference_no'], [
     // ---------- rendering ----------
     const head = document.getElementById('gridHead');
     head.innerHTML = '<th class="grid-num">#</th>'
-        + SPEC.cols.map(c => `<th style="width:${c.wide * 10}%;">${esc(c.label)}</th>`).join('')
+        + SPEC.cols.map(c => `<th style="width:${c.w}px; min-width:${c.w}px;">${esc(c.label)}</th>`).join('')
         + '<th class="grid-act">&nbsp;</th>';
+    // Set the table's min-width to the sum of its column widths so
+    // the parent .table-responsive gets a horizontal scroll when the
+    // viewport can't fit everything.
+    const totalW = 44 + SPEC.cols.reduce((s, c) => s + c.w, 0) + 44;
+    const tbl = document.getElementById('gridTbl');
+    if (tbl) tbl.style.minWidth = totalW + 'px';
 
     const buildRow = (row, idx) => {
         const tr = document.createElement('tr');
