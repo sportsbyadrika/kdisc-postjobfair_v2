@@ -182,7 +182,7 @@ render_page_header($title . ' · ' . $meeting['reference_no'], [
                 {key: 'heading',     label: 'Heading',     type: 'text',     w: 240},
                 {key: 'description', label: 'Description', type: 'textarea', w: 420},
                 {key: 'due_date',    label: 'Due date',    type: 'date',     w: 150},
-                {key: 'remarks',     label: 'Remarks',     type: 'textarea', w: 360},
+                {key: 'remarks',     label: 'Remarks',     type: 'textarea', w: 420},
             ],
         },
         next_agenda: {
@@ -230,10 +230,10 @@ render_page_header($title . ' · ' . $meeting['reference_no'], [
             let el;
             if (c.type === 'textarea') {
                 el = document.createElement('textarea');
-                // Description benefits from 2 lines by default so the
-                // typical "two-sentence context" shows without needing
-                // to drag the resize handle.
-                el.rows = (c.key === 'description') ? 2 : 1;
+                // Description + Remarks both benefit from 2 lines by
+                // default so the typical two-sentence context shows
+                // without needing to drag the resize handle.
+                el.rows = (c.key === 'description' || c.key === 'remarks') ? 2 : 1;
             } else if (c.type === 'select') {
                 el = document.createElement('select');
                 (c.options || []).forEach(opt => {
