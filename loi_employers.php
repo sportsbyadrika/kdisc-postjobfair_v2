@@ -211,7 +211,9 @@ render_header('LOI & Jobs · Employers', ['main_container_class' => 'container-x
 render_page_header('LOI & Jobs · Employers', [
     'icon'     => 'bi-building',
     'subtitle' => 'Employers tracked by our team. Click an employer to manage jobs, interviews and candidate roster.',
-    'actions'  => ($canAdmin ? '<button type="button" class="btn btn-primary js-new-emp" data-bs-toggle="modal" data-bs-target="#empModal"><i class="bi bi-plus-lg me-1"></i>New employer</button>' : '')
+    'actions'  => ($canAdmin ? '<button type="button" class="btn btn-primary js-new-emp" data-bs-toggle="modal" data-bs-target="#empModal"><i class="bi bi-plus-lg me-1"></i>New employer</button>'
+            . '<a class="btn btn-outline-success ms-2" href="/loi_bulk_import.php"><i class="bi bi-file-earmark-arrow-up me-1"></i>Bulk upload</a>'
+            : '')
         . '<a class="btn btn-light ms-2" href="/dashboard.php"><i class="bi bi-arrow-left me-1"></i>Back to Dashboard</a>',
 ]);
 ?>
