@@ -98,7 +98,9 @@ if (!can_edit_task($viewerId, $existing === null ? null : array_merge(
     (array) $existing,
     ['primary_seat_id'     => $existingAssignmentPayload['primary_seat_id'],
      'primary_section_id'  => $existingAssignmentPayload['primary_section_id'],
-     'primary_division_id' => $existingAssignmentPayload['primary_division_id']]
+     'primary_division_id' => $existingAssignmentPayload['primary_division_id'],
+     'secondary_seat_ids'  => $existingAssignmentPayload['secondary_seat_ids'],
+     'secondary_user_ids'  => $existingAssignmentPayload['secondary_user_ids'] ?? []]
 ))) {
     http_response_code(403);
     render_header('Access denied');

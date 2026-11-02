@@ -54,6 +54,20 @@ if (!empty($_SESSION['task_tracker_flash']) && is_array($_SESSION['task_tracker_
 
 $statuses = db()->query('SELECT * FROM task_status WHERE is_active = 1 ORDER BY sort_order ASC, id ASC')->fetchAll();
 
+// "Mine only" vs "Show all": by default the board shows just the
+// tasks the viewer is assigned to (primary OR secondary). Project-
+// Management admins can tick a checkbox in the header that reloads
+// the page with ?all=1 to see every active task. Non-admins never
+// see the checkbox and never see other people's tasks.
+$isPMAdmin = $canManage || user_can_admin_module($viewerId, 'project_management');
+$showAll   = $isPMAdmin && ((string) ($_GET['all'] ?? '') === '1');
+$mineFilter = $showAll ? '' : " AND t.id IN (
+        SELECT ta.task_id FROM task_assignment ta
+        LEFT JOIN office_hierarchy_officer_history oh
+            ON oh.node_id = ta.seat_id AND oh.unassigned_at IS NULL
+        WHERE (ta.user_id = ? OR oh.officer_id = ?)
+    )";
+
 $tasksStmt = db()->prepare("SELECT
         t.*,
         s.name AS status_name, s.colour_token AS status_colour, s.category AS status_category, s.is_terminal,
@@ -82,8 +96,9 @@ $tasksStmt = db()->prepare("SELECT
     LEFT JOIN task_status s ON s.id = t.status_id
     LEFT JOIN task pt ON pt.id = t.parent_id
     WHERE t.project_id = ? AND t.is_active = 1
+    $mineFilter
     ORDER BY t.status_id ASC, t.board_order ASC, t.id ASC");
-$tasksStmt->execute([$projectId]);
+$tasksStmt->execute($showAll ? [$projectId] : [$projectId, $viewerId, $viewerId]);
 $tasks = $tasksStmt->fetchAll();
 
 $tasksByStatus = [];
@@ -170,9 +185,25 @@ render_page_header('Project · ' . $project['name'], [
 </div>
 
 <div class="card mt-3">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-kanban text-primary me-1"></i>Kanban board</span>
-        <span class="small text-muted">Positions save automatically on drop.</span>
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>
+            <i class="bi bi-kanban text-primary me-1"></i>Kanban board
+            <?php if ($showAll): ?>
+                <span class="badge text-bg-light border ms-2"><i class="bi bi-people me-1"></i>All tasks</span>
+            <?php else: ?>
+                <span class="badge text-bg-primary-subtle text-primary border ms-2"><i class="bi bi-person me-1"></i>My tasks only</span>
+            <?php endif; ?>
+        </span>
+        <div class="d-flex align-items-center gap-3">
+            <?php if ($isPMAdmin): ?>
+                <div class="form-check form-switch mb-0" title="Toggle between showing only your assigned tasks and every task on this project.">
+                    <input class="form-check-input" type="checkbox" role="switch" id="showAllTasks" <?= $showAll ? 'checked' : '' ?>
+                           onchange="window.location = '?id=<?= (int) $project['id'] ?>' + (this.checked ? '&all=1' : '');">
+                    <label class="form-check-label small" for="showAllTasks">Show all tasks</label>
+                </div>
+            <?php endif; ?>
+            <span class="small text-muted">Positions save automatically on drop.</span>
+        </div>
     </div>
     <div class="card-body p-3">
         <div class="tt-board" id="ttBoard">

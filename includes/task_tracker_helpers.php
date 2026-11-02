@@ -577,6 +577,16 @@ function can_edit_task(int $viewerId, ?array $task = null): bool
     $u = current_user() ?? [];
     if (($u['id'] ?? 0) === $viewerId && is_manage_admin($u)) return true;
     $scope = get_user_scope($viewerId);
+    // A secondary assignment also grants edit — the viewer is formally
+    // responsible for the task, same as the primary. Checked up-front
+    // so section/division heads with a secondary on this specific
+    // task get edit even when the primary seat is outside their scope.
+    if ($task !== null) {
+        $secSeats = (array) ($task['secondary_seat_ids'] ?? []);
+        if ($secSeats !== [] && array_intersect($secSeats, $scope['seat_ids']) !== []) return true;
+        $secUsers = (array) ($task['secondary_user_ids'] ?? []);
+        if ($secUsers !== [] && in_array($viewerId, array_map('intval', $secUsers), true)) return true;
+    }
     if (in_array($scope['level'], ['admin', 'office_head', 'division_head', 'section_head'], true)) {
         return can_view_task($viewerId, $task);
     }

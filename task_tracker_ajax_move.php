@@ -86,10 +86,22 @@ for ($g = 0; $g < 10 && $cursor > 0; $g++) {
     if ((string) $pr['level_type'] === 'division' && $divisionId === 0) $divisionId = (int) $pr['id'];
     $cursor = (int) ($pr['parent_id'] ?? 0);
 }
+// Secondary assignments count the same way for edit permission —
+// a seat-holder or directly-assigned user listed as secondary can
+// also move the card.
+$secStmt = $db->prepare("SELECT seat_id, user_id FROM task_assignment WHERE task_id = ? AND role = 'secondary'");
+$secStmt->execute([$taskId]);
+$secSeatIds = []; $secUserIds = [];
+foreach ($secStmt->fetchAll() as $sr) {
+    if ((int) ($sr['seat_id'] ?? 0) > 0) $secSeatIds[] = (int) $sr['seat_id'];
+    if ((int) ($sr['user_id'] ?? 0) > 0) $secUserIds[] = (int) $sr['user_id'];
+}
 $taskForPerm = array_merge((array) $task, [
     'primary_seat_id'     => (int) ($assign['seat_id'] ?? 0),
     'primary_section_id'  => $sectionId,
     'primary_division_id' => $divisionId,
+    'secondary_seat_ids'  => $secSeatIds,
+    'secondary_user_ids'  => $secUserIds,
 ]);
 if (!can_move_task($viewerId, $taskForPerm)) $sendError('You do not have permission to move this task.', 403);
 

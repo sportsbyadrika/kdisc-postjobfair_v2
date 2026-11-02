@@ -83,10 +83,21 @@ try {
             if ((string) $pr['level_type'] === 'division' && $divisionId === 0) $divisionId = (int) $pr['id'];
             $cursor = (int) ($pr['parent_id'] ?? 0);
         }
+        // Pull secondary assignments too so secondary responsibles
+        // can also move the planned-dates bars.
+        $secS = $db->prepare("SELECT seat_id, user_id FROM task_assignment WHERE task_id = ? AND role = 'secondary'");
+        $secS->execute([$taskId]);
+        $secSeatIds = []; $secUserIds = [];
+        foreach ($secS->fetchAll() as $sr) {
+            if ((int) ($sr['seat_id'] ?? 0) > 0) $secSeatIds[] = (int) $sr['seat_id'];
+            if ((int) ($sr['user_id'] ?? 0) > 0) $secUserIds[] = (int) $sr['user_id'];
+        }
         $taskForPerm = array_merge((array) $task, [
             'primary_seat_id'     => (int) ($assign['seat_id'] ?? 0),
             'primary_section_id'  => $sectionId,
             'primary_division_id' => $divisionId,
+            'secondary_seat_ids'  => $secSeatIds,
+            'secondary_user_ids'  => $secUserIds,
         ]);
         if (!can_edit_task($viewerId, $taskForPerm)) {
             $errors[] = 'Task ' . $taskId . ': not permitted.'; $skipped++; continue;
