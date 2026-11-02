@@ -94,6 +94,7 @@ render_page_header('Meetings', [
 </div>
 
 <form method="get" class="filter-bar">
+    <?php if ($showAll): ?><input type="hidden" name="all" value="1"><?php endif; ?>
     <div class="row g-3 align-items-end">
         <div class="col-6 col-md-4">
             <label class="form-label">Search</label>
@@ -105,7 +106,7 @@ render_page_header('Meetings', [
         </div>
         <div class="col-12 col-md-2 d-flex gap-2">
             <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Apply</button>
-            <a class="btn btn-light" href="/meetings.php">Reset</a>
+            <a class="btn btn-light" href="/meetings.php<?= $showAll ? '?all=1' : '' ?>">Reset</a>
         </div>
     </div>
 </form>
