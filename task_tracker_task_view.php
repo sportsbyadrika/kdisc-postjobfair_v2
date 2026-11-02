@@ -154,6 +154,8 @@ $permTask = array_merge((array) $task, [
     'primary_section_id'  => (int) ($primary['section_id']  ?? 0),
     'primary_division_id' => (int) ($primary['division_id'] ?? 0),
     'primary_user_id'     => (int) ($primary['direct_user_id'] ?? 0),
+    'secondary_seat_ids'  => array_values(array_filter(array_map(static fn($a) => (int) ($a['seat_id']        ?? 0), $secondaries))),
+    'secondary_user_ids'  => array_values(array_filter(array_map(static fn($a) => (int) ($a['direct_user_id'] ?? 0), $secondaries))),
 ]);
 $canEdit = can_edit_task($viewerId, $permTask);
 
