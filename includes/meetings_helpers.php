@@ -158,6 +158,19 @@ function meetings_bootstrap(): void
             KEY idx_meeting (meeting_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+        // Co-owners of a meeting. The creator can add other internal
+        // users here; co-owners get the same edit rights the creator
+        // has (via meetings_can_edit). The row is additive — the
+        // creator is implicitly an owner and does not have a row here.
+        $db->query("CREATE TABLE IF NOT EXISTS meeting_owner (
+            meeting_id INT NOT NULL,
+            user_id INT NOT NULL,
+            added_by INT NULL,
+            added_at DATETIME NULL,
+            PRIMARY KEY (meeting_id, user_id),
+            KEY idx_user (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
         $db->query("CREATE TABLE IF NOT EXISTS meeting_setting (
             id INT AUTO_INCREMENT PRIMARY KEY,
             setting_key VARCHAR(80) NOT NULL,
@@ -442,7 +455,34 @@ function meetings_can_edit(array $meeting, array $viewer): bool
     if ((int) ($meeting['chair_user_id'] ?? 0) === $vid) return true;
     if (is_manage_admin($viewer)) return true;
     if (function_exists('user_can_admin_module') && user_can_admin_module($vid, 'meetings')) return true;
+    // Co-owners added via the Owners panel on the meeting view page.
+    $mid = (int) ($meeting['id'] ?? 0);
+    if ($mid > 0) {
+        try {
+            $st = db()->prepare('SELECT 1 FROM meeting_owner WHERE meeting_id = ? AND user_id = ? LIMIT 1');
+            $st->execute([$mid, $vid]);
+            if ($st->fetchColumn()) return true;
+        } catch (Throwable $e) { /* table missing — fall through */ }
+    }
     return false;
+}
+
+/**
+ * SQL fragment + bound params that limit a `meeting` query to the
+ * records a specific user can see: they're the creator, they're on
+ * the participant list, or they're a co-owner. Admins should bypass
+ * this filter in the caller.
+ *
+ * Returns ['sql' => '...', 'params' => [...]]. The SQL expects the
+ * meeting table to be aliased as `m` (or passed `prefix`).
+ */
+function meetings_visible_filter_sql(int $viewerId, string $prefix = 'm'): array
+{
+    $p = $prefix;
+    $sql = "($p.created_by = ?"
+         . " OR EXISTS (SELECT 1 FROM meeting_participant mp WHERE mp.meeting_id = $p.id AND mp.user_id = ?)"
+         . " OR EXISTS (SELECT 1 FROM meeting_owner mo WHERE mo.meeting_id = $p.id AND mo.user_id = ?))";
+    return ['sql' => $sql, 'params' => [$viewerId, $viewerId, $viewerId]];
 }
 
 /**

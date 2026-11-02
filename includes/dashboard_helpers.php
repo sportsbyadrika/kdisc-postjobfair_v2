@@ -222,23 +222,40 @@ function dashboard_menu_visible(string $code): bool
 function dashboard_meeting_count_for(int $userId): int
 {
     try {
-        $stmt = db()->prepare('SELECT COUNT(*) FROM meeting WHERE is_active = 1');
-        $stmt->execute();
+        $sql = 'SELECT COUNT(*) FROM meeting m WHERE m.is_active = 1';
+        $params = [];
+        if ($userId > 0) {
+            $sql .= ' AND (m.created_by = ?'
+                 . ' OR EXISTS (SELECT 1 FROM meeting_participant mp WHERE mp.meeting_id = m.id AND mp.user_id = ?)'
+                 . ' OR EXISTS (SELECT 1 FROM meeting_owner mo WHERE mo.meeting_id = m.id AND mo.user_id = ?))';
+            $params = [$userId, $userId, $userId];
+        }
+        $stmt = db()->prepare($sql);
+        $stmt->execute($params);
         return (int) $stmt->fetchColumn();
     } catch (Throwable $e) {
         return 0;
     }
 }
 
-/** Meetings on a given YYYY-MM-DD, visible to any viewer. Placeholder
- *  return until the Meetings module lands. */
-function dashboard_meetings_on(string $ymd): array
+/** Meetings on a given YYYY-MM-DD that the viewer can see (creator,
+ *  participant, or co-owner). Passing $userId = 0 returns all
+ *  active meetings on the date (admin / server-side use). */
+function dashboard_meetings_on(string $ymd, int $userId = 0): array
 {
     try {
-        $stmt = db()->prepare('SELECT id, title, from_time, to_time FROM meeting
-            WHERE meeting_date = ? AND is_active = 1
-            ORDER BY from_time ASC');
-        $stmt->execute([$ymd]);
+        $sql = 'SELECT m.id, m.title, m.from_time, m.to_time FROM meeting m
+            WHERE m.meeting_date = ? AND m.is_active = 1';
+        $params = [$ymd];
+        if ($userId > 0) {
+            $sql .= ' AND (m.created_by = ?'
+                 . ' OR EXISTS (SELECT 1 FROM meeting_participant mp WHERE mp.meeting_id = m.id AND mp.user_id = ?)'
+                 . ' OR EXISTS (SELECT 1 FROM meeting_owner mo WHERE mo.meeting_id = m.id AND mo.user_id = ?))';
+            array_push($params, $userId, $userId, $userId);
+        }
+        $sql .= ' ORDER BY m.from_time ASC';
+        $stmt = db()->prepare($sql);
+        $stmt->execute($params);
         return $stmt->fetchAll();
     } catch (Throwable $e) {
         return [];
@@ -321,17 +338,27 @@ function dashboard_office_hierarchy_counts(): array
     return $out;
 }
 
-/** Days in a month that have at least one meeting; returns a map
- *  keyed by YYYY-MM-DD → count of meetings that day. */
-function dashboard_meeting_days_in_month(string $ym): array
+/** Days in a month that have at least one meeting visible to the
+ *  viewer (creator, participant, or co-owner). Returns a map
+ *  keyed by YYYY-MM-DD → count. $userId = 0 returns the module-wide
+ *  heatmap. */
+function dashboard_meeting_days_in_month(string $ym, int $userId = 0): array
 {
     try {
         $start = $ym . '-01';
         $end   = date('Y-m-t', strtotime($start));
-        $stmt = db()->prepare('SELECT meeting_date, COUNT(*) AS c FROM meeting
-            WHERE meeting_date BETWEEN ? AND ? AND is_active = 1
-            GROUP BY meeting_date');
-        $stmt->execute([$start, $end]);
+        $sql = 'SELECT m.meeting_date, COUNT(*) AS c FROM meeting m
+            WHERE m.meeting_date BETWEEN ? AND ? AND m.is_active = 1';
+        $params = [$start, $end];
+        if ($userId > 0) {
+            $sql .= ' AND (m.created_by = ?'
+                 . ' OR EXISTS (SELECT 1 FROM meeting_participant mp WHERE mp.meeting_id = m.id AND mp.user_id = ?)'
+                 . ' OR EXISTS (SELECT 1 FROM meeting_owner mo WHERE mo.meeting_id = m.id AND mo.user_id = ?))';
+            array_push($params, $userId, $userId, $userId);
+        }
+        $sql .= ' GROUP BY m.meeting_date';
+        $stmt = db()->prepare($sql);
+        $stmt->execute($params);
         $out = [];
         foreach ($stmt->fetchAll() as $r) $out[(string) $r['meeting_date']] = (int) $r['c'];
         return $out;
