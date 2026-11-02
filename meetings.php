@@ -16,7 +16,6 @@ require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/meetings_helpers.php';
-require_once __DIR__ . '/includes/task_tracker_helpers.php'; // get_user_scope()
 require_auth();
 
 $viewer   = current_user() ?? [];
@@ -24,75 +23,24 @@ $viewerId = (int) ($viewer['id'] ?? 0);
 meetings_bootstrap();
 
 $isAdminAll = is_manage_admin($viewer) || user_can_admin_module($viewerId, 'meetings');
-$scope      = get_user_scope($viewerId);
 
-// Every user whose current seat is under this viewer's scope.
-$scopedUserIds = [];
-if (!$isAdminAll && ($scope['section_ids'] !== [] || $scope['division_ids'] !== [] || $scope['office_ids'] !== [])) {
-    try {
-        // For every seat under the viewer's scope, look up the current
-        // officer. That officer is a "user under my scope" for viewing.
-        $seatIds = [];
-        $lookupParents = static function (array $ids, string $level) use (&$seatIds): void {
-            if ($ids === []) return;
-            $ph = implode(',', array_fill(0, count($ids), '?'));
-            // Walk down: find every seat whose ancestor chain includes one of $ids.
-            // Simpler: get all seats, then filter in PHP by walking their parents.
-            static $allSeatsCache = null;
-            if ($allSeatsCache === null) {
-                try {
-                    $allSeatsCache = db()->query("SELECT id, parent_id FROM office_hierarchy_nodes
-                        WHERE active_status = 1 AND level_type = 'seat'")->fetchAll();
-                } catch (Throwable $e) { $allSeatsCache = []; }
-            }
-            // No-op — we need the recursive walk below instead.
-        };
-        // Compute all seats whose ancestors include any of scope section/division/office ids.
-        $allNodes = [];
-        foreach (db()->query('SELECT id, parent_id, level_type FROM office_hierarchy_nodes WHERE active_status = 1')->fetchAll() as $n) {
-            $allNodes[(int) $n['id']] = $n;
-        }
-        $scopeSet = array_fill_keys(array_merge($scope['section_ids'], $scope['division_ids'], $scope['office_ids']), true);
-        foreach ($allNodes as $n) {
-            if ((string) $n['level_type'] !== 'seat') continue;
-            $cursor = (int) $n['parent_id'];
-            for ($g = 0; $g < 10 && $cursor > 0; $g++) {
-                if (isset($scopeSet[$cursor])) { $seatIds[] = (int) $n['id']; break; }
-                $parent = $allNodes[$cursor] ?? null;
-                if ($parent === null) break;
-                $cursor = (int) ($parent['parent_id'] ?? 0);
-            }
-        }
-        if ($seatIds !== []) {
-            $ph = implode(',', array_fill(0, count($seatIds), '?'));
-            $st = db()->prepare("SELECT DISTINCT officer_id FROM office_hierarchy_officer_history
-                WHERE unassigned_at IS NULL AND node_id IN ($ph)");
-            $st->execute($seatIds);
-            foreach ($st->fetchAll() as $r) if ((int) $r['officer_id'] > 0) $scopedUserIds[] = (int) $r['officer_id'];
-        }
-    } catch (Throwable $e) { /* ignore */ }
-}
+// "Mine only" vs "Show all": the list defaults to meetings the viewer
+// created, participates in, or is a co-owner of. A Meetings admin may
+// flip the switch to see every meeting (?all=1), same shape as the
+// Kanban's My/All toggle.
+$showAll = $isAdminAll && ((string) ($_GET['all'] ?? '') === '1');
 
 $filterQ    = trim((string) ($_GET['q']    ?? ''));
 $filterDate = trim((string) ($_GET['date'] ?? ''));
 
-// Visibility SQL.
-$sql = 'SELECT DISTINCT m.*, u.name AS created_by_name FROM meeting m
+$sql = 'SELECT m.*, u.name AS created_by_name FROM meeting m
     LEFT JOIN users u ON u.id = m.created_by
-    LEFT JOIN meeting_participant mp ON mp.meeting_id = m.id
-    LEFT JOIN meeting_decision md ON md.meeting_id = m.id
-    LEFT JOIN meeting_decision_responsible mdr ON mdr.decision_id = md.id
     WHERE m.is_active = 1';
 $params = [];
-if (!$isAdminAll) {
-    $userScopeSql = 'mp.user_id = ? OR mdr.user_id = ? OR m.created_by = ?';
-    $params[] = $viewerId; $params[] = $viewerId; $params[] = $viewerId;
-    if ($scopedUserIds !== []) {
-        $ph = implode(',', array_fill(0, count($scopedUserIds), '?'));
-        $userScopeSql .= " OR mp.user_id IN ($ph)";
-        foreach ($scopedUserIds as $sid) $params[] = $sid;
-    }
-    $sql .= ' AND (' . $userScopeSql . ')';
+if (!$showAll) {
+    $vis = meetings_visible_filter_sql($viewerId);
+    $sql .= ' AND ' . $vis['sql'];
+    foreach ($vis['params'] as $p) $params[] = $p;
 }
 if ($filterQ !== '') {
     $sql .= ' AND (m.title LIKE ? OR m.purpose LIKE ? OR m.reference_no LIKE ?)';
@@ -163,9 +111,33 @@ render_page_header('Meetings', [
 </form>
 
 <div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-calendar2-week text-primary me-1"></i>Meetings</span>
-        <span class="status-chip status-info"><?= number_format(count($meetings)) ?> row<?= count($meetings) === 1 ? '' : 's' ?></span>
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>
+            <i class="bi bi-calendar2-week text-primary me-1"></i>Meetings
+            <?php if ($showAll): ?>
+                <span class="badge text-bg-light border ms-2"><i class="bi bi-people me-1"></i>All meetings</span>
+            <?php else: ?>
+                <span class="badge text-bg-primary-subtle text-primary border ms-2"><i class="bi bi-person me-1"></i>My meetings only</span>
+            <?php endif; ?>
+        </span>
+        <div class="d-flex align-items-center gap-3">
+            <?php if ($isAdminAll): ?>
+                <?php
+                    // Preserve existing q/date filters when toggling.
+                    $toggleQS = [];
+                    if ($filterQ !== '')    $toggleQS['q']    = $filterQ;
+                    if ($filterDate !== '') $toggleQS['date'] = $filterDate;
+                    $onBase = '/meetings.php?' . http_build_query($toggleQS);
+                    $onAll  = $onBase . ($toggleQS === [] ? '' : '&') . 'all=1';
+                ?>
+                <div class="form-check form-switch mb-0" title="Toggle between showing only your own meetings (created, participating, or co-owner) and every meeting.">
+                    <input class="form-check-input" type="checkbox" role="switch" id="showAllMeetings" <?= $showAll ? 'checked' : '' ?>
+                           onchange="window.location = this.checked ? <?= json_encode($onAll) ?> : <?= json_encode($onBase === '/meetings.php?' ? '/meetings.php' : $onBase) ?>;">
+                    <label class="form-check-label small" for="showAllMeetings">Show all meetings</label>
+                </div>
+            <?php endif; ?>
+            <span class="status-chip status-info"><?= number_format(count($meetings)) ?> row<?= count($meetings) === 1 ? '' : 's' ?></span>
+        </div>
     </div>
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">

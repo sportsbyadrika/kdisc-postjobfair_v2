@@ -828,9 +828,9 @@ render_header('Dashboard');
     if (dashboard_card_visible('meetings')):
         $meetingsTotal = dashboard_meeting_count_for((int) $uid);
         $todayYmd      = date('Y-m-d');
-        $meetingsToday = dashboard_meetings_on($todayYmd);
+        $meetingsToday = dashboard_meetings_on($todayYmd, (int) $uid);
         $monthKey      = date('Y-m');
-        $meetingDays   = dashboard_meeting_days_in_month($monthKey);
+        $meetingDays   = dashboard_meeting_days_in_month($monthKey, (int) $uid);
 ?>
 <div class="row g-3 mb-1 mt-3">
     <div class="col-12 col-md-4">

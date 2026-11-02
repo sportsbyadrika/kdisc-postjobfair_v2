@@ -22,6 +22,52 @@ if ($id <= 0) { header('Location: /meetings.php'); exit; }
 // Approve POST — chairperson locks in decision points + next-meeting
 // agenda, which then become visible to everyone with meeting access
 // and surface the Own-Tasks rows in My Work.
+// Co-owner CRUD. Only the meeting creator or a Meetings admin can
+// touch this — plain co-owners inherit edit rights but can't recruit
+// new co-owners (keeps the "author's cabinet" model clear).
+if (is_post() && ($_POST['action'] ?? '') === 'add_meeting_owner') {
+    csrf_check_or_die();
+    $mid    = (int) ($_POST['id']      ?? 0);
+    $newUid = (int) ($_POST['user_id'] ?? 0);
+    $st = db()->prepare('SELECT * FROM meeting WHERE id = ? LIMIT 1');
+    $st->execute([$mid]);
+    $m = $st->fetch();
+    $isAdmin = is_manage_admin($viewer ?? []) || (function_exists('user_can_admin_module') && user_can_admin_module($viewerId, 'meetings'));
+    if ($m === false || !($isAdmin || (int) ($m['created_by'] ?? 0) === $viewerId)) {
+        if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+        $_SESSION['meeting_view_flash'] = ['msg' => 'Only the meeting creator can add owners.', 'type' => 'danger'];
+        header('Location: /meeting_view.php?id=' . $mid); exit;
+    }
+    if ($newUid > 0 && $newUid !== (int) $m['created_by']) {
+        try {
+            db()->prepare('INSERT IGNORE INTO meeting_owner (meeting_id, user_id, added_by, added_at) VALUES (?, ?, ?, NOW())')
+                ->execute([$mid, $newUid, $viewerId]);
+        } catch (Throwable $e) { /* ignore */ }
+    }
+    if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+    $_SESSION['meeting_view_flash'] = ['msg' => 'Owner added.', 'type' => 'success'];
+    header('Location: /meeting_view.php?id=' . $mid); exit;
+}
+if (is_post() && ($_POST['action'] ?? '') === 'remove_meeting_owner') {
+    csrf_check_or_die();
+    $mid    = (int) ($_POST['id']      ?? 0);
+    $drop   = (int) ($_POST['user_id'] ?? 0);
+    $st = db()->prepare('SELECT * FROM meeting WHERE id = ? LIMIT 1');
+    $st->execute([$mid]);
+    $m = $st->fetch();
+    $isAdmin = is_manage_admin($viewer ?? []) || (function_exists('user_can_admin_module') && user_can_admin_module($viewerId, 'meetings'));
+    if ($m === false || !($isAdmin || (int) ($m['created_by'] ?? 0) === $viewerId)) {
+        if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+        $_SESSION['meeting_view_flash'] = ['msg' => 'Only the meeting creator can remove owners.', 'type' => 'danger'];
+        header('Location: /meeting_view.php?id=' . $mid); exit;
+    }
+    try { db()->prepare('DELETE FROM meeting_owner WHERE meeting_id = ? AND user_id = ?')->execute([$mid, $drop]); }
+    catch (Throwable $e) { /* ignore */ }
+    if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+    $_SESSION['meeting_view_flash'] = ['msg' => 'Owner removed.', 'type' => 'success'];
+    header('Location: /meeting_view.php?id=' . $mid); exit;
+}
+
 if (is_post() && ($_POST['action'] ?? '') === 'approve_meeting') {
     csrf_check_or_die();
     $mid = (int) ($_POST['id'] ?? 0);
@@ -158,6 +204,34 @@ $nextAg = db()->prepare('SELECT * FROM meeting_next_agenda WHERE meeting_id = ? 
 $nextAg->execute([$id]); $nextAg = $nextAg->fetchAll();
 $urls   = db()->prepare('SELECT * FROM meeting_url WHERE meeting_id = ? ORDER BY id ASC');
 $urls->execute([$id]); $urls = $urls->fetchAll();
+
+// Co-owners of this meeting (people the creator has delegated edit
+// rights to). The creator themselves is NOT stored here — they're
+// surfaced separately via meeting.created_by.
+$owners = [];
+try {
+    $ost = db()->prepare('SELECT mo.user_id, mo.added_at, u.name
+        FROM meeting_owner mo
+        LEFT JOIN users u ON u.id = mo.user_id
+        WHERE mo.meeting_id = ? ORDER BY u.name ASC');
+    $ost->execute([$id]);
+    $owners = $ost->fetchAll();
+} catch (Throwable $e) { /* table missing on legacy install */ }
+// Pool of users the creator / admin can add as an owner. We only load
+// this when the viewer has permission to manage owners — saves a
+// users-table scan on every page load for ordinary viewers.
+$ownerPool = [];
+$canManageOwners = ($viewerId === (int) ($meeting['created_by'] ?? 0))
+    || is_manage_admin($viewer) || user_can_admin_module($viewerId, 'meetings');
+if ($canManageOwners) {
+    try {
+        $alreadyOwnerIds = [(int) $meeting['created_by']];
+        foreach ($owners as $o) $alreadyOwnerIds[] = (int) $o['user_id'];
+        $alreadyOwnerIds = array_values(array_unique(array_filter($alreadyOwnerIds)));
+        $ph = $alreadyOwnerIds === [] ? '0' : implode(',', $alreadyOwnerIds);
+        $ownerPool = db()->query("SELECT id, name FROM users WHERE active_status = 1 AND id NOT IN ($ph) ORDER BY name ASC")->fetchAll();
+    } catch (Throwable $e) { /* ignore */ }
+}
 
 $status = meetings_effective_status($meeting);
 $tone   = meetings_status_tone($status);
@@ -419,6 +493,58 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
     </div>
 
     <div class="col-lg-4">
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-shield-check me-1"></i>Owners</span>
+                <span class="badge text-bg-light border"><?= 1 + count($owners) ?></span>
+            </div>
+            <div class="card-body p-2">
+                <div class="border-bottom py-2 small d-flex align-items-center gap-2">
+                    <i class="bi bi-person-badge text-primary"></i>
+                    <div class="flex-grow-1">
+                        <strong><?= esc((string) ($meeting['created_by_name'] ?? '—')) ?></strong>
+                        <div class="text-muted">Creator</div>
+                    </div>
+                    <span class="badge text-bg-primary-subtle text-primary border">Author</span>
+                </div>
+                <?php foreach ($owners as $o): ?>
+                    <div class="border-bottom py-2 small d-flex align-items-center gap-2">
+                        <i class="bi bi-person-check text-success"></i>
+                        <div class="flex-grow-1">
+                            <strong><?= esc((string) ($o['name'] ?? '—')) ?></strong>
+                            <div class="text-muted">Co-owner · added <?= esc(date('d/m/Y', strtotime((string) $o['added_at']))) ?></div>
+                        </div>
+                        <?php if ($canManageOwners): ?>
+                            <form method="post" class="d-inline" onsubmit="return confirm('Remove this co-owner? They will lose edit rights on this meeting.');">
+                                <?php csrf_field(); ?>
+                                <input type="hidden" name="action" value="remove_meeting_owner">
+                                <input type="hidden" name="id" value="<?= (int) $id ?>">
+                                <input type="hidden" name="user_id" value="<?= (int) $o['user_id'] ?>">
+                                <button class="btn btn-sm btn-link text-danger p-0" title="Remove"><i class="bi bi-x-lg"></i></button>
+                            </form>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+                <?php if ($canManageOwners && $ownerPool !== []): ?>
+                    <form method="post" class="d-flex gap-2 pt-2 small">
+                        <?php csrf_field(); ?>
+                        <input type="hidden" name="action" value="add_meeting_owner">
+                        <input type="hidden" name="id" value="<?= (int) $id ?>">
+                        <select class="form-select form-select-sm" name="user_id" required>
+                            <option value="">— add co-owner —</option>
+                            <?php foreach ($ownerPool as $u): ?>
+                                <option value="<?= (int) $u['id'] ?>"><?= esc((string) $u['name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <button class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i></button>
+                    </form>
+                    <div class="small text-muted mt-1">Co-owners get the same edit rights as the creator — they can edit fields, agenda, decisions and participants.</div>
+                <?php elseif ($canManageOwners): ?>
+                    <div class="small text-muted pt-2">All active users are already owners of this meeting.</div>
+                <?php endif; ?>
+            </div>
+        </div>
+
         <div class="card mb-3">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span><i class="bi bi-people me-1"></i>Participants</span>
