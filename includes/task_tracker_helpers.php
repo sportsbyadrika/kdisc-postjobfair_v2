@@ -249,6 +249,21 @@ function task_tracker_bootstrap(): void
         KEY idx_uploaded_at (uploaded_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+    // Preferred attachment surface (replaces local file uploads). Each
+    // row is an external URL — Google Drive / Docs / Sheets / Slides /
+    // PDF / image — opened in a new tab via the task view. Keeps disk
+    // use flat regardless of how many attachments a task accumulates.
+    $db->query("CREATE TABLE IF NOT EXISTS task_url (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        task_id INT NOT NULL,
+        label VARCHAR(200) NULL,
+        url VARCHAR(1000) NOT NULL,
+        created_by INT NULL,
+        created_at DATETIME NOT NULL,
+        KEY idx_task (task_id),
+        KEY idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     // -------------------------------------------------------------------
     // Idempotent column extensions on existing tables (users, office
     // hierarchy nodes, officer history).

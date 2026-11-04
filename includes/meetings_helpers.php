@@ -158,6 +158,19 @@ function meetings_bootstrap(): void
             KEY idx_meeting (meeting_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+        // Referenced projects — a meeting can link to one or more
+        // Task-Tracker projects. The reverse ("meetings that
+        // reference this project") is surfaced on the project view
+        // page via the same table.
+        $db->query("CREATE TABLE IF NOT EXISTS meeting_project (
+            meeting_id INT NOT NULL,
+            project_id INT NOT NULL,
+            added_by INT NULL,
+            added_at DATETIME NULL,
+            PRIMARY KEY (meeting_id, project_id),
+            KEY idx_project (project_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
         // Co-owners of a meeting. The creator can add other internal
         // users here; co-owners get the same edit rights the creator
         // has (via meetings_can_edit). The row is additive — the
