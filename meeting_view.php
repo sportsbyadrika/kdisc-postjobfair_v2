@@ -68,6 +68,41 @@ if (is_post() && ($_POST['action'] ?? '') === 'remove_meeting_owner') {
     header('Location: /meeting_view.php?id=' . $mid); exit;
 }
 
+// Referenced-project CRUD. Anyone who can edit the meeting (creator,
+// chair, co-owner, admin) may link / unlink projects.
+if (is_post() && ($_POST['action'] ?? '') === 'add_meeting_project') {
+    csrf_check_or_die();
+    $mid = (int) ($_POST['id'] ?? 0);
+    $pid = (int) ($_POST['project_id'] ?? 0);
+    $st = db()->prepare('SELECT * FROM meeting WHERE id = ? LIMIT 1');
+    $st->execute([$mid]);
+    $m = $st->fetch();
+    if ($m !== false && meetings_can_edit($m, $viewer) && $pid > 0) {
+        try {
+            db()->prepare('INSERT IGNORE INTO meeting_project (meeting_id, project_id, added_by, added_at) VALUES (?, ?, ?, NOW())')
+                ->execute([$mid, $pid, $viewerId]);
+        } catch (Throwable $e) { /* table missing */ }
+    }
+    if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+    $_SESSION['meeting_view_flash'] = ['msg' => 'Project linked to this meeting.', 'type' => 'success'];
+    header('Location: /meeting_view.php?id=' . $mid); exit;
+}
+if (is_post() && ($_POST['action'] ?? '') === 'remove_meeting_project') {
+    csrf_check_or_die();
+    $mid = (int) ($_POST['id'] ?? 0);
+    $pid = (int) ($_POST['project_id'] ?? 0);
+    $st = db()->prepare('SELECT * FROM meeting WHERE id = ? LIMIT 1');
+    $st->execute([$mid]);
+    $m = $st->fetch();
+    if ($m !== false && meetings_can_edit($m, $viewer) && $pid > 0) {
+        try { db()->prepare('DELETE FROM meeting_project WHERE meeting_id = ? AND project_id = ?')->execute([$mid, $pid]); }
+        catch (Throwable $e) { /* ignore */ }
+    }
+    if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+    $_SESSION['meeting_view_flash'] = ['msg' => 'Project unlinked.', 'type' => 'success'];
+    header('Location: /meeting_view.php?id=' . $mid); exit;
+}
+
 if (is_post() && ($_POST['action'] ?? '') === 'approve_meeting') {
     csrf_check_or_die();
     $mid = (int) ($_POST['id'] ?? 0);
@@ -204,6 +239,30 @@ $nextAg = db()->prepare('SELECT * FROM meeting_next_agenda WHERE meeting_id = ? 
 $nextAg->execute([$id]); $nextAg = $nextAg->fetchAll();
 $urls   = db()->prepare('SELECT * FROM meeting_url WHERE meeting_id = ? ORDER BY id ASC');
 $urls->execute([$id]); $urls = $urls->fetchAll();
+
+// Referenced projects (two-way link to Task Tracker). Shown in the
+// right rail; click a card to jump to the project kanban.
+$referencedProjects = [];
+try {
+    $rp = db()->prepare('SELECT p.id, p.code, p.name
+        FROM meeting_project mp
+        INNER JOIN project p ON p.id = mp.project_id
+        WHERE mp.meeting_id = ? ORDER BY p.name ASC');
+    $rp->execute([$id]);
+    $referencedProjects = $rp->fetchAll();
+} catch (Throwable $e) { /* table missing — fall through */ }
+// Pool of unlinked projects for the add-project dropdown.
+$projectPool = [];
+if (meetings_can_edit($meeting, $viewer)) {
+    try {
+        $takenIds = [0];
+        foreach ($referencedProjects as $p) $takenIds[] = (int) $p['id'];
+        $ph = implode(',', array_fill(0, count($takenIds), '?'));
+        $ps = db()->prepare("SELECT id, code, name FROM project WHERE is_active = 1 AND id NOT IN ($ph) ORDER BY name ASC");
+        $ps->execute($takenIds);
+        $projectPool = $ps->fetchAll();
+    } catch (Throwable $e) { /* ignore */ }
+}
 
 // Co-owners of this meeting (people the creator has delegated edit
 // rights to). The creator themselves is NOT stored here — they're
@@ -586,6 +645,54 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
             </ul>
         </div>
         <?php endif; ?>
+
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-kanban me-1"></i>Referenced projects</span>
+                <span class="badge text-bg-light border"><?= count($referencedProjects) ?></span>
+            </div>
+            <div class="card-body p-2">
+                <?php if ($referencedProjects === []): ?>
+                    <div class="text-muted small p-2">No projects linked yet.</div>
+                <?php endif; ?>
+                <?php foreach ($referencedProjects as $rp): ?>
+                    <div class="border-bottom py-2 small d-flex align-items-center gap-2">
+                        <i class="bi bi-diagram-3 text-primary"></i>
+                        <div class="flex-grow-1">
+                            <a href="/task_tracker_project_view.php?id=<?= (int) $rp['id'] ?>" class="text-decoration-none text-body">
+                                <span class="badge text-bg-light border font-monospace me-1"><?= esc((string) $rp['code']) ?></span>
+                                <strong><?= esc((string) $rp['name']) ?></strong>
+                            </a>
+                        </div>
+                        <?php if (meetings_can_edit($meeting, $viewer)): ?>
+                            <form method="post" class="d-inline" onsubmit="return confirm('Unlink this project from the meeting?');">
+                                <?php csrf_field(); ?>
+                                <input type="hidden" name="action" value="remove_meeting_project">
+                                <input type="hidden" name="id" value="<?= (int) $id ?>">
+                                <input type="hidden" name="project_id" value="<?= (int) $rp['id'] ?>">
+                                <button class="btn btn-sm btn-link text-danger p-0" title="Unlink"><i class="bi bi-x-lg"></i></button>
+                            </form>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+                <?php if (meetings_can_edit($meeting, $viewer) && $projectPool !== []): ?>
+                    <form method="post" class="d-flex gap-2 pt-2 small">
+                        <?php csrf_field(); ?>
+                        <input type="hidden" name="action" value="add_meeting_project">
+                        <input type="hidden" name="id" value="<?= (int) $id ?>">
+                        <select class="form-select form-select-sm" name="project_id" required>
+                            <option value="">— link a project —</option>
+                            <?php foreach ($projectPool as $p): ?>
+                                <option value="<?= (int) $p['id'] ?>"><?= esc((string) $p['code']) ?> · <?= esc((string) $p['name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <button class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i></button>
+                    </form>
+                <?php elseif (meetings_can_edit($meeting, $viewer)): ?>
+                    <div class="small text-muted pt-2">Every active project is already linked.</div>
+                <?php endif; ?>
+            </div>
+        </div>
     </div>
 </div>
 

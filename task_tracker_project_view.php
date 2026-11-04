@@ -114,6 +114,19 @@ $canCreate = $canManage || in_array($scope['level'], ['office_head', 'division_h
 $priorityTones  = ['lowest' => 'secondary', 'low' => 'info', 'medium' => 'primary', 'high' => 'warning', 'highest' => 'danger'];
 $priorityLabels = ['lowest' => 'Lowest', 'low' => 'Low', 'medium' => 'Medium', 'high' => 'High', 'highest' => 'Highest'];
 
+// Meetings that reference this project (two-way link via
+// meeting_project; the forward link is managed on meeting_view.php).
+$referencingMeetings = [];
+try {
+    $rm = db()->prepare('SELECT m.id, m.reference_no, m.title, m.meeting_date
+        FROM meeting_project mp
+        INNER JOIN meeting m ON m.id = mp.meeting_id
+        WHERE mp.project_id = ? AND m.is_active = 1
+        ORDER BY m.meeting_date DESC, m.id DESC');
+    $rm->execute([$projectId]);
+    $referencingMeetings = $rm->fetchAll();
+} catch (Throwable $e) { /* table missing — ignore */ }
+
 $initials = static function (string $name): string {
     $parts = preg_split('/\s+/', trim($name));
     if ($parts === false || $parts === []) return '?';
@@ -183,6 +196,28 @@ render_page_header('Project · ' . $project['name'], [
         </div>
     </div>
 </div>
+
+<?php if ($referencingMeetings !== []): ?>
+<div class="card mt-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-calendar2-week text-primary me-1"></i>Referenced in meetings</span>
+        <span class="badge text-bg-light border"><?= count($referencingMeetings) ?></span>
+    </div>
+    <div class="card-body py-2">
+        <div class="d-flex flex-wrap gap-2">
+            <?php foreach ($referencingMeetings as $rm): ?>
+                <a class="badge text-bg-light border text-decoration-none text-body"
+                   href="/meeting_view.php?id=<?= (int) $rm['id'] ?>"
+                   title="<?= esc((string) $rm['title']) ?>">
+                    <span class="font-monospace"><?= esc((string) $rm['reference_no']) ?></span>
+                    · <?= esc(date('d/m/Y', strtotime((string) $rm['meeting_date']))) ?>
+                    — <?= esc(mb_strimwidth((string) $rm['title'], 0, 60, '…')) ?>
+                </a>
+            <?php endforeach; ?>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <div class="card mt-3">
     <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
