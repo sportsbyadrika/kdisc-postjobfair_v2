@@ -44,6 +44,18 @@ if ($project === false) {
     exit;
 }
 
+// Per-project seat-allowlist gate. Admin + module admin + creator pass
+// unconditionally; everyone else must be on the project_seat allowlist
+// (any flag combination, including both unset).
+if (!project_can_view($viewerId, $projectId, (int) ($project['created_by'] ?? 0))) {
+    http_response_code(403);
+    render_header('Access denied');
+    render_page_header('Access denied', ['icon' => 'bi-shield-lock',
+        'actions' => '<a class="btn btn-light" href="/task_tracker_projects.php"><i class="bi bi-arrow-left me-1"></i>Back to Projects</a>']);
+    echo '<div class="alert alert-danger">You are not listed as a participating seat on this project. Ask the project creator to add your seat.</div>';
+    render_footer(); exit;
+}
+
 if (session_status() !== PHP_SESSION_ACTIVE) session_start();
 $flashMessage = null; $flashType = 'success';
 if (!empty($_SESSION['task_tracker_flash']) && is_array($_SESSION['task_tracker_flash'])) {
@@ -109,7 +121,12 @@ foreach ($tasks as $t) {
     $tasksByStatus[$sid][] = $t;
 }
 
-$canCreate = $canManage || in_array($scope['level'], ['office_head', 'division_head', 'section_head', 'staff'], true);
+// Can this viewer add a new task? Project-level allowlist flag is the
+// new primary gate; the old office-hierarchy scope levels remain as
+// fallback so legacy heads keep working during the rollout.
+$canCreate = project_can_add_task($viewerId, $projectId, (int) ($project['created_by'] ?? 0))
+    || $canManage
+    || in_array($scope['level'], ['office_head', 'division_head', 'section_head'], true);
 
 $priorityTones  = ['lowest' => 'secondary', 'low' => 'info', 'medium' => 'primary', 'high' => 'warning', 'highest' => 'danger'];
 $priorityLabels = ['lowest' => 'Lowest', 'low' => 'Low', 'medium' => 'Medium', 'high' => 'High', 'highest' => 'Highest'];

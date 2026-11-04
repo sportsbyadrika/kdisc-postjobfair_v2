@@ -26,10 +26,47 @@ $flashAndRedirect = static function (string $msg, string $type = 'success', stri
     exit;
 };
 
+/**
+ * Wholesale-rewrite the project_seat allowlist from the posted
+ * `seats` payload. Each element is `{seat_id, can_edit, can_add}`.
+ * Rows posted with seat_id <= 0 or no flags are dropped — a seat
+ * on the list with zero flags still grants visibility only.
+ */
+function project_seat_rewrite(int $projectId, array $seatsPost, int $viewerId): void
+{
+    if ($projectId <= 0) return;
+    try {
+        $db = db();
+        $db->prepare('DELETE FROM project_seat WHERE project_id = ?')->execute([$projectId]);
+        $ins = $db->prepare('INSERT INTO project_seat (project_id, seat_id, can_edit_task, can_add_task, added_by, added_at) VALUES (?, ?, ?, ?, ?, NOW())');
+        $seen = [];
+        foreach ($seatsPost as $row) {
+            $sid = (int) ($row['seat_id'] ?? 0);
+            if ($sid <= 0 || isset($seen[$sid])) continue;
+            $seen[$sid] = true;
+            $canE = ((int) ($row['can_edit'] ?? 0)) === 1 ? 1 : 0;
+            $canA = ((int) ($row['can_add']  ?? 0)) === 1 ? 1 : 0;
+            $ins->execute([$projectId, $sid, $canE, $canA, $viewerId]);
+        }
+    } catch (Throwable $e) { /* table missing — ignore */ }
+}
+
 if (is_post() && ($_POST['action'] ?? '') === 'save') {
-    if (!$canManage) { http_response_code(403); echo 'Only admins can create / edit projects.'; exit; }
     csrf_check_or_die();
-    $editId       = (int) ($_POST['id'] ?? 0);
+    $editId = (int) ($_POST['id'] ?? 0);
+    // Admin can create or edit any project; non-admin creator can edit
+    // their own project but not create new ones (creation stays admin
+    // for now so project codes aren't minted ad-hoc).
+    if ($editId === 0) {
+        if (!$canManage) { http_response_code(403); echo 'Only admins can create a project.'; exit; }
+    } else {
+        $pcheck = db()->prepare('SELECT created_by FROM project WHERE id = ? LIMIT 1');
+        $pcheck->execute([$editId]);
+        $owner = (int) ($pcheck->fetchColumn() ?: 0);
+        if (!$canManage && $owner !== $viewerId) {
+            http_response_code(403); echo 'Only the project creator or an admin can edit this project.'; exit;
+        }
+    }
     $name         = trim((string) ($_POST['name'] ?? ''));
     $codeRaw      = trim((string) ($_POST['code'] ?? ''));
     $code         = strtoupper(preg_replace('/[^A-Z0-9]+/i', '', $codeRaw));
@@ -83,6 +120,7 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                         $isActive, $viewerId, $editId,
                     ]);
                 }
+                project_seat_rewrite($editId, (array) ($_POST['seats'] ?? []), $viewerId);
                 $flashAndRedirect('Project updated.');
             } else {
                 if ($hasBudgetCol) {
@@ -115,6 +153,8 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                         $isActive, $viewerId, $viewerId,
                     ]);
                 }
+                $newId = (int) db()->lastInsertId();
+                project_seat_rewrite($newId, (array) ($_POST['seats'] ?? []), $viewerId);
                 $flashAndRedirect('Project added. Code ' . $code . ' — task keys will be formed as ' . $code . '-N.');
             }
         } catch (Throwable $e) {
@@ -154,7 +194,7 @@ $actualSumJoin  = $hasActualCol
          WHERE t.project_id = p.id AND t.is_active = 1) AS actual_spent"
     : "0 AS actual_spent";
 
-$projects = db()->query("SELECT p.*, $budgetSelect, u.name AS created_by_name,
+$allProjects = db()->query("SELECT p.*, $budgetSelect, u.name AS created_by_name,
         (SELECT COUNT(*) FROM task t
             WHERE t.project_id = p.id AND t.is_active = 1) AS task_count,
         (SELECT COUNT(*) FROM task t
@@ -165,6 +205,43 @@ $projects = db()->query("SELECT p.*, $budgetSelect, u.name AS created_by_name,
     LEFT JOIN users u ON u.id = p.created_by
     WHERE p.office_id = " . (int) TASK_TRACKER_OFFICE_ID . "
     ORDER BY p.is_active DESC, p.id DESC")->fetchAll();
+
+// Visibility filter: admin + module-admin see all; everyone else sees
+// only projects they created or hold an allowlist seat on.
+$isPMAdmin = $canManage || user_can_admin_module($viewerId, 'project_management');
+if ($isPMAdmin) {
+    $projects = $allProjects;
+} else {
+    $projects = [];
+    foreach ($allProjects as $p) {
+        if (project_can_view($viewerId, (int) $p['id'], (int) ($p['created_by'] ?? 0))) {
+            $projects[] = $p;
+        }
+    }
+}
+
+// Preload the allowlist for each project (used by the Edit modal's
+// seat picker to pre-check which seats + which per-seat flags are
+// already set). Also fetch every seat in the office hierarchy so the
+// picker has a stable pool.
+$seatsForProject = [];
+try {
+    $psRows = db()->query('SELECT project_id, seat_id, can_edit_task, can_add_task FROM project_seat')->fetchAll();
+    foreach ($psRows as $r) {
+        $seatsForProject[(int) $r['project_id']][] = [
+            'seat_id' => (int) $r['seat_id'],
+            'can_edit' => (int) $r['can_edit_task'],
+            'can_add'  => (int) $r['can_add_task'],
+        ];
+    }
+} catch (Throwable $e) { /* ignore */ }
+
+$allSeats = [];
+try {
+    $allSeats = db()->query("SELECT id, name, seat_number FROM office_hierarchy_nodes
+        WHERE level_type = 'seat' AND active_status = 1
+        ORDER BY name ASC")->fetchAll();
+} catch (Throwable $e) { /* ignore */ }
 
 $fmtMoney = static function ($v): string {
     if ($v === null || $v === '') return '—';
@@ -230,7 +307,9 @@ render_page_header('Task Tracker · Projects', [
                             'end_date'       => substr((string) ($p['end_date'] ?? ''), 0, 10),
                             'budget_amount'  => $budget !== null ? (float) $budget : null,
                             'is_active'      => (int) $p['is_active'],
+                            'seats'          => $seatsForProject[(int) $p['id']] ?? [],
                         ], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES);
+                        $canEditThis = $canManage || (int) ($p['created_by'] ?? 0) === $viewerId;
                     ?>
                     <tr class="<?= $active ? '' : 'text-muted' ?>">
                         <td><?= $i++ ?></td>
@@ -288,22 +367,26 @@ render_page_header('Task Tracker · Projects', [
                             <?php if ($active): ?><span class="badge text-bg-success">Active</span>
                             <?php else: ?><span class="badge text-bg-secondary">Inactive</span><?php endif; ?>
                         </td>
-                        <?php if ($canManage): ?>
+                        <?php if ($canManage || $canEditThis): ?>
                             <td class="text-end">
                                 <div class="d-inline-flex gap-1">
-                                    <button type="button" class="btn btn-sm btn-outline-primary js-edit-project"
-                                            data-payload="<?= $payload ?>"
-                                            data-bs-toggle="modal" data-bs-target="#projectModal">
-                                        <i class="bi bi-pencil"></i>
-                                    </button>
-                                    <form method="post" class="d-inline" onsubmit="return confirm('Toggle status?');">
-                                        <?php csrf_field(); ?>
-                                        <input type="hidden" name="action" value="toggle_active">
-                                        <input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
-                                        <button class="btn btn-sm <?= $active ? 'btn-outline-danger' : 'btn-outline-success' ?>">
-                                            <i class="bi <?= $active ? 'bi-slash-circle' : 'bi-check2-circle' ?>"></i>
+                                    <?php if ($canEditThis): ?>
+                                        <button type="button" class="btn btn-sm btn-outline-primary js-edit-project"
+                                                data-payload="<?= $payload ?>"
+                                                data-bs-toggle="modal" data-bs-target="#projectModal">
+                                            <i class="bi bi-pencil"></i>
                                         </button>
-                                    </form>
+                                    <?php endif; ?>
+                                    <?php if ($canManage): ?>
+                                        <form method="post" class="d-inline" onsubmit="return confirm('Toggle status?');">
+                                            <?php csrf_field(); ?>
+                                            <input type="hidden" name="action" value="toggle_active">
+                                            <input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
+                                            <button class="btn btn-sm <?= $active ? 'btn-outline-danger' : 'btn-outline-success' ?>">
+                                                <i class="bi <?= $active ? 'bi-slash-circle' : 'bi-check2-circle' ?>"></i>
+                                            </button>
+                                        </form>
+                                    <?php endif; ?>
                                 </div>
                             </td>
                         <?php endif; ?>
@@ -317,7 +400,15 @@ render_page_header('Task Tracker · Projects', [
     </div>
 </div>
 
-<?php if ($canManage): ?>
+<?php
+// Modal is shown if the viewer is an admin (can create) OR the owner
+// of at least one listed project (can edit their own row). Dropping
+// the stricter $canManage-only gate lets non-admin creators edit
+// their own project — the server-side save re-checks ownership.
+$creatorOfAny = false;
+foreach ($projects as $p) if ((int) ($p['created_by'] ?? 0) === $viewerId) { $creatorOfAny = true; break; }
+?>
+<?php if ($canManage || $creatorOfAny): ?>
 <div class="modal fade" id="projectModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -379,6 +470,36 @@ render_page_header('Task Tracker · Projects', [
                                 <div class="small text-muted">Deactivating a project hides its tasks from the board but keeps history.</div>
                             </div>
                         </div>
+
+                        <div class="col-12">
+                            <hr class="my-1">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <strong><i class="bi bi-people me-1"></i>Participating seats</strong>
+                                <div class="input-group input-group-sm" style="max-width: 360px;">
+                                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                    <input type="text" class="form-control" id="projectSeatFilter" placeholder="Filter seats by name…">
+                                </div>
+                            </div>
+                            <div class="small text-muted mb-2">
+                                Users who hold any of these seats can see this project in their list.
+                                <strong>Edit task</strong> grants them edit on every task; <strong>Add task</strong>
+                                lets them create new tasks on the project. Leaving both unticked makes the seat
+                                read-only for this project (view + their own assigned tasks only).
+                            </div>
+                            <div class="border rounded" style="max-height: 280px; overflow-y: auto;">
+                                <table class="table table-sm table-hover mb-0 align-middle" id="projectSeatTable">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th style="width: 44px;"><input type="checkbox" id="projectSeatAll" title="Toggle all"></th>
+                                            <th>Seat</th>
+                                            <th style="width: 110px;" class="text-center">Edit task</th>
+                                            <th style="width: 110px;" class="text-center">Add task</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="projectSeatBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -392,6 +513,74 @@ render_page_header('Task Tracker · Projects', [
 <script>
 (function () {
     const modalEl = document.getElementById('projectModal');
+    const SEATS   = <?= json_encode(array_map(static fn($s) => ['id' => (int) $s['id'], 'name' => (string) $s['name'], 'seat_number' => (string) ($s['seat_number'] ?? '')], $allSeats), JSON_UNESCAPED_UNICODE) ?>;
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    const renderSeats = (preSel) => {
+        const sel = {};
+        (preSel || []).forEach(s => { sel[Number(s.seat_id)] = { can_edit: s.can_edit | 0, can_add: s.can_add | 0 }; });
+        const body = document.getElementById('projectSeatBody');
+        body.innerHTML = SEATS.map(s => {
+            const row = sel[s.id] || { can_edit: 0, can_add: 0 };
+            const picked = !!sel[s.id];
+            const label = esc(s.name) + (s.seat_number ? ' <span class="text-muted small">· ' + esc(s.seat_number) + '</span>' : '');
+            return `<tr data-seat-id="${s.id}" data-seat-name="${esc((s.name + ' ' + (s.seat_number || '')).toLowerCase())}">
+                <td class="text-center"><input type="checkbox" class="form-check-input js-seat-pick" ${picked ? 'checked' : ''}></td>
+                <td class="small">${label}</td>
+                <td class="text-center"><input type="checkbox" class="form-check-input js-seat-edit" ${row.can_edit ? 'checked' : ''} ${picked ? '' : 'disabled'}></td>
+                <td class="text-center"><input type="checkbox" class="form-check-input js-seat-add"  ${row.can_add  ? 'checked' : ''} ${picked ? '' : 'disabled'}></td>
+            </tr>`;
+        }).join('');
+    };
+
+    // Toggle row-level enable on pick change; filter rows by name.
+    document.addEventListener('change', (ev) => {
+        if (ev.target.classList && ev.target.classList.contains('js-seat-pick')) {
+            const tr = ev.target.closest('tr');
+            const on = ev.target.checked;
+            tr.querySelector('.js-seat-edit').disabled = !on;
+            tr.querySelector('.js-seat-add').disabled  = !on;
+            if (!on) {
+                tr.querySelector('.js-seat-edit').checked = false;
+                tr.querySelector('.js-seat-add').checked  = false;
+            }
+        }
+        if (ev.target.id === 'projectSeatAll') {
+            document.querySelectorAll('#projectSeatBody .js-seat-pick').forEach(cb => {
+                if (cb.closest('tr').style.display !== 'none') {
+                    cb.checked = ev.target.checked;
+                    cb.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+        }
+    });
+    document.getElementById('projectSeatFilter')?.addEventListener('input', (ev) => {
+        const q = (ev.target.value || '').toLowerCase().trim();
+        document.querySelectorAll('#projectSeatBody tr').forEach(tr => {
+            tr.style.display = (q === '' || tr.dataset.seatName.includes(q)) ? '' : 'none';
+        });
+    });
+
+    // On submit, materialise checked rows into hidden name=seats[i][...]
+    // inputs so the server-side rewrite receives them cleanly.
+    document.getElementById('projectForm')?.addEventListener('submit', () => {
+        document.querySelectorAll('#projectForm input[name^="seats["]').forEach(n => n.remove());
+        let i = 0;
+        document.querySelectorAll('#projectSeatBody tr').forEach(tr => {
+            const pick = tr.querySelector('.js-seat-pick');
+            if (!pick || !pick.checked) return;
+            const sid  = Number(tr.dataset.seatId);
+            const ce   = tr.querySelector('.js-seat-edit').checked ? 1 : 0;
+            const ca   = tr.querySelector('.js-seat-add').checked  ? 1 : 0;
+            const base = 'seats[' + i + ']';
+            const mk   = (name, val) => { const h = document.createElement('input'); h.type='hidden'; h.name=base+'['+name+']'; h.value=String(val); return h; };
+            document.getElementById('projectForm').appendChild(mk('seat_id', sid));
+            document.getElementById('projectForm').appendChild(mk('can_edit', ce));
+            document.getElementById('projectForm').appendChild(mk('can_add',  ca));
+            i++;
+        });
+    });
+
     modalEl?.addEventListener('show.bs.modal', (ev) => {
         const t = ev.relatedTarget;
         if (!t) return;
@@ -404,6 +593,9 @@ render_page_header('Task Tracker · Projects', [
             setV('projectModalName', ''); setV('projectModalCode', '');
             setV('projectModalFY', ''); setV('projectModalStart', ''); setV('projectModalEnd', '');
             setV('projectModalBudget', ''); setV('projectModalDesc', ''); setC('projectModalActive', true);
+            renderSeats([]);
+            const filter = document.getElementById('projectSeatFilter'); if (filter) filter.value = '';
+            const all = document.getElementById('projectSeatAll');       if (all) all.checked = false;
         } else if (t.classList.contains('js-edit-project')) {
             let d = {};
             try { d = JSON.parse(t.getAttribute('data-payload') || '{}'); } catch (e) {}
@@ -426,6 +618,9 @@ render_page_header('Task Tracker · Projects', [
             setV('projectModalBudget', d.budget_amount !== null && d.budget_amount !== undefined ? d.budget_amount : '');
             setV('projectModalDesc', d.description || '');
             setC('projectModalActive', d.is_active === 1);
+            renderSeats(d.seats || []);
+            const filter = document.getElementById('projectSeatFilter'); if (filter) filter.value = '';
+            const all = document.getElementById('projectSeatAll');       if (all) all.checked = false;
         }
     });
 })();

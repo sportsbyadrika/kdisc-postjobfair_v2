@@ -94,14 +94,22 @@ if ($existing !== null) {
     }
 }
 
-if (!can_edit_task($viewerId, $existing === null ? null : array_merge(
-    (array) $existing,
-    ['primary_seat_id'     => $existingAssignmentPayload['primary_seat_id'],
-     'primary_section_id'  => $existingAssignmentPayload['primary_section_id'],
-     'primary_division_id' => $existingAssignmentPayload['primary_division_id'],
-     'secondary_seat_ids'  => $existingAssignmentPayload['secondary_seat_ids'],
-     'secondary_user_ids'  => $existingAssignmentPayload['secondary_user_ids'] ?? []]
-))) {
+// New-task case: check the project-level "can add task" allowlist.
+// Edit case: can_edit_task handles the seat / assignment / admin checks.
+$permCheckOk = $existing === null
+    ? (project_can_add_task($viewerId, (int) $project['id'], (int) ($project['created_by'] ?? 0))
+       || $canManage
+       || in_array($scope['level'] ?? '', ['office_head', 'division_head', 'section_head'], true))
+    : can_edit_task($viewerId, array_merge(
+        (array) $existing,
+        ['primary_seat_id'     => $existingAssignmentPayload['primary_seat_id'],
+         'primary_section_id'  => $existingAssignmentPayload['primary_section_id'],
+         'primary_division_id' => $existingAssignmentPayload['primary_division_id'],
+         'secondary_seat_ids'  => $existingAssignmentPayload['secondary_seat_ids'],
+         'secondary_user_ids'  => $existingAssignmentPayload['secondary_user_ids'] ?? [],
+         'project_created_by'  => (int) ($project['created_by'] ?? 0)]
+    ));
+if (!$permCheckOk) {
     http_response_code(403);
     render_header('Access denied');
     render_page_header('Access denied', ['icon' => 'bi-shield-lock',
