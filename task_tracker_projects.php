@@ -236,12 +236,78 @@ try {
     }
 } catch (Throwable $e) { /* ignore */ }
 
-$allSeats = [];
+// Office-hierarchy tree for the Participating Seats picker's cascade
+// filters (Division → Section → Sub-section → Seat). We pull every
+// active node in the five relevant levels and walk parents in PHP so
+// a seat that sits directly under a Section (no Sub Section) still
+// lands in the right Division / Section bucket.
+$seatColumns   = 'id, parent_id, level_type, name, seat_number';
+$treeRows      = [];
 try {
-    $allSeats = db()->query("SELECT id, name, seat_number FROM office_hierarchy_nodes
-        WHERE level_type = 'seat' AND active_status = 1
-        ORDER BY name ASC")->fetchAll();
+    $treeRows = db()->query("SELECT $seatColumns FROM office_hierarchy_nodes
+        WHERE active_status = 1 AND level_type IN ('office','division','section','sub_section','seat')
+        ORDER BY level_type, sort_order ASC, name ASC")->fetchAll();
 } catch (Throwable $e) { /* ignore */ }
+$byId = [];
+foreach ($treeRows as $n) $byId[(int) $n['id']] = $n;
+$ancestorOfType = static function (array $node, string $wantedType) use ($byId): ?array {
+    $cursor = $node;
+    for ($g = 0; $g < 10; $g++) {
+        $pid = (int) ($cursor['parent_id'] ?? 0);
+        if ($pid <= 0) return null;
+        $parent = $byId[$pid] ?? null;
+        if ($parent === null) return null;
+        if ((string) $parent['level_type'] === $wantedType) return $parent;
+        $cursor = $parent;
+    }
+    return null;
+};
+// Current holder (name + designation) per seat, so the picker can
+// show "<seat name> · <officer name> <designation>" at a glance.
+$officerBySeat = [];
+try {
+    $st = db()->query("SELECT h.node_id AS seat_id, u.name AS officer_name, u.designation
+        FROM office_hierarchy_officer_history h
+        LEFT JOIN users u ON u.id = h.officer_id
+        WHERE h.unassigned_at IS NULL");
+    foreach ($st->fetchAll() as $r) {
+        $sid = (int) $r['seat_id']; if ($sid <= 0) continue;
+        $officerBySeat[$sid] = [
+            'name'        => (string) ($r['officer_name']  ?? ''),
+            'designation' => (string) ($r['designation']   ?? ''),
+        ];
+    }
+} catch (Throwable $e) { /* history may be empty */ }
+
+$allDivisions = []; $allSections = []; $allSubSections = []; $allSeats = [];
+foreach ($treeRows as $n) {
+    if ($n['level_type'] === 'division') {
+        $allDivisions[] = ['id' => (int) $n['id'], 'name' => (string) $n['name']];
+    } elseif ($n['level_type'] === 'section') {
+        $allSections[]  = ['id' => (int) $n['id'], 'name' => (string) $n['name'], 'division_id' => (int) $n['parent_id']];
+    } elseif ($n['level_type'] === 'sub_section') {
+        $allSubSections[] = ['id' => (int) $n['id'], 'name' => (string) $n['name'], 'section_id' => (int) $n['parent_id']];
+    } elseif ($n['level_type'] === 'seat') {
+        $section    = $ancestorOfType($n, 'section');
+        $division   = $section ? ($byId[(int) $section['parent_id']] ?? null) : null;
+        $parentRow  = $byId[(int) $n['parent_id']] ?? null;
+        $subSection = ($parentRow && (string) $parentRow['level_type'] === 'sub_section') ? $parentRow : null;
+        $sid = (int) $n['id'];
+        $officer = $officerBySeat[$sid] ?? ['name' => '', 'designation' => ''];
+        $allSeats[] = [
+            'id'              => $sid,
+            'name'            => (string) $n['name'],
+            'seat_number'     => (string) ($n['seat_number'] ?? ''),
+            'division_id'     => $division   ? (int) $division['id']   : 0,
+            'section_id'      => $section    ? (int) $section['id']    : 0,
+            'sub_section_id'  => $subSection ? (int) $subSection['id'] : 0,
+            'officer_name'    => $officer['name'],
+            'officer_designation' => $officer['designation'],
+        ];
+    }
+}
+// Stable alphabetic sort, same as the previous flat query.
+usort($allSeats, static fn($a, $b) => strcasecmp($a['name'], $b['name']));
 
 $fmtMoney = static function ($v): string {
     if ($v === null || $v === '') return '—';
@@ -475,10 +541,7 @@ foreach ($projects as $p) if ((int) ($p['created_by'] ?? 0) === $viewerId) { $cr
                             <hr class="my-1">
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <strong><i class="bi bi-people me-1"></i>Participating seats</strong>
-                                <div class="input-group input-group-sm" style="max-width: 360px;">
-                                    <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                    <input type="text" class="form-control" id="projectSeatFilter" placeholder="Filter seats by name…">
-                                </div>
+                                <span class="small text-muted" id="projectSeatVisibleCount"></span>
                             </div>
                             <div class="small text-muted mb-2">
                                 Users who hold any of these seats can see this project in their list.
@@ -486,14 +549,38 @@ foreach ($projects as $p) if ((int) ($p['created_by'] ?? 0) === $viewerId) { $cr
                                 lets them create new tasks on the project. Leaving both unticked makes the seat
                                 read-only for this project (view + their own assigned tasks only).
                             </div>
-                            <div class="border rounded" style="max-height: 280px; overflow-y: auto;">
+                            <div class="row g-2 mb-2">
+                                <div class="col-12 col-md-3">
+                                    <select class="form-select form-select-sm" id="projectSeatDivFilter">
+                                        <option value="">All divisions</option>
+                                    </select>
+                                </div>
+                                <div class="col-12 col-md-3">
+                                    <select class="form-select form-select-sm" id="projectSeatSecFilter">
+                                        <option value="">All sections</option>
+                                    </select>
+                                </div>
+                                <div class="col-12 col-md-3">
+                                    <select class="form-select form-select-sm" id="projectSeatSubSecFilter">
+                                        <option value="">All sub-sections</option>
+                                    </select>
+                                </div>
+                                <div class="col-12 col-md-3">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="projectSeatFilter" placeholder="Seat / officer…">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="border rounded" style="max-height: 320px; overflow-y: auto;">
                                 <table class="table table-sm table-hover mb-0 align-middle" id="projectSeatTable">
                                     <thead class="table-light">
                                         <tr>
-                                            <th style="width: 44px;"><input type="checkbox" id="projectSeatAll" title="Toggle all"></th>
+                                            <th style="width: 44px;"><input type="checkbox" id="projectSeatAll" title="Toggle all (within filter)"></th>
                                             <th>Seat</th>
-                                            <th style="width: 110px;" class="text-center">Edit task</th>
-                                            <th style="width: 110px;" class="text-center">Add task</th>
+                                            <th>Assigned user</th>
+                                            <th style="width: 100px;" class="text-center">Edit task</th>
+                                            <th style="width: 100px;" class="text-center">Add task</th>
                                         </tr>
                                     </thead>
                                     <tbody id="projectSeatBody"></tbody>
@@ -513,7 +600,10 @@ foreach ($projects as $p) if ((int) ($p['created_by'] ?? 0) === $viewerId) { $cr
 <script>
 (function () {
     const modalEl = document.getElementById('projectModal');
-    const SEATS   = <?= json_encode(array_map(static fn($s) => ['id' => (int) $s['id'], 'name' => (string) $s['name'], 'seat_number' => (string) ($s['seat_number'] ?? '')], $allSeats), JSON_UNESCAPED_UNICODE) ?>;
+    const SEATS       = <?= json_encode($allSeats, JSON_UNESCAPED_UNICODE) ?>;
+    const DIVISIONS   = <?= json_encode($allDivisions, JSON_UNESCAPED_UNICODE) ?>;
+    const SECTIONS    = <?= json_encode($allSections, JSON_UNESCAPED_UNICODE) ?>;
+    const SUBSECTIONS = <?= json_encode($allSubSections, JSON_UNESCAPED_UNICODE) ?>;
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
     const renderSeats = (preSel) => {
@@ -523,17 +613,80 @@ foreach ($projects as $p) if ((int) ($p['created_by'] ?? 0) === $viewerId) { $cr
         body.innerHTML = SEATS.map(s => {
             const row = sel[s.id] || { can_edit: 0, can_add: 0 };
             const picked = !!sel[s.id];
-            const label = esc(s.name) + (s.seat_number ? ' <span class="text-muted small">· ' + esc(s.seat_number) + '</span>' : '');
-            return `<tr data-seat-id="${s.id}" data-seat-name="${esc((s.name + ' ' + (s.seat_number || '')).toLowerCase())}">
+            const seatCell = esc(s.name) + (s.seat_number ? ' <span class="text-muted small">· ' + esc(s.seat_number) + '</span>' : '');
+            const officer = (s.officer_name || '').trim();
+            const designation = (s.officer_designation || '').trim();
+            const officerCell = officer === ''
+                ? '<span class="text-muted small">— vacant —</span>'
+                : '<span>' + esc(officer) + '</span>' + (designation !== '' ? ' <span class="text-muted small">· ' + esc(designation) + '</span>' : '');
+            const haystack = [
+                s.name, s.seat_number || '', officer, designation
+            ].join(' ').toLowerCase();
+            return `<tr data-seat-id="${s.id}" data-div-id="${s.division_id}" data-sec-id="${s.section_id}" data-subsec-id="${s.sub_section_id}" data-seat-name="${esc(haystack)}">
                 <td class="text-center"><input type="checkbox" class="form-check-input js-seat-pick" ${picked ? 'checked' : ''}></td>
-                <td class="small">${label}</td>
+                <td class="small">${seatCell}</td>
+                <td class="small">${officerCell}</td>
                 <td class="text-center"><input type="checkbox" class="form-check-input js-seat-edit" ${row.can_edit ? 'checked' : ''} ${picked ? '' : 'disabled'}></td>
                 <td class="text-center"><input type="checkbox" class="form-check-input js-seat-add"  ${row.can_add  ? 'checked' : ''} ${picked ? '' : 'disabled'}></td>
             </tr>`;
         }).join('');
+        populateDivisionFilter();
+        refreshSeatFilter();
     };
 
-    // Toggle row-level enable on pick change; filter rows by name.
+    // Build the Division dropdown once per modal open (it's static).
+    const populateDivisionFilter = () => {
+        const sel = document.getElementById('projectSeatDivFilter');
+        if (!sel || sel.options.length > 1) return;
+        DIVISIONS.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(d => {
+            const o = document.createElement('option');
+            o.value = String(d.id); o.textContent = d.name;
+            sel.appendChild(o);
+        });
+    };
+    const refillSectionFilter = (divId) => {
+        const sel = document.getElementById('projectSeatSecFilter');
+        sel.innerHTML = '<option value="">All sections</option>';
+        const pool = divId ? SECTIONS.filter(s => String(s.division_id) === String(divId)) : SECTIONS;
+        pool.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(s => {
+            const o = document.createElement('option');
+            o.value = String(s.id); o.textContent = s.name;
+            sel.appendChild(o);
+        });
+    };
+    const refillSubSectionFilter = (secId) => {
+        const sel = document.getElementById('projectSeatSubSecFilter');
+        sel.innerHTML = '<option value="">All sub-sections</option>';
+        const pool = secId ? SUBSECTIONS.filter(ss => String(ss.section_id) === String(secId)) : SUBSECTIONS;
+        pool.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(ss => {
+            const o = document.createElement('option');
+            o.value = String(ss.id); o.textContent = ss.name;
+            sel.appendChild(o);
+        });
+    };
+
+    // Apply the four-filter cascade — Division / Section / Sub-section
+    // / free-text — against each row; show matching, hide the rest.
+    const refreshSeatFilter = () => {
+        const q      = (document.getElementById('projectSeatFilter')?.value || '').toLowerCase().trim();
+        const divId  =  document.getElementById('projectSeatDivFilter')?.value || '';
+        const secId  =  document.getElementById('projectSeatSecFilter')?.value || '';
+        const ssId   =  document.getElementById('projectSeatSubSecFilter')?.value || '';
+        let visible = 0;
+        document.querySelectorAll('#projectSeatBody tr').forEach(tr => {
+            let show = true;
+            if (divId && tr.dataset.divId    !== divId) show = false;
+            if (secId && tr.dataset.secId    !== secId) show = false;
+            if (ssId  && tr.dataset.subsecId !== ssId)  show = false;
+            if (q && !tr.dataset.seatName.includes(q))  show = false;
+            tr.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+        const label = document.getElementById('projectSeatVisibleCount');
+        if (label) label.textContent = visible + ' of ' + SEATS.length + ' seat' + (SEATS.length === 1 ? '' : 's') + ' shown';
+    };
+
+    // Toggle row-level enable on pick change; drive cascade filters.
     document.addEventListener('change', (ev) => {
         if (ev.target.classList && ev.target.classList.contains('js-seat-pick')) {
             const tr = ev.target.closest('tr');
@@ -553,13 +706,20 @@ foreach ($projects as $p) if ((int) ($p['created_by'] ?? 0) === $viewerId) { $cr
                 }
             });
         }
+        if (ev.target.id === 'projectSeatDivFilter') {
+            refillSectionFilter(ev.target.value);
+            refillSubSectionFilter('');
+            refreshSeatFilter();
+        }
+        if (ev.target.id === 'projectSeatSecFilter') {
+            refillSubSectionFilter(ev.target.value);
+            refreshSeatFilter();
+        }
+        if (ev.target.id === 'projectSeatSubSecFilter') {
+            refreshSeatFilter();
+        }
     });
-    document.getElementById('projectSeatFilter')?.addEventListener('input', (ev) => {
-        const q = (ev.target.value || '').toLowerCase().trim();
-        document.querySelectorAll('#projectSeatBody tr').forEach(tr => {
-            tr.style.display = (q === '' || tr.dataset.seatName.includes(q)) ? '' : 'none';
-        });
-    });
+    document.getElementById('projectSeatFilter')?.addEventListener('input', refreshSeatFilter);
 
     // On submit, materialise checked rows into hidden name=seats[i][...]
     // inputs so the server-side rewrite receives them cleanly.
@@ -594,8 +754,7 @@ foreach ($projects as $p) if ((int) ($p['created_by'] ?? 0) === $viewerId) { $cr
             setV('projectModalFY', ''); setV('projectModalStart', ''); setV('projectModalEnd', '');
             setV('projectModalBudget', ''); setV('projectModalDesc', ''); setC('projectModalActive', true);
             renderSeats([]);
-            const filter = document.getElementById('projectSeatFilter'); if (filter) filter.value = '';
-            const all = document.getElementById('projectSeatAll');       if (all) all.checked = false;
+            resetSeatPickerControls();
         } else if (t.classList.contains('js-edit-project')) {
             let d = {};
             try { d = JSON.parse(t.getAttribute('data-payload') || '{}'); } catch (e) {}
@@ -619,10 +778,21 @@ foreach ($projects as $p) if ((int) ($p['created_by'] ?? 0) === $viewerId) { $cr
             setV('projectModalDesc', d.description || '');
             setC('projectModalActive', d.is_active === 1);
             renderSeats(d.seats || []);
-            const filter = document.getElementById('projectSeatFilter'); if (filter) filter.value = '';
-            const all = document.getElementById('projectSeatAll');       if (all) all.checked = false;
+            resetSeatPickerControls();
         }
     });
+
+    // Reset the four filter controls + the "toggle all" box each time
+    // the modal opens so stale state from a previous session doesn't
+    // mask the full seat list.
+    const resetSeatPickerControls = () => {
+        const filter = document.getElementById('projectSeatFilter');       if (filter) filter.value = '';
+        const divSel = document.getElementById('projectSeatDivFilter');    if (divSel) divSel.value = '';
+        refillSectionFilter('');
+        refillSubSectionFilter('');
+        const all    = document.getElementById('projectSeatAll');          if (all) all.checked = false;
+        refreshSeatFilter();
+    };
 })();
 </script>
 <?php endif; ?>
