@@ -249,6 +249,21 @@ function task_tracker_bootstrap(): void
         KEY idx_uploaded_at (uploaded_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+    // Seat allowlist for a project: which seats can see this project
+    // in the list + two per-seat flags for "can create a task on this
+    // project" and "can edit any task on this project". The creator +
+    // module admin always have access regardless of this table.
+    $db->query("CREATE TABLE IF NOT EXISTS project_seat (
+        project_id INT NOT NULL,
+        seat_id INT NOT NULL,
+        can_edit_task TINYINT(1) NOT NULL DEFAULT 0,
+        can_add_task  TINYINT(1) NOT NULL DEFAULT 0,
+        added_by INT NULL,
+        added_at DATETIME NULL,
+        PRIMARY KEY (project_id, seat_id),
+        KEY idx_seat (seat_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     // Preferred attachment surface (replaces local file uploads). Each
     // row is an external URL — Google Drive / Docs / Sheets / Slides /
     // PDF / image — opened in a new tab via the task view. Keeps disk
@@ -591,6 +606,9 @@ function can_edit_task(int $viewerId, ?array $task = null): bool
 {
     $u = current_user() ?? [];
     if (($u['id'] ?? 0) === $viewerId && is_manage_admin($u)) return true;
+    // Project Management module admin (RBAC) — passes regardless of
+    // seat scope so an RBAC-only admin can act on any task.
+    if (function_exists('user_can_admin_module') && user_can_admin_module($viewerId, 'project_management')) return true;
     $scope = get_user_scope($viewerId);
     // A secondary assignment also grants edit — the viewer is formally
     // responsible for the task, same as the primary. Checked up-front
@@ -601,6 +619,11 @@ function can_edit_task(int $viewerId, ?array $task = null): bool
         if ($secSeats !== [] && array_intersect($secSeats, $scope['seat_ids']) !== []) return true;
         $secUsers = (array) ($task['secondary_user_ids'] ?? []);
         if ($secUsers !== [] && in_array($viewerId, array_map('intval', $secUsers), true)) return true;
+        // Project-level "can edit any task" allowlist seat on this
+        // task's project.
+        $pid = (int) ($task['project_id'] ?? 0);
+        $createdBy = (int) ($task['project_created_by'] ?? 0) ?: null;
+        if ($pid > 0 && project_can_edit_any_task($viewerId, $pid, $createdBy)) return true;
     }
     if (in_array($scope['level'], ['admin', 'office_head', 'division_head', 'section_head'], true)) {
         return can_view_task($viewerId, $task);
@@ -621,6 +644,86 @@ function can_move_task(int $viewerId, ?array $task = null): bool
 {
     // Same rule as edit — the board is a status field on the task.
     return can_edit_task($viewerId, $task);
+}
+
+/* ===========================================================
+ * Project-level seat allowlist helpers (project_seat).
+ * These are a per-project ACL independent of the seat-hierarchy
+ * scope used by can_view_task / can_edit_task.
+ * =========================================================== */
+
+/**
+ * Seats the viewer currently holds that are listed on this project's
+ * allowlist, with the two flag values. Returns [] when they're not
+ * on the allowlist.
+ */
+function project_user_seats_in_project(int $userId, int $projectId): array
+{
+    if ($userId <= 0 || $projectId <= 0) return [];
+    $scope = get_user_scope($userId);
+    if ($scope['seat_ids'] === []) return [];
+    try {
+        $ph = implode(',', array_fill(0, count($scope['seat_ids']), '?'));
+        $st = db()->prepare("SELECT seat_id, can_edit_task, can_add_task
+            FROM project_seat
+            WHERE project_id = ? AND seat_id IN ($ph)");
+        $st->execute(array_merge([$projectId], $scope['seat_ids']));
+        $out = [];
+        foreach ($st->fetchAll() as $r) {
+            $out[(int) $r['seat_id']] = [
+                'can_edit_task' => (int) $r['can_edit_task'] === 1,
+                'can_add_task'  => (int) $r['can_add_task']  === 1,
+            ];
+        }
+        return $out;
+    } catch (Throwable $e) { return []; }
+}
+
+/**
+ * Can this viewer see the project at all? Creator, DB admin, module
+ * admin, or any seat on the allowlist (regardless of flags) qualifies.
+ */
+function project_can_view(int $userId, int $projectId, ?int $createdBy = null): bool
+{
+    $u = current_user() ?? [];
+    if (($u['id'] ?? 0) === $userId && is_manage_admin($u)) return true;
+    if (function_exists('user_can_admin_module') && user_can_admin_module($userId, 'project_management')) return true;
+    if ($createdBy !== null && $createdBy === $userId) return true;
+    return project_user_seats_in_project($userId, $projectId) !== [];
+}
+
+/**
+ * Can this viewer add a new task on this project? Admin, creator, or
+ * any allowlist seat with can_add_task = 1.
+ */
+function project_can_add_task(int $userId, int $projectId, ?int $createdBy = null): bool
+{
+    $u = current_user() ?? [];
+    if (($u['id'] ?? 0) === $userId && is_manage_admin($u)) return true;
+    if (function_exists('user_can_admin_module') && user_can_admin_module($userId, 'project_management')) return true;
+    if ($createdBy !== null && $createdBy === $userId) return true;
+    foreach (project_user_seats_in_project($userId, $projectId) as $flags) {
+        if (!empty($flags['can_add_task'])) return true;
+    }
+    return false;
+}
+
+/**
+ * Can this viewer edit ANY task on this project? Admin, creator, or
+ * any allowlist seat with can_edit_task = 1. Distinct from
+ * can_edit_task($viewerId, $task) which also grants per-task edit to
+ * the task's primary / secondary responsible.
+ */
+function project_can_edit_any_task(int $userId, int $projectId, ?int $createdBy = null): bool
+{
+    $u = current_user() ?? [];
+    if (($u['id'] ?? 0) === $userId && is_manage_admin($u)) return true;
+    if (function_exists('user_can_admin_module') && user_can_admin_module($userId, 'project_management')) return true;
+    if ($createdBy !== null && $createdBy === $userId) return true;
+    foreach (project_user_seats_in_project($userId, $projectId) as $flags) {
+        if (!empty($flags['can_edit_task'])) return true;
+    }
+    return false;
 }
 
 /**
