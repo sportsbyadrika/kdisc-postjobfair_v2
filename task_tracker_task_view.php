@@ -239,6 +239,38 @@ if (is_post() && ($_POST['action'] ?? '') === 'delete_file') {
     $flashAndReturn('File deleted.', 'success', $taskId);
 }
 
+// URL attachments — preferred surface. Store external Google Drive /
+// Docs / Sheets / Slides / PDF / image URLs; opened in a new tab.
+if (is_post() && ($_POST['action'] ?? '') === 'add_url') {
+    csrf_check_or_die();
+    if (!$canEdit) $flashAndReturn('You do not have permission to add attachments.', 'danger', $taskId);
+    $url   = trim((string) ($_POST['url']   ?? ''));
+    $label = trim((string) ($_POST['label'] ?? ''));
+    if ($url === '' || !preg_match('~^https?://~i', $url)) {
+        $flashAndReturn('Enter a valid URL (must start with http:// or https://).', 'danger', $taskId);
+    }
+    try {
+        db()->prepare('INSERT INTO task_url (task_id, label, url, created_by, created_at) VALUES (?, ?, ?, ?, NOW())')
+            ->execute([$taskId, $label === '' ? null : $label, $url, $viewerId]);
+        db()->prepare('INSERT INTO task_history (task_id, field_name, old_value, new_value, changed_by, changed_at) VALUES (?, ?, NULL, ?, ?, NOW())')
+            ->execute([$taskId, 'attachment_url', 'Added ' . ($label !== '' ? $label . ' — ' : '') . $url, $viewerId]);
+        $flashAndReturn('URL added.', 'success', $taskId);
+    } catch (Throwable $e) { $flashAndReturn('Save failed: ' . $e->getMessage(), 'danger', $taskId); }
+}
+if (is_post() && ($_POST['action'] ?? '') === 'delete_url') {
+    csrf_check_or_die();
+    if (!$canEdit) $flashAndReturn('You do not have permission to delete attachments.', 'danger', $taskId);
+    $uid = (int) ($_POST['url_id'] ?? 0);
+    $u = db()->prepare('SELECT * FROM task_url WHERE id = ? AND task_id = ? LIMIT 1');
+    $u->execute([$uid, $taskId]);
+    $row = $u->fetch();
+    if ($row === false) $flashAndReturn('URL not found.', 'danger', $taskId);
+    db()->prepare('DELETE FROM task_url WHERE id = ?')->execute([$uid]);
+    db()->prepare('INSERT INTO task_history (task_id, field_name, old_value, new_value, changed_by, changed_at) VALUES (?, ?, ?, NULL, ?, NOW())')
+        ->execute([$taskId, 'attachment_url', 'Removed ' . ($row['label'] !== null ? $row['label'] . ' — ' : '') . $row['url'], $viewerId]);
+    $flashAndReturn('URL removed.', 'success', $taskId);
+}
+
 $flashMessage = null; $flashType = 'success';
 if (!empty($_SESSION['task_tracker_task_view_flash']) && is_array($_SESSION['task_tracker_task_view_flash'])) {
     $flashMessage = (string) ($_SESSION['task_tracker_task_view_flash']['msg']  ?? '');
@@ -258,6 +290,15 @@ $files = db()->prepare('SELECT f.*, u.name AS uploaded_by_name
     WHERE f.task_id = ? ORDER BY f.uploaded_at DESC, f.id DESC');
 $files->execute([$taskId]);
 $fileRows = $files->fetchAll();
+
+$urlRows = [];
+try {
+    $urls = db()->prepare('SELECT ur.*, u.name AS created_by_name
+        FROM task_url ur LEFT JOIN users u ON u.id = ur.created_by
+        WHERE ur.task_id = ? ORDER BY ur.created_at DESC, ur.id DESC');
+    $urls->execute([$taskId]);
+    $urlRows = $urls->fetchAll();
+} catch (Throwable $e) { /* table missing — ignore */ }
 
 $remarks = db()->prepare('SELECT r.*, u.name AS by_name, u.avatar_colour, u.photo_path, u.mobile_number
     FROM task_remark r LEFT JOIN users u ON u.id = r.created_by
@@ -361,36 +402,76 @@ render_page_header($key . ' · ' . $task['title'], [
             </div>
         </div>
 
+        <!-- Comments / History / All lives above Attachments (relocated
+             from the full-width footer so discussions sit where the
+             operator reads first). The tabs card is rendered with
+             class="tt-comments-card" so it picks up the full-width
+             break-out CSS below if a wider surface is preferred. -->
+        <?php include __DIR__ . '/includes/task_view_comments_tabs.php'; ?>
+
         <div class="card mb-3">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span><i class="bi bi-paperclip text-primary me-1"></i>Attachments</span>
-                <span class="badge text-bg-light border"><?= count($fileRows) ?></span>
+                <span class="badge text-bg-light border"><?= count($urlRows) + count($fileRows) ?></span>
             </div>
             <div class="card-body">
                 <?php if ($canEdit): ?>
-                    <form method="post" enctype="multipart/form-data" class="row g-2 align-items-center mb-3">
+                    <form method="post" class="row g-2 align-items-center mb-3">
                         <?php csrf_field(); ?>
-                        <input type="hidden" name="action" value="upload_file">
+                        <input type="hidden" name="action" value="add_url">
+                        <div class="col-md-4">
+                            <input type="text" class="form-control" name="label" placeholder="Label (optional)" maxlength="200">
+                        </div>
                         <div class="col">
-                            <input type="file" class="form-control" name="file" required>
+                            <input type="url" class="form-control" name="url" placeholder="https://drive.google.com/… or any URL" required maxlength="1000">
                         </div>
                         <div class="col-auto">
-                            <button class="btn btn-primary"><i class="bi bi-upload me-1"></i>Upload</button>
+                            <button class="btn btn-primary"><i class="bi bi-link-45deg me-1"></i>Add URL</button>
                         </div>
-                        <div class="col-12 small text-muted">Max 20 MB. Executable file types are rejected.</div>
+                        <div class="col-12 small text-muted">Paste a Google Drive / Docs / Sheets / Slides / PDF / image share URL — it opens in a new tab. Local file uploads are no longer accepted.</div>
                     </form>
                 <?php endif; ?>
-                <?php if ($fileRows === []): ?>
+                <?php if ($urlRows === [] && $fileRows === []): ?>
                     <div class="text-muted small">No attachments yet.</div>
                 <?php else: ?>
                     <div class="list-group">
+                        <?php foreach ($urlRows as $u):
+                            $display = trim((string) ($u['label'] ?? '')) !== '' ? (string) $u['label'] : (string) $u['url'];
+                        ?>
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div class="min-w-0 flex-grow-1">
+                                    <a href="<?= esc((string) $u['url']) ?>" target="_blank" rel="noopener">
+                                        <i class="bi bi-link-45deg me-1"></i><?= esc($display) ?>
+                                    </a>
+                                    <div class="small text-muted text-truncate">
+                                        added by <?= esc((string) ($u['created_by_name'] ?? '—')) ?>
+                                        · <?= esc($fmtDT((string) $u['created_at'])) ?>
+                                        <?php if ((string) $u['label'] !== '' && $display !== (string) $u['url']): ?>
+                                            · <a href="<?= esc((string) $u['url']) ?>" target="_blank" rel="noopener" class="text-decoration-none"><?= esc((string) $u['url']) ?></a>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                                <div class="d-flex gap-1 flex-shrink-0">
+                                    <a class="btn btn-sm btn-outline-primary" href="<?= esc((string) $u['url']) ?>" target="_blank" rel="noopener" title="Open in new tab"><i class="bi bi-box-arrow-up-right me-1"></i>View</a>
+                                    <?php if ($canEdit): ?>
+                                        <form method="post" onsubmit="return confirm('Remove this URL from the task?');" class="d-inline">
+                                            <?php csrf_field(); ?>
+                                            <input type="hidden" name="action" value="delete_url">
+                                            <input type="hidden" name="url_id" value="<?= (int) $u['id'] ?>">
+                                            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                        </form>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
                         <?php foreach ($fileRows as $f): ?>
                             <div class="list-group-item d-flex justify-content-between align-items-center">
-                                <div>
+                                <div class="min-w-0 flex-grow-1">
                                     <a href="/<?= esc((string) $f['stored_path']) ?>" target="_blank" rel="noopener">
                                         <i class="bi bi-file-earmark me-1"></i><?= esc((string) $f['original_name']) ?>
                                     </a>
                                     <div class="small text-muted">
+                                        <span class="badge text-bg-warning-subtle border text-warning-emphasis me-1" title="Legacy local file upload — new uploads land as URLs.">legacy file</span>
                                         <?= esc($fmtSize((int) $f['size_bytes'])) ?> · uploaded by <?= esc((string) ($f['uploaded_by_name'] ?? '—')) ?>
                                         · <?= esc($fmtDT((string) $f['uploaded_at'])) ?>
                                     </div>
@@ -553,119 +634,11 @@ render_page_header($key . ' · ' . $task['title'], [
     </div>
 </div>
 
-<div class="card mt-2">
-    <div class="card-header p-0">
-        <ul class="nav nav-tabs card-header-tabs px-2 pt-2" role="tablist">
-            <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabComments" type="button">Comments · <?= count($remarkRows) ?></button></li>
-            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabHistory" type="button">History · <?= count($histRows) ?></button></li>
-            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAll" type="button">All · <?= count($mergedAll) ?></button></li>
-        </ul>
-    </div>
-    <div class="card-body">
-        <div class="tab-content">
-            <div class="tab-pane fade show active" id="tabComments">
-                <?php if ($canEdit): ?>
-                    <form method="post" class="mb-3">
-                        <?php csrf_field(); ?>
-                        <input type="hidden" name="action" value="add_remark">
-                        <div class="input-group">
-                            <textarea class="form-control" name="remark" rows="2" placeholder="Add a comment…" required></textarea>
-                            <button class="btn btn-primary"><i class="bi bi-send me-1"></i>Post</button>
-                        </div>
-                        <div class="small text-muted mt-1">Comments are permanent. Every post writes a history row.</div>
-                    </form>
-                <?php endif; ?>
-                <?php if ($remarkRows === []): ?>
-                    <div class="empty-state"><i class="bi bi-chat"></i>No comments yet.</div>
-                <?php else: ?>
-                    <ul class="list-unstyled">
-                        <?php foreach ($remarkRows as $r):
-                            $by = (string) ($r['by_name'] ?? '—');
-                            $avRow = ['id' => (int) ($r['created_by'] ?? 0), 'name' => $by,
-                                      'photo_path' => (string) ($r['photo_path'] ?? ''),
-                                      'avatar_colour' => (string) ($r['avatar_colour'] ?? ''),
-                                      'mobile_number' => (string) ($r['mobile_number'] ?? '')];
-                        ?>
-                            <li class="d-flex gap-2 mb-3">
-                                <?= user_avatar_html($avRow, 32) ?>
-                                <div class="flex-grow-1">
-                                    <div class="d-flex justify-content-between">
-                                        <strong><?= esc($by) ?></strong>
-                                        <span class="small text-muted"><?= esc($fmtDT((string) $r['created_at'])) ?></span>
-                                    </div>
-                                    <div style="white-space:pre-wrap;"><?= esc((string) $r['remark']) ?></div>
-                                </div>
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
-                <?php endif; ?>
-            </div>
-
-            <div class="tab-pane fade" id="tabHistory">
-                <?php if ($histRows === []): ?>
-                    <div class="empty-state"><i class="bi bi-clock-history"></i>No changes recorded yet.</div>
-                <?php else: ?>
-                    <ul class="list-unstyled">
-                        <?php foreach ($histRows as $h): ?>
-                            <li class="mb-2">
-                                <span class="badge text-bg-light border font-monospace me-1"><?= esc((string) $h['field_name']) ?></span>
-                                <span class="text-muted small"><?= esc($fmtDT((string) $h['changed_at'])) ?> · by <?= esc((string) ($h['by_name'] ?? '—')) ?></span>
-                                <div class="small">
-                                    <?php if ((string) ($h['old_value'] ?? '') !== ''): ?>
-                                        <span class="text-muted">from</span> <span class="text-decoration-line-through"><?= esc((string) $h['old_value']) ?></span>
-                                    <?php endif; ?>
-                                    <?php if ((string) ($h['new_value'] ?? '') !== ''): ?>
-                                        <span class="text-muted">to</span> <strong><?= esc((string) $h['new_value']) ?></strong>
-                                    <?php endif; ?>
-                                </div>
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
-                <?php endif; ?>
-            </div>
-
-            <div class="tab-pane fade" id="tabAll">
-                <?php if ($mergedAll === []): ?>
-                    <div class="empty-state"><i class="bi bi-list-nested"></i>No activity yet.</div>
-                <?php else: ?>
-                    <ul class="list-unstyled">
-                        <?php foreach ($mergedAll as $entry):
-                            $row = $entry['row'];
-                            $when = $entry['when'];
-                            if ($entry['kind'] === 'comment') {
-                                $by = (string) ($row['by_name'] ?? '—');
-                                $avRow = ['id' => (int) ($row['created_by'] ?? 0), 'name' => $by,
-                                          'photo_path' => (string) ($row['photo_path'] ?? ''),
-                                          'avatar_colour' => (string) ($row['avatar_colour'] ?? ''),
-                                          'mobile_number' => (string) ($row['mobile_number'] ?? '')];
-                        ?>
-                            <li class="d-flex gap-2 mb-3">
-                                <?= user_avatar_html($avRow, 32) ?>
-                                <div>
-                                    <div><strong><?= esc($by) ?></strong> <span class="small text-muted">commented · <?= esc($fmtDT($when)) ?></span></div>
-                                    <div style="white-space:pre-wrap;"><?= esc((string) $row['remark']) ?></div>
-                                </div>
-                            </li>
-                        <?php } else { ?>
-                            <li class="mb-2">
-                                <span class="badge text-bg-light border font-monospace me-1"><?= esc((string) $row['field_name']) ?></span>
-                                <span class="text-muted small"><?= esc($fmtDT($when)) ?> · by <?= esc((string) ($row['by_name'] ?? '—')) ?></span>
-                                <div class="small">
-                                    <?php if ((string) ($row['old_value'] ?? '') !== ''): ?>
-                                        <span class="text-muted">from</span> <span class="text-decoration-line-through"><?= esc((string) $row['old_value']) ?></span>
-                                    <?php endif; ?>
-                                    <?php if ((string) ($row['new_value'] ?? '') !== ''): ?>
-                                        <span class="text-muted">to</span> <strong><?= esc((string) $row['new_value']) ?></strong>
-                                    <?php endif; ?>
-                                </div>
-                            </li>
-                        <?php } endforeach; ?>
-                    </ul>
-                <?php endif; ?>
-            </div>
-        </div>
-    </div>
-</div>
+<?php // Comments / History / All used to live here as a full-width
+      // card at the bottom. It was moved into the left column above
+      // Attachments via includes/task_view_comments_tabs.php so
+      // discussions sit where the operator reads first, not after
+      // sub-activities. ?>
 
 <style>
 .tt-avatar { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:50%; font-size:12px; font-weight:700; }
