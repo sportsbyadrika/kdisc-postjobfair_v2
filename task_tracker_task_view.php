@@ -552,6 +552,17 @@ render_page_header($key . ' · ' . $task['title'], [
                         </div>
                     <?php endif; ?>
                 </div>
+                <?php if (!empty($task['bulk_group_id'])): ?>
+                    <div class="mb-3">
+                        <div class="text-uppercase small text-muted mb-1">Bulk group</div>
+                        <a class="badge text-bg-info-subtle text-info border text-decoration-none"
+                           href="/task_tracker_project_view.php?id=<?= (int) $task['project_id'] ?>&bulk=<?= urlencode((string) $task['bulk_group_id']) ?>"
+                           title="Spawned by Bulk Create — open the board filtered to the full group.">
+                            <i class="bi bi-collection me-1"></i><?= esc((string) $task['bulk_group_id']) ?>
+                        </a>
+                        <div class="small text-muted mt-1">Part of a bulk-create group — open the board to see every sibling task.</div>
+                    </div>
+                <?php endif; ?>
                 <div class="row g-2">
                     <div class="col-6">
                         <div class="text-uppercase small text-muted mb-1">Planned start</div>

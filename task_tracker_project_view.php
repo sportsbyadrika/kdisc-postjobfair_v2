@@ -80,6 +80,18 @@ $mineFilter = $showAll ? '' : " AND t.id IN (
         WHERE (ta.user_id = ? OR oh.officer_id = ?)
     )";
 
+// Bulk-group filter: when the user clicks a bulk chip on the task
+// view, we land here with ?bulk=BLK-XXXX. The filter is applied for
+// every viewer regardless of the mine/all toggle, so anyone can see
+// the full group via a shared link. Validate the format to avoid
+// SQL surprises.
+$bulkFilterValue = '';
+$bulkFilterSql   = '';
+if (isset($_GET['bulk']) && preg_match('/^[A-Z0-9\-]{1,20}$/', (string) $_GET['bulk'])) {
+    $bulkFilterValue = (string) $_GET['bulk'];
+    $bulkFilterSql   = " AND t.bulk_group_id = ?";
+}
+
 $tasksStmt = db()->prepare("SELECT
         t.*,
         s.name AS status_name, s.colour_token AS status_colour, s.category AS status_category, s.is_terminal,
@@ -109,8 +121,11 @@ $tasksStmt = db()->prepare("SELECT
     LEFT JOIN task pt ON pt.id = t.parent_id
     WHERE t.project_id = ? AND t.is_active = 1
     $mineFilter
+    $bulkFilterSql
     ORDER BY t.status_id ASC, t.board_order ASC, t.id ASC");
-$tasksStmt->execute($showAll ? [$projectId] : [$projectId, $viewerId, $viewerId]);
+$bind = $showAll ? [$projectId] : [$projectId, $viewerId, $viewerId];
+if ($bulkFilterValue !== '') $bind[] = $bulkFilterValue;
+$tasksStmt->execute($bind);
 $tasks = $tasksStmt->fetchAll();
 
 $tasksByStatus = [];
@@ -244,6 +259,12 @@ render_page_header('Project · ' . $project['name'], [
                 <span class="badge text-bg-light border ms-2"><i class="bi bi-people me-1"></i>All tasks</span>
             <?php else: ?>
                 <span class="badge text-bg-primary-subtle text-primary border ms-2"><i class="bi bi-person me-1"></i>My tasks only</span>
+            <?php endif; ?>
+            <?php if ($bulkFilterValue !== ''): ?>
+                <span class="badge text-bg-info-subtle text-info border ms-2">
+                    <i class="bi bi-collection me-1"></i>Bulk group: <?= esc($bulkFilterValue) ?>
+                </span>
+                <a class="small ms-1" href="?id=<?= (int) $project['id'] ?><?= $showAll ? '&all=1' : '' ?>" title="Clear the bulk-group filter">clear ×</a>
             <?php endif; ?>
         </span>
         <div class="d-flex align-items-center gap-3">

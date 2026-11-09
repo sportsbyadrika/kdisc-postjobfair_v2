@@ -323,6 +323,13 @@ function task_tracker_bootstrap(): void
     task_tracker__add_column_if_missing($db, 'task', 'meeting_decision_id',
         "ALTER TABLE task ADD COLUMN meeting_decision_id INT NULL AFTER progress_pct, ADD KEY idx_meeting_decision (meeting_decision_id)");
 
+    // Bulk-group marker — when the task creator ticks the "Bulk" seats
+    // picker, one task is spawned per picked seat with the same
+    // content, and every spawned row carries this short id so the
+    // creator can later filter the Kanban to just the group.
+    task_tracker__add_column_if_missing($db, 'task', 'bulk_group_id',
+        "ALTER TABLE task ADD COLUMN bulk_group_id VARCHAR(20) NULL AFTER meeting_decision_id, ADD KEY idx_bulk_group (bulk_group_id)");
+
     // Direct-user assignment. Normally task_assignment points at a seat,
     // but meeting decision points can land on an internal user who
     // doesn't hold any seat yet (brand-new user, or someone outside the
