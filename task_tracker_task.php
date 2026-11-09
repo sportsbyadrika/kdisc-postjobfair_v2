@@ -282,6 +282,16 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
         $sid = (int) $s;
         if ($sid > 0 && $sid !== $primarySeat && !in_array($sid, $secondarySeat, true)) $secondarySeat[] = $sid;
     }
+    // Bulk-create seats — only honoured on create (new task), not on
+    // edit. Each picked seat spawns its own task with the single-task
+    // form values as the shared template.
+    $bulkSeats = [];
+    if ($existing === null) {
+        foreach ((array) ($_POST['bulk_seat_ids'] ?? []) as $s) {
+            $sid = (int) $s;
+            if ($sid > 0 && !in_array($sid, $bulkSeats, true)) $bulkSeats[] = $sid;
+        }
+    }
 
     $errors = [];
     if ($title === '') $errors[] = 'Title is required.';
@@ -320,69 +330,108 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
 
     try {
         if ($existing === null) {
+            // How many task_number slots to allocate? 1 in single-task
+            // mode, N = count(bulkSeats) in bulk mode.
+            $spawnCount = $bulkSeats === [] ? 1 : count($bulkSeats);
             $lock = $db->prepare('SELECT next_task_number FROM project WHERE id = ? FOR UPDATE');
             $lock->execute([$projectId]);
             $nextRow = $lock->fetch();
-            $taskNumber = (int) ($nextRow['next_task_number'] ?? 1);
+            $taskNumberStart = (int) ($nextRow['next_task_number'] ?? 1);
 
             $orderStmt = $db->prepare('SELECT COALESCE(MAX(board_order), 0) AS m FROM task WHERE project_id = ? AND status_id = ?');
             $orderStmt->execute([$projectId, $statusIdIn]);
-            $newOrder = ((float) ($orderStmt->fetch()['m'] ?? 0)) + 1000;
+            $baseOrder = (float) ($orderStmt->fetch()['m'] ?? 0);
 
             $ins = $db->prepare('INSERT INTO task
                 (project_id, task_number, parent_id, title, description, target, status_id, priority,
                  planned_start, planned_end, board_order, is_active,
                  created_at, updated_at, created_by, updated_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), ?, ?)');
-            $ins->execute([
-                $projectId, $taskNumber, $parentForInsert,
-                $title,
-                $description === '' ? null : $description,
-                $target === '' ? null : $target,
-                $statusIdIn, $priority,
-                $plannedStart === '' ? null : $plannedStart,
-                $plannedEnd === '' ? null : $plannedEnd,
-                $newOrder,
-                $viewerId, $viewerId,
-            ]);
-            $newTaskId = $db->lastInsertId();
-
-            // Financial + progress fields — persisted via a follow-up
-            // UPDATE keyed by newTaskId so the columns are conditional
-            // (some installs may not have run the ALTER yet).
-            $extra = task_tracker__financial_sets($shareAmount, $projectedAmount, $targetExp, $actualExp, $progressPct, $hasFin, $hasProgress);
-            if ($extra['sets'] !== []) {
-                $extra['params'][] = $newTaskId;
-                $db->prepare('UPDATE task SET ' . implode(', ', $extra['sets']) . ' WHERE id = ?')
-                   ->execute($extra['params']);
-            }
-
-            $db->prepare('UPDATE project SET next_task_number = next_task_number + 1, updated_at = NOW(), updated_by = ? WHERE id = ?')
-               ->execute([$viewerId, $projectId]);
-
             $assignIns = $db->prepare('INSERT INTO task_assignment (task_id, seat_id, role, created_at, created_by) VALUES (?, ?, ?, NOW(), ?)');
-            if ($primarySeat > 0) {
-                $assignIns->execute([$newTaskId, $primarySeat, 'primary', $viewerId]);
-            }
-            foreach ($secondarySeat as $sid) {
-                try {
-                    $assignIns->execute([$newTaskId, $sid, 'secondary', $viewerId]);
-                } catch (Throwable $e) { /* dupes ignored */ }
+            $hist      = $db->prepare('INSERT INTO task_history (task_id, field_name, old_value, new_value, changed_by, changed_at) VALUES (?, ?, NULL, ?, ?, NOW())');
+            $hasBulkCol = task_tracker_column_exists('task', 'bulk_group_id');
+
+            // Shared short group id across every spawned task (bulk
+            // mode only). "BLK-" prefix makes it easy to spot in logs
+            // and search results.
+            $bulkGroupId = ($bulkSeats !== []) ? ('BLK-' . strtoupper(bin2hex(random_bytes(4)))) : null;
+
+            // Rows to spawn: either one (single mode, Primary = picked
+            // Primary) or N (bulk mode, each row's Primary = one bulk
+            // seat; the form's Primary is appended as a shared
+            // Secondary on every row).
+            $rowsToSpawn = ($bulkSeats === [])
+                ? [ ['primary' => $primarySeat, 'secondaries' => $secondarySeat] ]
+                : array_map(static function (int $bs) use ($primarySeat, $secondarySeat): array {
+                    $secs = $secondarySeat;
+                    if ($primarySeat > 0 && $primarySeat !== $bs && !in_array($primarySeat, $secs, true)) $secs[] = $primarySeat;
+                    return ['primary' => $bs, 'secondaries' => $secs];
+                }, $bulkSeats);
+
+            $createdKeys = [];
+            $i = 0;
+            foreach ($rowsToSpawn as $spawn) {
+                $tn   = $taskNumberStart + $i;
+                $ord  = $baseOrder + 1000 * ($i + 1);
+                $ins->execute([
+                    $projectId, $tn, $parentForInsert,
+                    $title,
+                    $description === '' ? null : $description,
+                    $target === '' ? null : $target,
+                    $statusIdIn, $priority,
+                    $plannedStart === '' ? null : $plannedStart,
+                    $plannedEnd   === '' ? null : $plannedEnd,
+                    $ord,
+                    $viewerId, $viewerId,
+                ]);
+                $newTaskId = (int) $db->lastInsertId();
+                $createdKeys[] = $project['code'] . '-' . $tn;
+
+                // Financial / progress — mirror into each spawned row.
+                $extra = task_tracker__financial_sets($shareAmount, $projectedAmount, $targetExp, $actualExp, $progressPct, $hasFin, $hasProgress);
+                if ($extra['sets'] !== []) {
+                    $extra['params'][] = $newTaskId;
+                    $db->prepare('UPDATE task SET ' . implode(', ', $extra['sets']) . ' WHERE id = ?')
+                       ->execute($extra['params']);
+                }
+                // Bulk-group tag.
+                if ($hasBulkCol && $bulkGroupId !== null) {
+                    $db->prepare('UPDATE task SET bulk_group_id = ? WHERE id = ?')->execute([$bulkGroupId, $newTaskId]);
+                }
+
+                // Assignments: primary + secondaries (dupes silently skipped).
+                if ((int) $spawn['primary'] > 0) {
+                    try { $assignIns->execute([$newTaskId, (int) $spawn['primary'], 'primary', $viewerId]); } catch (Throwable $e) {}
+                }
+                foreach ((array) $spawn['secondaries'] as $sid) {
+                    try { $assignIns->execute([$newTaskId, (int) $sid, 'secondary', $viewerId]); } catch (Throwable $e) {}
+                }
+
+                // History rows.
+                $hist->execute([$newTaskId, 'created', 'Task ' . $project['code'] . '-' . $tn . ' created' . ($bulkGroupId !== null ? ' (bulk group ' . $bulkGroupId . ', ' . ($i + 1) . ' of ' . count($rowsToSpawn) . ')' : ''), $viewerId]);
+                if ((int) $spawn['primary'] > 0) {
+                    $hist->execute([$newTaskId, 'primary_seat', task_tracker__seat_name($seats, (int) $spawn['primary']), $viewerId]);
+                }
+                if ($spawn['secondaries'] !== []) {
+                    $names = [];
+                    foreach ($spawn['secondaries'] as $sid) $names[] = task_tracker__seat_name($seats, (int) $sid);
+                    $hist->execute([$newTaskId, 'secondary_seats', implode(', ', $names), $viewerId]);
+                }
+                $i++;
             }
 
-            $hist = $db->prepare('INSERT INTO task_history (task_id, field_name, old_value, new_value, changed_by, changed_at) VALUES (?, ?, NULL, ?, ?, NOW())');
-            $hist->execute([$newTaskId, 'created', 'Task ' . $project['code'] . '-' . $taskNumber . ' created', $viewerId]);
-            if ($primarySeat > 0) {
-                $hist->execute([$newTaskId, 'primary_seat', task_tracker__seat_name($seats, $primarySeat), $viewerId]);
-            }
-            if ($secondarySeat !== []) {
-                $names = [];
-                foreach ($secondarySeat as $sid) $names[] = task_tracker__seat_name($seats, $sid);
-                $hist->execute([$newTaskId, 'secondary_seats', implode(', ', $names), $viewerId]);
-            }
+            // Advance the project's next_task_number by the full count.
+            $db->prepare('UPDATE project SET next_task_number = next_task_number + ?, updated_at = NOW(), updated_by = ? WHERE id = ?')
+               ->execute([$spawnCount, $viewerId, $projectId]);
 
             $db->query('COMMIT');
-            $flashAndReturn('Task ' . $project['code'] . '-' . $taskNumber . ' created.', 'success', $projectId, 0);
+            if ($bulkGroupId !== null) {
+                $flashAndReturn(
+                    'Bulk created ' . $spawnCount . ' tasks (' . $createdKeys[0] . ' – ' . end($createdKeys) . ') in group <strong>' . htmlspecialchars($bulkGroupId, ENT_QUOTES) . '</strong>. Filter the board with <code>?bulk=' . $bulkGroupId . '</code>.',
+                    'success', $projectId, 0
+                );
+            }
+            $flashAndReturn('Task ' . $project['code'] . '-' . $taskNumberStart . ' created.', 'success', $projectId, 0);
         } else {
             $changes = [];
             $mapping = [
@@ -775,6 +824,50 @@ render_page_header($pageTitle, [
                 <div class="small text-muted mt-1">Add any number of seats that share responsibility. The primary seat is excluded automatically.</div>
             </div>
         </div>
+
+        <?php if (!$editing): ?>
+        <h6 class="text-uppercase small text-muted mb-1 mt-4"><i class="bi bi-collection me-1"></i>Bulk create · one task per picked seat</h6>
+        <div class="small text-muted mb-3">
+            Pick multiple seats to spawn a task per seat (same title, description, dates, financials).
+            Each spawned task gets that seat as its <strong>Primary</strong>; the Primary you picked above
+            becomes a shared <strong>Secondary</strong> on every spawned task. All spawned tasks share a
+            bulk-group reference so you can find them together later.
+        </div>
+        <div class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label" for="bulkDivision">Division</label>
+                <select class="form-select" id="bulkDivision">
+                    <option value="">— Select division —</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label" for="bulkSection">Section</label>
+                <select class="form-select" id="bulkSection">
+                    <option value="">— Select section —</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label" for="bulkSubSection">Sub Section <span class="small text-muted">(optional)</span></label>
+                <select class="form-select" id="bulkSubSection">
+                    <option value="">— All (including direct seats) —</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label" for="bulkSeatSel">Seat</label>
+                <div class="input-group">
+                    <select class="form-select" id="bulkSeatSel">
+                        <option value="">— Select seat —</option>
+                    </select>
+                    <button class="btn btn-outline-primary" type="button" id="addBulkBtn"><i class="bi bi-plus-lg"></i></button>
+                </div>
+            </div>
+            <div class="col-12">
+                <div id="bulkChips" class="d-flex flex-wrap gap-2"></div>
+                <div id="bulkHiddenWrap"></div>
+                <div id="bulkSummary" class="small text-muted mt-1" style="display:none;"></div>
+            </div>
+        </div>
+        <?php endif; ?>
     </div>
 
     <div class="card-footer d-flex justify-content-between align-items-center">
@@ -987,6 +1080,92 @@ window.__taskTrackerPicker = {
         rebuildSecondaryChips();
         secSeat.value = '';
     });
+
+    // --- Bulk-create picker (new-task only) --------------------------
+    // Same cascade pattern as Secondary. When any bulk seats are
+    // chosen, the Create-task button label switches to "Create N tasks"
+    // and the server spawns one task per picked seat, each with that
+    // seat as primary + the form's Primary as a shared Secondary.
+    const bulkDiv    = document.getElementById('bulkDivision');
+    const bulkSec    = document.getElementById('bulkSection');
+    const bulkSubSec = document.getElementById('bulkSubSection');
+    const bulkSeat   = document.getElementById('bulkSeatSel');
+    const bulkChips  = document.getElementById('bulkChips');
+    const bulkWrap   = document.getElementById('bulkHiddenWrap');
+    const bulkBtn    = document.getElementById('addBulkBtn');
+    const bulkSum    = document.getElementById('bulkSummary');
+    const submitBtn  = document.querySelector('.card-footer button[type="submit"]');
+    const submitDefault = submitBtn ? submitBtn.innerHTML : '';
+    let bulkIds = [];
+
+    if (bulkDiv && bulkSec && bulkSubSec && bulkSeat) {
+        fillDivisions(bulkDiv, '');
+        fillSections(bulkSec, '', '');
+        fillSubSections(bulkSubSec, '', '');
+        fillSeats(bulkSeat, '', '', '');
+
+        bulkDiv.addEventListener('change', () => {
+            fillSections(bulkSec, bulkDiv.value, '');
+            fillSubSections(bulkSubSec, '', '');
+            fillSeats(bulkSeat, '', '', '');
+        });
+        bulkSec.addEventListener('change', () => {
+            fillSubSections(bulkSubSec, bulkSec.value, '');
+            fillSeats(bulkSeat, bulkSec.value, '', '', bulkIds.slice());
+        });
+        bulkSubSec.addEventListener('change', () => {
+            fillSeats(bulkSeat, bulkSec.value, bulkSubSec.value, '', bulkIds.slice());
+        });
+
+        const rebuildBulkChips = () => {
+            bulkChips.innerHTML = '';
+            bulkWrap.innerHTML = '';
+            bulkIds.forEach(id => {
+                const s = seatById(id);
+                if (!s) return;
+                const chip = document.createElement('span');
+                chip.className = 'badge text-bg-info-subtle text-info border d-inline-flex align-items-center gap-2 p-2';
+                chip.innerHTML = '<i class="bi bi-collection"></i><span></span>' +
+                    '<button type="button" class="btn-close btn-close-sm" aria-label="Remove"></button>';
+                chip.querySelector('span').textContent = seatOptionLabel(s);
+                chip.querySelector('button').addEventListener('click', () => {
+                    bulkIds = bulkIds.filter(x => Number(x) !== Number(id));
+                    rebuildBulkChips();
+                });
+                bulkChips.appendChild(chip);
+
+                const hid = document.createElement('input');
+                hid.type = 'hidden'; hid.name = 'bulk_seat_ids[]'; hid.value = String(id);
+                bulkWrap.appendChild(hid);
+            });
+            if (bulkSec.value) fillSeats(bulkSeat, bulkSec.value, bulkSubSec.value, '', bulkIds.slice());
+
+            // Summary line + button label switch.
+            if (bulkIds.length > 0 && bulkSum) {
+                bulkSum.style.display = '';
+                bulkSum.innerHTML = '<i class="bi bi-info-circle text-info me-1"></i>Will create <strong>' + bulkIds.length + '</strong> task' + (bulkIds.length === 1 ? '' : 's') + ' — one per picked seat. The single-task form fields above become the shared template.';
+            } else if (bulkSum) {
+                bulkSum.style.display = 'none'; bulkSum.innerHTML = '';
+            }
+            if (submitBtn) {
+                if (bulkIds.length > 0) {
+                    submitBtn.innerHTML = '<i class="bi bi-collection me-1"></i>Create ' + bulkIds.length + ' tasks';
+                } else {
+                    submitBtn.innerHTML = submitDefault;
+                }
+            }
+        };
+        rebuildBulkChips();
+
+        bulkBtn.addEventListener('click', () => {
+            const v = Number(bulkSeat.value || 0);
+            if (v <= 0) return;
+            if (bulkIds.some(id => Number(id) === v)) return;
+            bulkIds.push(v);
+            rebuildBulkChips();
+            bulkSeat.value = '';
+        });
+    }
 })();
 </script>
 
