@@ -87,12 +87,47 @@ if ($seats !== [] || $hasUserAssignCol) {
     $rows = $stmt->fetchAll();
 }
 
-$byStatus = [];
+// Group by project — the primary UX ask ("list of task in a card based
+// table grouped by projects"). byStatus still gets built for the
+// consolidated counts.
+$today    = date('Y-m-d');
+$dueSoon  = date('Y-m-d', strtotime('+3 days'));
+
+$byProject = []; // project_id => ['code','name','rows'=>[]]
+$countTotal = 0; $countDone = 0; $countOverdue = 0;
 foreach ($rows as $r) {
-    $sid = (int) $r['status_id'];
-    if (!isset($byStatus[$sid])) $byStatus[$sid] = ['name' => (string) $r['status_name'], 'tone' => (string) $r['status_colour'], 'is_terminal' => (int) $r['is_terminal'], 'rows' => []];
-    $byStatus[$sid]['rows'][] = $r;
+    $pid = (int) $r['project_id'];
+    if (!isset($byProject[$pid])) {
+        $byProject[$pid] = [
+            'id'   => $pid,
+            'code' => (string) $r['project_code'],
+            'name' => (string) $r['project_name'],
+            'rows' => [],
+            'done' => 0,
+            'overdue' => 0,
+        ];
+    }
+    $byProject[$pid]['rows'][] = $r;
+
+    $countTotal++;
+    $pe   = substr((string) ($r['planned_end'] ?? ''), 0, 10);
+    $term = (int) ($r['is_terminal'] ?? 0) === 1;
+    if ($term) { $countDone++; $byProject[$pid]['done']++; continue; }
+    if ($pe !== '' && $pe < $today) { $countOverdue++; $byProject[$pid]['overdue']++; }
 }
+$countProjects = count($byProject);
+
+// Status chip tone keyed on due date. Terminal (Done) tasks are grey;
+// overdue → red; due within 3 days → amber; else green. Falls back to
+// grey when no planned_end is set.
+$dueChip = static function (?string $plannedEnd, bool $terminal) use ($today, $dueSoon): array {
+    if ($terminal) return ['tone' => 'success', 'label' => 'Completed'];
+    $pe = substr((string) ($plannedEnd ?? ''), 0, 10);
+    if ($pe === '')           return ['tone' => 'secondary', 'label' => 'No due date'];
+    if ($pe <  $today)        return ['tone' => 'danger',    'label' => 'Overdue · ' . date('d/m/Y', strtotime($pe))];
+    if ($pe <= $dueSoon)      return ['tone' => 'warning',   'label' => 'Due ' . date('d/m/Y', strtotime($pe))];
+    return                            ['tone' => 'success',  'label' => 'Due ' . date('d/m/Y', strtotime($pe))];
+};
 
 $priorityTones  = ['lowest' => 'secondary', 'low' => 'info', 'medium' => 'primary', 'high' => 'warning', 'highest' => 'danger'];
 
@@ -104,8 +139,56 @@ render_page_header('My Work', [
 ]);
 ?>
 
+<!-- Consolidated counts — projects / tasks / completed / overdue. -->
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-primary h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100">
+                    <p class="stat-label">Projects assigned</p>
+                    <p class="stat-value"><?= number_format($countProjects) ?></p>
+                </div>
+                <span class="stat-icon-box tone-primary"><i class="bi bi-briefcase"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-info h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100">
+                    <p class="stat-label">Total tasks</p>
+                    <p class="stat-value"><?= number_format($countTotal) ?></p>
+                </div>
+                <span class="stat-icon-box tone-info"><i class="bi bi-list-check"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-success h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100">
+                    <p class="stat-label">Completed</p>
+                    <p class="stat-value"><?= number_format($countDone) ?></p>
+                </div>
+                <span class="stat-icon-box tone-success"><i class="bi bi-check2-circle"></i></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-stat accent-danger h-100">
+            <div class="card-body d-flex align-items-start justify-content-between gap-2">
+                <div class="w-100">
+                    <p class="stat-label">Overdue</p>
+                    <p class="stat-value"><?= number_format($countOverdue) ?></p>
+                </div>
+                <span class="stat-icon-box tone-danger"><i class="bi bi-exclamation-triangle"></i></span>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="card mb-3">
-    <div class="card-body d-flex justify-content-between align-items-center">
+    <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
             <div class="text-uppercase small text-muted">Your scope</div>
             <div>
@@ -130,27 +213,38 @@ render_page_header('My Work', [
 <?php elseif ($rows === []): ?>
     <div class="empty-state"><i class="bi bi-inbox"></i>No tasks are assigned to you yet.</div>
 <?php else: ?>
-    <div class="row g-3">
-        <?php foreach ($byStatus as $sid => $bucket):
-            $tone = $bucket['tone']; if ($tone === 'neutral') $tone = 'secondary';
-        ?>
-            <div class="col-md-6 col-xl-4">
-                <div class="card h-100">
-                    <div class="card-header d-flex justify-content-between align-items-center text-bg-<?= esc($tone) ?>">
-                        <span class="fw-semibold">
-                            <?php if ($bucket['is_terminal'] === 1): ?><i class="bi bi-check2-square me-1"></i><?php endif; ?>
-                            <?= esc($bucket['name']) ?>
-                        </span>
-                        <span class="badge text-bg-light border"><?= count($bucket['rows']) ?></span>
-                    </div>
-                    <div class="card-body p-2" style="max-height:60vh;overflow-y:auto;">
-                        <?php foreach ($bucket['rows'] as $t):
-                            $priTone = $priorityTones[(string) $t['priority']] ?? 'secondary';
-                            $pe = substr((string) ($t['planned_end'] ?? ''), 0, 10);
-                            $today = date('Y-m-d');
-                            $overdue = $pe !== '' && $pe < $today && $bucket['is_terminal'] !== 1;
-                        ?>
-                            <a href="/task_tracker_task_view.php?id=<?= (int) $t['id'] ?>" class="d-block text-decoration-none text-body p-2 rounded mb-2 border">
+    <?php foreach ($byProject as $proj):
+        $done     = (int) $proj['done'];
+        $overdue  = (int) $proj['overdue'];
+        $total    = count($proj['rows']);
+    ?>
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span>
+                    <i class="bi bi-briefcase text-primary me-1"></i>
+                    <a href="/task_tracker_project_view.php?id=<?= (int) $proj['id'] ?>" class="text-decoration-none text-body">
+                        <span class="badge text-bg-light border font-monospace me-1"><?= esc((string) $proj['code']) ?></span>
+                        <strong><?= esc((string) $proj['name']) ?></strong>
+                    </a>
+                </span>
+                <div class="d-flex gap-1">
+                    <span class="badge text-bg-light border"><?= $total ?> task<?= $total === 1 ? '' : 's' ?></span>
+                    <?php if ($done    > 0): ?><span class="badge text-bg-success-subtle text-success border"><?= $done ?> done</span><?php endif; ?>
+                    <?php if ($overdue > 0): ?><span class="badge text-bg-danger-subtle text-danger border"><?= $overdue ?> overdue</span><?php endif; ?>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-2 my-work-grid">
+                    <?php foreach ($proj['rows'] as $t):
+                        $priTone  = $priorityTones[(string) $t['priority']] ?? 'secondary';
+                        $term     = (int) ($t['is_terminal'] ?? 0) === 1;
+                        $chip     = $dueChip($t['planned_end'] ?? null, $term);
+                        $statusT  = (string) ($t['status_colour'] ?? 'secondary'); if ($statusT === 'neutral') $statusT = 'secondary';
+                        $pe       = substr((string) ($t['planned_end'] ?? ''), 0, 10);
+                        $isOverdue= !$term && $pe !== '' && $pe < $today;
+                    ?>
+                        <div class="col-12 col-md-6 col-xl-4">
+                            <a href="/task_tracker_task_view.php?id=<?= (int) $t['id'] ?>" class="my-work-card d-block text-decoration-none text-body border rounded p-2 h-100 <?= $isOverdue ? 'my-work-overdue' : '' ?>">
                                 <div class="d-flex justify-content-between align-items-start gap-2">
                                     <span class="badge text-bg-light border font-monospace small"><?= esc((string) $t['project_code']) ?>-<?= (int) $t['task_number'] ?></span>
                                     <div class="d-flex gap-1">
@@ -162,23 +256,25 @@ render_page_header('My Work', [
                                         <span class="badge text-bg-<?= esc($priTone) ?>"><?= esc(ucfirst((string) $t['priority'])) ?></span>
                                     </div>
                                 </div>
-                                <div class="fw-semibold mt-1"><?= esc((string) $t['title']) ?></div>
-                                <div class="small text-muted mt-1">
-                                    <i class="bi bi-briefcase me-1"></i><?= esc((string) $t['project_name']) ?>
-                                    <?php if ($pe !== ''): ?>
-                                        <span class="ms-2 <?= $overdue ? 'text-danger' : '' ?>">
-                                            <i class="bi bi-calendar-event me-1"></i>due <?= esc(date('d/m/Y', strtotime($pe))) ?>
-                                            <?php if ($overdue): ?> <span class="badge text-bg-danger">Overdue</span><?php endif; ?>
-                                        </span>
-                                    <?php endif; ?>
+                                <div class="fw-semibold mt-2"><?= esc((string) $t['title']) ?></div>
+                                <div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-1">
+                                    <span class="badge text-bg-<?= esc($statusT) ?>"><?= esc((string) ($t['status_name'] ?? '—')) ?></span>
+                                    <span class="badge text-bg-<?= esc($chip['tone']) ?>"><?= esc($chip['label']) ?></span>
                                 </div>
                             </a>
-                        <?php endforeach; ?>
-                    </div>
+                        </div>
+                    <?php endforeach; ?>
                 </div>
             </div>
-        <?php endforeach; ?>
-    </div>
+        </div>
+    <?php endforeach; ?>
 <?php endif; ?>
+
+<style>
+.my-work-card           { transition: box-shadow .15s, border-color .15s; }
+.my-work-card:hover     { box-shadow: 0 2px 8px rgba(30,42,66,.08); border-color: var(--pjf-primary); }
+.my-work-card.my-work-overdue        { background: #fef2f2; border-color: #fecaca !important; }
+.my-work-card.my-work-overdue:hover  { border-color: #dc2626 !important; }
+</style>
 
 <?php render_footer(); ?>

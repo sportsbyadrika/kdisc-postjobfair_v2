@@ -292,8 +292,14 @@ render_page_header('Project · ' . $project['name'], [
                                 'photo_path' => (string) ($t['primary_officer_photo'] ?? ''),
                                 'avatar_colour' => $officerColour,
                             ];
+                            // Overdue highlight — planned_end is past and the
+                            // status isn't terminal. Terminal columns never
+                            // get the warning tint (the work is done).
+                            $peDate   = substr((string) ($t['planned_end'] ?? ''), 0, 10);
+                            $today    = date('Y-m-d');
+                            $isOverdue = ($peDate !== '' && $peDate < $today && (int) ($s['is_terminal'] ?? 0) === 0);
                         ?>
-                            <div class="tt-card" data-task-id="<?= (int) $t['id'] ?>" data-status-id="<?= $sid ?>" data-open-url="/task_tracker_task_view.php?id=<?= (int) $t['id'] ?>" title="Open task">
+                            <div class="tt-card <?= $isOverdue ? 'tt-overdue' : '' ?>" data-task-id="<?= (int) $t['id'] ?>" data-status-id="<?= $sid ?>" data-open-url="/task_tracker_task_view.php?id=<?= (int) $t['id'] ?>" title="<?= $isOverdue ? 'Overdue — planned end ' . esc(date('d/m/Y', strtotime($peDate))) . ' has passed. Click to open.' : 'Open task' ?>">
                                 <div class="d-flex justify-content-between align-items-start gap-2">
                                     <span class="badge text-bg-light border font-monospace small">
                                         <?= esc((string) $project['code']) ?>-<?= (int) $t['task_number'] ?>
@@ -364,8 +370,13 @@ render_page_header('Project · ' . $project['name'], [
 </div>
 
 <style>
+/* Auto-fit kanban: each column flexes between a usable minimum
+   (280px) and whatever share of the viewport is left after the
+   others are laid out. When the sum of minimums exceeds the
+   viewport, overflow-x kicks in and the operator scrolls
+   sideways to reach the hidden columns (same as a spreadsheet). */
 .tt-board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; }
-.tt-column { flex: 0 0 300px; background: #f4f6fa; border-radius: 10px; display: flex; flex-direction: column; max-height: 76vh; transition: background .15s, box-shadow .15s; }
+.tt-column { flex: 1 1 0; min-width: 280px; background: #f4f6fa; border-radius: 10px; display: flex; flex-direction: column; max-height: calc(100vh - 260px); min-height: 360px; transition: background .15s, box-shadow .15s; }
 .tt-column-header { padding: 10px 12px; border-radius: 10px 10px 0 0; }
 .tt-column-body { padding: 10px; flex: 1; overflow-y: auto; min-height: 60px; display: flex; flex-direction: column; gap: 8px; border-radius: 0 0 10px 10px; transition: background .15s, outline .15s; }
 .tt-card { position: relative; background: #fff; border: 1px solid #e3e6ee; border-radius: 8px; padding: 10px 12px; cursor: grab; box-shadow: 0 1px 2px rgba(30,42,66,.04); transition: box-shadow .15s ease, transform .05s ease; user-select: none; touch-action: none; }
@@ -386,6 +397,12 @@ render_page_header('Project · ' . $project['name'], [
 .tt-ghost > * { visibility: hidden; }
 .tt-drag  { transform: rotate(1.5deg) scale(1.02); box-shadow: 0 8px 20px rgba(30,42,66,.18) !important; border-color: #0d6efd !important; cursor: grabbing !important; }
 .tt-card.stretched-link { text-decoration: none; color: inherit; }
+
+/* Overdue tint — planned_end has passed on a non-terminal task.
+   Soft red fill + darker left bar so the card still reads against
+   the drag highlights and the terminal-column backgrounds. */
+.tt-card.tt-overdue { background: #fef2f2; border-color: #fecaca; box-shadow: inset 4px 0 0 0 #dc2626; }
+.tt-card.tt-overdue:hover { box-shadow: inset 4px 0 0 0 #dc2626, 0 2px 6px rgba(220,38,38,.18); }
 
 /* ---------- Toasts (success / warn / fail) ---------- */
 .tt-toast-wrap { position: fixed; top: 72px; right: 20px; z-index: 1080; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
