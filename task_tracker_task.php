@@ -276,21 +276,26 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
     $hasFin      = task_tracker_column_exists('task', 'share_amount');
     $hasProgress = task_tracker_column_exists('task', 'progress_pct');
     $primarySeat   = (int) ($_POST['primary_seat_id'] ?? 0);
-    $secondaryRaw  = (array) ($_POST['secondary_seat_ids'] ?? []);
-    $secondarySeat = [];
-    foreach ($secondaryRaw as $s) {
+    // Merged "Assigned seats" input. The toggle flag (new-task only)
+    // decides whether the picks are Secondaries on this one task
+    // (shared card) or each spawn their own task with that seat as
+    // Primary (bulk mode).
+    $assignedRaw   = (array) ($_POST['assigned_seat_ids'] ?? []);
+    $bulkMode      = $existing === null && !empty($_POST['assigned_mode_bulk']);
+    $assignedSeats = [];
+    foreach ($assignedRaw as $s) {
         $sid = (int) $s;
-        if ($sid > 0 && $sid !== $primarySeat && !in_array($sid, $secondarySeat, true)) $secondarySeat[] = $sid;
+        if ($sid > 0 && !in_array($sid, $assignedSeats, true)) $assignedSeats[] = $sid;
     }
-    // Bulk-create seats — only honoured on create (new task), not on
-    // edit. Each picked seat spawns its own task with the single-task
-    // form values as the shared template.
-    $bulkSeats = [];
-    if ($existing === null) {
-        foreach ((array) ($_POST['bulk_seat_ids'] ?? []) as $s) {
-            $sid = (int) $s;
-            if ($sid > 0 && !in_array($sid, $bulkSeats, true)) $bulkSeats[] = $sid;
-        }
+    // Shared mode: the picks are Secondaries on the single task; drop
+    // any pick that equals the Primary. Bulk mode: keep all picks —
+    // each will be a Primary of its own row.
+    if (!$bulkMode) {
+        $secondarySeat = array_values(array_filter($assignedSeats, static fn(int $sid) => $sid !== $primarySeat));
+        $bulkSeats     = [];
+    } else {
+        $secondarySeat = [];
+        $bulkSeats     = $assignedSeats;
     }
 
     $errors = [];
@@ -789,85 +794,62 @@ render_page_header($pageTitle, [
             </div>
         </div>
 
-        <h6 class="text-uppercase small text-muted mb-3 mt-4"><i class="bi bi-people me-1"></i>Secondary responsibility</h6>
+        <!-- Merged Assigned-seats panel.
+             Default (toggle off): picks are Secondaries on this one task
+             — one card, many responsibles. Toggle on (new-task only):
+             picks each become the Primary of their own spawned task,
+             and the form's Primary above is appended as a shared
+             Secondary on every spawned task; all spawned rows share a
+             BLK- group id. Flipping the toggle keeps the pills; only
+             their interpretation changes. -->
+        <h6 class="text-uppercase small text-muted mb-3 mt-4 d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span><i class="bi bi-people me-1"></i>Assigned seats</span>
+            <?php if (!$editing): ?>
+                <span class="d-flex align-items-center gap-2">
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" role="switch" id="assignedBulkToggle" name="assigned_mode_bulk" value="1">
+                        <label class="form-check-label small text-reset" for="assignedBulkToggle">One task per picked seat</label>
+                    </div>
+                </span>
+            <?php endif; ?>
+        </h6>
+        <div class="small text-muted mb-3" id="assignedModeHint">
+            Picks become <strong>Secondaries</strong> on this task — one card shared with everyone listed. The Primary seat is excluded automatically.
+        </div>
         <div class="row g-3">
             <div class="col-md-3">
-                <label class="form-label" for="secondaryDivision">Division</label>
-                <select class="form-select" id="secondaryDivision">
+                <label class="form-label" for="assignedDivision">Division</label>
+                <select class="form-select" id="assignedDivision">
                     <option value="">— Select division —</option>
                 </select>
             </div>
             <div class="col-md-3">
-                <label class="form-label" for="secondarySection">Section</label>
-                <select class="form-select" id="secondarySection">
+                <label class="form-label" for="assignedSection">Section</label>
+                <select class="form-select" id="assignedSection">
                     <option value="">— Select section —</option>
                 </select>
             </div>
             <div class="col-md-3">
-                <label class="form-label" for="secondarySubSection">Sub Section <span class="small text-muted">(optional)</span></label>
-                <select class="form-select" id="secondarySubSection">
+                <label class="form-label" for="assignedSubSection">Sub Section <span class="small text-muted">(optional)</span></label>
+                <select class="form-select" id="assignedSubSection">
                     <option value="">— All (including direct seats) —</option>
                 </select>
             </div>
             <div class="col-md-3">
-                <label class="form-label" for="secondarySeatSel">Seat</label>
+                <label class="form-label" for="assignedSeatSel">Seat</label>
                 <div class="input-group">
-                    <select class="form-select" id="secondarySeatSel">
+                    <select class="form-select" id="assignedSeatSel">
                         <option value="">— Select seat —</option>
                     </select>
-                    <button class="btn btn-outline-primary" type="button" id="addSecondaryBtn"><i class="bi bi-plus-lg"></i></button>
+                    <button class="btn btn-outline-primary" type="button" id="addAssignedBtn"><i class="bi bi-plus-lg"></i></button>
                 </div>
             </div>
             <div class="col-12">
-                <div id="secondaryChips" class="d-flex flex-wrap gap-2"></div>
-                <div id="secondaryHiddenWrap"></div>
-                <div class="small text-muted mt-1">Add any number of seats that share responsibility. The primary seat is excluded automatically.</div>
+                <div id="assignedChips" class="d-flex flex-wrap gap-2"></div>
+                <div id="assignedHiddenWrap"></div>
+                <div id="assignedSummary" class="small text-muted mt-1" style="display:none;"></div>
             </div>
         </div>
-
-        <?php if (!$editing): ?>
-        <h6 class="text-uppercase small text-muted mb-1 mt-4"><i class="bi bi-collection me-1"></i>Bulk create · one task per picked seat</h6>
-        <div class="small text-muted mb-3">
-            Pick multiple seats to spawn a task per seat (same title, description, dates, financials).
-            Each spawned task gets that seat as its <strong>Primary</strong>; the Primary you picked above
-            becomes a shared <strong>Secondary</strong> on every spawned task. All spawned tasks share a
-            bulk-group reference so you can find them together later.
-        </div>
-        <div class="row g-3">
-            <div class="col-md-3">
-                <label class="form-label" for="bulkDivision">Division</label>
-                <select class="form-select" id="bulkDivision">
-                    <option value="">— Select division —</option>
-                </select>
-            </div>
-            <div class="col-md-3">
-                <label class="form-label" for="bulkSection">Section</label>
-                <select class="form-select" id="bulkSection">
-                    <option value="">— Select section —</option>
-                </select>
-            </div>
-            <div class="col-md-3">
-                <label class="form-label" for="bulkSubSection">Sub Section <span class="small text-muted">(optional)</span></label>
-                <select class="form-select" id="bulkSubSection">
-                    <option value="">— All (including direct seats) —</option>
-                </select>
-            </div>
-            <div class="col-md-3">
-                <label class="form-label" for="bulkSeatSel">Seat</label>
-                <div class="input-group">
-                    <select class="form-select" id="bulkSeatSel">
-                        <option value="">— Select seat —</option>
-                    </select>
-                    <button class="btn btn-outline-primary" type="button" id="addBulkBtn"><i class="bi bi-plus-lg"></i></button>
-                </div>
-            </div>
-            <div class="col-12">
-                <div id="bulkChips" class="d-flex flex-wrap gap-2"></div>
-                <div id="bulkHiddenWrap"></div>
-                <div id="bulkSummary" class="small text-muted mt-1" style="display:none;"></div>
-            </div>
-        </div>
-        <?php endif; ?>
     </div>
 
     <div class="card-footer d-flex justify-content-between align-items-center">
@@ -1008,163 +990,137 @@ window.__taskTrackerPicker = {
     });
     primSeat.addEventListener('change', () => {
         primHidden.value = primSeat.value || '';
-        rebuildSecondaryChips();
+        rebuildAssignedChips();
     });
 
-    // Secondary picker: chips
-    const secDiv     = document.getElementById('secondaryDivision');
-    const secSec     = document.getElementById('secondarySection');
-    const secSubSec  = document.getElementById('secondarySubSection');
-    const secSeat    = document.getElementById('secondarySeatSel');
-    const chipsEl    = document.getElementById('secondaryChips');
-    const hiddenWrap = document.getElementById('secondaryHiddenWrap');
-    const addBtn     = document.getElementById('addSecondaryBtn');
-    let secondaryIds = Array.isArray(P.preset.secondary_seat_ids) ? P.preset.secondary_seat_ids.slice() : [];
+    // --- Assigned seats picker (merged Secondary + Bulk) ------------
+    // One pill list that submits as assigned_seat_ids[]. A toggle
+    // (new-task only) flips interpretation:
+    //   • off  — picks are Secondaries on this ONE task (shared card).
+    //            Pills tint grey. Submit button: "Create task".
+    //   • on   — picks each spawn their own task where the seat is
+    //            Primary; the form's Primary (above) is appended as a
+    //            shared Secondary; all spawned rows share a BLK- group
+    //            id. Pills tint blue. Submit button: "Create N tasks".
+    // Flipping the toggle keeps the pills; only the tint, the hint,
+    // and the submit label change.
+    const asgDiv     = document.getElementById('assignedDivision');
+    const asgSec     = document.getElementById('assignedSection');
+    const asgSubSec  = document.getElementById('assignedSubSection');
+    const asgSeat    = document.getElementById('assignedSeatSel');
+    const chipsEl    = document.getElementById('assignedChips');
+    const hiddenWrap = document.getElementById('assignedHiddenWrap');
+    const addBtn     = document.getElementById('addAssignedBtn');
+    const asgSum     = document.getElementById('assignedSummary');
+    const asgHint    = document.getElementById('assignedModeHint');
+    const bulkToggle = document.getElementById('assignedBulkToggle');
+    const submitBtn  = document.querySelector('.card-footer button[type="submit"]');
+    const submitDefault = submitBtn ? submitBtn.innerHTML : '';
+    let assignedIds = Array.isArray(P.preset.secondary_seat_ids) ? P.preset.secondary_seat_ids.slice() : [];
 
-    fillDivisions(secDiv, '');
-    fillSections(secSec, '', '');
-    fillSubSections(secSubSec, '', '');
-    fillSeats(secSeat, '', '', '');
+    const bulkOn = () => !!(bulkToggle && bulkToggle.checked);
 
-    secDiv.addEventListener('change', () => {
-        fillSections(secSec, secDiv.value, '');
-        fillSubSections(secSubSec, '', '');
-        fillSeats(secSeat, '', '', '');
-    });
-    secSec.addEventListener('change', () => {
-        fillSubSections(secSubSec, secSec.value, '');
-        fillSeats(secSeat, secSec.value, '', '', currentSecondaryExcludes());
-    });
-    secSubSec.addEventListener('change', () => {
-        fillSeats(secSeat, secSec.value, secSubSec.value, '', currentSecondaryExcludes());
-    });
+    fillDivisions(asgDiv, '');
+    fillSections(asgSec, '', '');
+    fillSubSections(asgSubSec, '', '');
+    fillSeats(asgSeat, '', '', '');
 
-    const currentSecondaryExcludes = () => {
-        const list = secondaryIds.slice();
-        if (primHidden.value) list.push(Number(primHidden.value));
+    const currentAssignedExcludes = () => {
+        const list = assignedIds.slice();
+        // Only exclude the form's Primary seat in "shared" mode. In
+        // bulk mode the Primary is auto-appended as a Secondary on
+        // every spawned row, so it's fine (and expected) to allow
+        // the same seat as a bulk pick that becomes Primary of its
+        // own row.
+        if (!bulkOn() && primHidden.value) list.push(Number(primHidden.value));
         return list;
     };
 
-    const rebuildSecondaryChips = () => {
+    asgDiv.addEventListener('change', () => {
+        fillSections(asgSec, asgDiv.value, '');
+        fillSubSections(asgSubSec, '', '');
+        fillSeats(asgSeat, '', '', '');
+    });
+    asgSec.addEventListener('change', () => {
+        fillSubSections(asgSubSec, asgSec.value, '');
+        fillSeats(asgSeat, asgSec.value, '', '', currentAssignedExcludes());
+    });
+    asgSubSec.addEventListener('change', () => {
+        fillSeats(asgSeat, asgSec.value, asgSubSec.value, '', currentAssignedExcludes());
+    });
+
+    const rebuildAssignedChips = () => {
         chipsEl.innerHTML = '';
         hiddenWrap.innerHTML = '';
-        secondaryIds = secondaryIds.filter(id => Number(id) !== Number(primHidden.value || 0));
-        secondaryIds.forEach(id => {
+        // In shared mode strip out the Primary (it is the "one" of the
+        // "one shared card"). In bulk mode allow it — each pick becomes
+        // Primary of its own spawned task, Primary of the form stays
+        // the Primary of this form's row (if also a pick, that's fine).
+        if (!bulkOn()) {
+            assignedIds = assignedIds.filter(id => Number(id) !== Number(primHidden.value || 0));
+        }
+        const chipClass = bulkOn()
+            ? 'badge text-bg-info-subtle text-info border d-inline-flex align-items-center gap-2 p-2'
+            : 'badge text-bg-light border d-inline-flex align-items-center gap-2 p-2';
+        const chipIcon = bulkOn() ? 'bi-collection' : 'bi-person-workspace';
+        assignedIds.forEach(id => {
             const s = seatById(id);
             if (!s) return;
             const chip = document.createElement('span');
-            chip.className = 'badge text-bg-light border d-inline-flex align-items-center gap-2 p-2';
-            chip.innerHTML = '<i class="bi bi-person-workspace"></i><span></span>' +
+            chip.className = chipClass;
+            chip.innerHTML = '<i class="bi ' + chipIcon + '"></i><span></span>' +
                 '<button type="button" class="btn-close btn-close-sm" aria-label="Remove"></button>';
             chip.querySelector('span').textContent = seatOptionLabel(s);
             chip.querySelector('button').addEventListener('click', () => {
-                secondaryIds = secondaryIds.filter(x => Number(x) !== Number(id));
-                rebuildSecondaryChips();
+                assignedIds = assignedIds.filter(x => Number(x) !== Number(id));
+                rebuildAssignedChips();
             });
             chipsEl.appendChild(chip);
 
             const hid = document.createElement('input');
-            hid.type = 'hidden'; hid.name = 'secondary_seat_ids[]'; hid.value = String(id);
+            hid.type = 'hidden'; hid.name = 'assigned_seat_ids[]'; hid.value = String(id);
             hiddenWrap.appendChild(hid);
         });
-        if (secSec.value) fillSeats(secSeat, secSec.value, secSubSec.value, '', currentSecondaryExcludes());
+        if (asgSec.value) fillSeats(asgSeat, asgSec.value, asgSubSec.value, '', currentAssignedExcludes());
+
+        // Mode-aware hint + submit button label.
+        if (asgHint) {
+            if (bulkOn()) {
+                asgHint.innerHTML = 'Each pick becomes the <strong>Primary</strong> of its own spawned task — one card per picked seat. The form\'s Primary above is appended as a shared <strong>Secondary</strong> on every spawned task. All spawned rows share a bulk-group id you can filter the board by.';
+            } else {
+                asgHint.innerHTML = 'Picks become <strong>Secondaries</strong> on this task — one card shared with everyone listed. The Primary seat is excluded automatically.';
+            }
+        }
+        if (asgSum) {
+            if (bulkOn() && assignedIds.length > 0) {
+                asgSum.style.display = '';
+                asgSum.innerHTML = '<i class="bi bi-info-circle text-info me-1"></i>Will create <strong>' + assignedIds.length + '</strong> task' + (assignedIds.length === 1 ? '' : 's') + ' — one per picked seat. The fields above become the shared template.';
+            } else {
+                asgSum.style.display = 'none'; asgSum.innerHTML = '';
+            }
+        }
+        if (submitBtn) {
+            if (bulkOn() && assignedIds.length > 0) {
+                submitBtn.innerHTML = '<i class="bi bi-collection me-1"></i>Create ' + assignedIds.length + ' tasks';
+            } else {
+                submitBtn.innerHTML = submitDefault;
+            }
+        }
     };
-    rebuildSecondaryChips();
+    rebuildAssignedChips();
 
     addBtn.addEventListener('click', () => {
-        const v = Number(secSeat.value || 0);
+        const v = Number(asgSeat.value || 0);
         if (v <= 0) return;
-        if (v === Number(primHidden.value || 0)) return;
-        if (secondaryIds.some(id => Number(id) === v)) return;
-        secondaryIds.push(v);
-        rebuildSecondaryChips();
-        secSeat.value = '';
+        if (!bulkOn() && v === Number(primHidden.value || 0)) return;
+        if (assignedIds.some(id => Number(id) === v)) return;
+        assignedIds.push(v);
+        rebuildAssignedChips();
+        asgSeat.value = '';
     });
 
-    // --- Bulk-create picker (new-task only) --------------------------
-    // Same cascade pattern as Secondary. When any bulk seats are
-    // chosen, the Create-task button label switches to "Create N tasks"
-    // and the server spawns one task per picked seat, each with that
-    // seat as primary + the form's Primary as a shared Secondary.
-    const bulkDiv    = document.getElementById('bulkDivision');
-    const bulkSec    = document.getElementById('bulkSection');
-    const bulkSubSec = document.getElementById('bulkSubSection');
-    const bulkSeat   = document.getElementById('bulkSeatSel');
-    const bulkChips  = document.getElementById('bulkChips');
-    const bulkWrap   = document.getElementById('bulkHiddenWrap');
-    const bulkBtn    = document.getElementById('addBulkBtn');
-    const bulkSum    = document.getElementById('bulkSummary');
-    const submitBtn  = document.querySelector('.card-footer button[type="submit"]');
-    const submitDefault = submitBtn ? submitBtn.innerHTML : '';
-    let bulkIds = [];
-
-    if (bulkDiv && bulkSec && bulkSubSec && bulkSeat) {
-        fillDivisions(bulkDiv, '');
-        fillSections(bulkSec, '', '');
-        fillSubSections(bulkSubSec, '', '');
-        fillSeats(bulkSeat, '', '', '');
-
-        bulkDiv.addEventListener('change', () => {
-            fillSections(bulkSec, bulkDiv.value, '');
-            fillSubSections(bulkSubSec, '', '');
-            fillSeats(bulkSeat, '', '', '');
-        });
-        bulkSec.addEventListener('change', () => {
-            fillSubSections(bulkSubSec, bulkSec.value, '');
-            fillSeats(bulkSeat, bulkSec.value, '', '', bulkIds.slice());
-        });
-        bulkSubSec.addEventListener('change', () => {
-            fillSeats(bulkSeat, bulkSec.value, bulkSubSec.value, '', bulkIds.slice());
-        });
-
-        const rebuildBulkChips = () => {
-            bulkChips.innerHTML = '';
-            bulkWrap.innerHTML = '';
-            bulkIds.forEach(id => {
-                const s = seatById(id);
-                if (!s) return;
-                const chip = document.createElement('span');
-                chip.className = 'badge text-bg-info-subtle text-info border d-inline-flex align-items-center gap-2 p-2';
-                chip.innerHTML = '<i class="bi bi-collection"></i><span></span>' +
-                    '<button type="button" class="btn-close btn-close-sm" aria-label="Remove"></button>';
-                chip.querySelector('span').textContent = seatOptionLabel(s);
-                chip.querySelector('button').addEventListener('click', () => {
-                    bulkIds = bulkIds.filter(x => Number(x) !== Number(id));
-                    rebuildBulkChips();
-                });
-                bulkChips.appendChild(chip);
-
-                const hid = document.createElement('input');
-                hid.type = 'hidden'; hid.name = 'bulk_seat_ids[]'; hid.value = String(id);
-                bulkWrap.appendChild(hid);
-            });
-            if (bulkSec.value) fillSeats(bulkSeat, bulkSec.value, bulkSubSec.value, '', bulkIds.slice());
-
-            // Summary line + button label switch.
-            if (bulkIds.length > 0 && bulkSum) {
-                bulkSum.style.display = '';
-                bulkSum.innerHTML = '<i class="bi bi-info-circle text-info me-1"></i>Will create <strong>' + bulkIds.length + '</strong> task' + (bulkIds.length === 1 ? '' : 's') + ' — one per picked seat. The single-task form fields above become the shared template.';
-            } else if (bulkSum) {
-                bulkSum.style.display = 'none'; bulkSum.innerHTML = '';
-            }
-            if (submitBtn) {
-                if (bulkIds.length > 0) {
-                    submitBtn.innerHTML = '<i class="bi bi-collection me-1"></i>Create ' + bulkIds.length + ' tasks';
-                } else {
-                    submitBtn.innerHTML = submitDefault;
-                }
-            }
-        };
-        rebuildBulkChips();
-
-        bulkBtn.addEventListener('click', () => {
-            const v = Number(bulkSeat.value || 0);
-            if (v <= 0) return;
-            if (bulkIds.some(id => Number(id) === v)) return;
-            bulkIds.push(v);
-            rebuildBulkChips();
-            bulkSeat.value = '';
-        });
+    if (bulkToggle) {
+        bulkToggle.addEventListener('change', rebuildAssignedChips);
     }
 })();
 </script>
