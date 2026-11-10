@@ -16,3 +16,7 @@ deployment:
     - /bin/cp -R includes "$DEPLOYPATH/"
     - /bin/cp -R assets "$DEPLOYPATH/"
     - /bin/cp -R config "$DEPLOYPATH/"
+    # The public Employer Enquiry form lives in its own folder, so
+    # it can later be aliased to employers.kdiscmis.org.in. The
+    # dir carries its own .htaccess — cp -R preserves it.
+    - /bin/cp -R employers "$DEPLOYPATH/"
