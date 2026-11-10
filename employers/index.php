@@ -265,7 +265,6 @@ $states = india_states_list();
 
         .captcha-box { background: var(--c2c-wash); border: 1px solid #d7ebe9; border-radius: 10px; padding: 0.75rem; display: inline-flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
         .captcha-box img { height: 72px; border-radius: 8px; background: #fff; border: 1px solid #e0e6ef; }
-        .captcha-box input { font-size: 1.15rem; font-family: 'Poppins', sans-serif; letter-spacing: 0.1em; }
         .btn-c2c { background: linear-gradient(135deg, var(--c2c-navy) 0%, var(--c2c-sky) 100%); color: #fff; border: 0; padding: 0.75rem 1.75rem; border-radius: 999px; font-weight: 600; box-shadow: 0 14px 28px rgba(13, 55, 120, 0.22); }
         .btn-c2c:hover, .btn-c2c:focus { color: #fff; filter: brightness(1.05); }
 
@@ -513,7 +512,7 @@ $states = india_states_list();
                         <button type="button" class="btn btn-sm btn-outline-secondary" id="reloadCaptcha" title="Refresh captcha">
                             <i class="bi bi-arrow-repeat"></i>
                         </button>
-                        <input type="text" name="captcha_image" class="form-control" required maxlength="6" placeholder="6 characters" autocomplete="off" style="text-transform: uppercase;">
+                        <input type="text" name="captcha_image" class="form-control" required maxlength="6" placeholder="Type here" autocomplete="off" style="text-transform: uppercase; max-width: 180px;">
                     </div>
                 </div>
                 <div class="col-md-6">

@@ -69,18 +69,21 @@ $glyphW = (int) ($width / (strlen($code) + 1));
 $ttfPath = __DIR__ . '/../vendor/dompdf/dompdf/lib/fonts/DejaVuSans-Bold.ttf';
 $hasTtf  = function_exists('imagettftext') && is_file($ttfPath);
 
-// Font size bumped so each glyph reads clearly on both the raw
-// 260×90 plate AND when the browser scales it down inside the form.
+// Glyphs sized to actually fill the plate — narrower horizontal
+// stride (based on cell width, not label width) + a 56pt font so
+// each character is tall and the cluster reads at a glance even
+// when the browser scales the img down to its CSS height.
+$cellW = (int) ($width / strlen($code));
 for ($i = 0; $i < strlen($code); $i++) {
     $ch = $code[$i];
-    $x  = ($i + 0.5) * $glyphW + random_int(-5, 5);
+    $x  = $i * $cellW + 8 + random_int(-4, 4);
     if ($hasTtf) {
-        $y     = (int) ($height * 0.70) + random_int(-5, 5);
-        $angle = random_int(-16, 16);
-        imagettftext($im, 42, $angle, (int) $x, $y, $ink, $ttfPath, $ch);
+        $y     = (int) ($height * 0.78) + random_int(-4, 4);
+        $angle = random_int(-14, 14);
+        imagettftext($im, 56, $angle, (int) $x, $y, $ink, $ttfPath, $ch);
     } else {
-        // GD built-in font 5 is the largest available; stack the
-        // glyph a little bigger via a scaled sub-image.
+        // GD built-in font 5 is the largest available in the
+        // bitmap fallback — not huge, but readable.
         $y = (int) ($height / 2 - 12) + random_int(-4, 4);
         imagestring($im, 5, (int) $x, $y, $ch, $ink);
     }
