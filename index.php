@@ -179,6 +179,22 @@ $year = date('Y');
         }
         .hero-cta-card .btn-c2c { width: 100%; padding: 0.75rem 1rem; font-size: 1rem; }
         .hero-cta-card .caption { color: var(--c2c-slate); font-size: 0.82rem; margin-top: 0.75rem; }
+        /* Sister-platform variant: same shape, different weight — a
+           sharper aqua script eyebrow + a deeper-navy filled button. */
+        .hero-cta-card.c2c-card {
+            background: linear-gradient(135deg, #fbfdff 0%, var(--c2c-mint) 100%);
+            border: 1px solid #d7ebe9;
+        }
+        .hero-cta-card.c2c-card .script-aqua { color: var(--c2c-sky); }
+        .btn-c2c-navy {
+            display: inline-block; width: 100%; text-align: center;
+            background: var(--c2c-deep); color: #fff; border: 0;
+            padding: 0.75rem 1rem; border-radius: 999px;
+            font-weight: 600; font-size: 1rem;
+            box-shadow: 0 10px 22px rgba(13, 55, 120, 0.22);
+            text-decoration: none;
+        }
+        .btn-c2c-navy:hover, .btn-c2c-navy:focus { color: #fff; filter: brightness(1.08); }
 
         /* ---------- Feature grid ---------- */
         .features {
@@ -291,7 +307,7 @@ $year = date('Y');
 
 <section class="hero">
     <div class="container">
-        <div class="row align-items-center g-4 g-lg-5">
+        <div class="row align-items-start g-4 g-lg-5">
             <div class="col-lg-7">
                 <span class="kicker"><i class="bi bi-stars"></i> KDISC · Government of Kerala</span>
                 <h1 class="font-display">
@@ -332,7 +348,7 @@ $year = date('Y');
             </div>
 
             <div class="col-lg-5">
-                <div class="hero-cta-card">
+                <div class="hero-cta-card mb-3">
                     <div class="script">Partner with us</div>
                     <h2>For Employers</h2>
                     <p class="text-secondary mb-3">
@@ -344,6 +360,24 @@ $year = date('Y');
                         <i class="bi bi-building me-1"></i> Enroll your company
                     </a>
                     <div class="caption"><i class="bi bi-info-circle me-1"></i>No login required · takes under 3 minutes</div>
+                </div>
+
+                <!-- Sister platform for higher-education institutions. Links
+                     off-site, so target=_blank + rel for the usual security
+                     reasons. Distinct accent (navy filled tile + aqua button)
+                     so a visitor reads the two cards as siblings, not twins. -->
+                <div class="hero-cta-card c2c-card">
+                    <div class="script script-aqua">Our sister platform</div>
+                    <h2>Campus to Corporate</h2>
+                    <p class="text-secondary mb-3">
+                        Higher-education institutions in Kerala can enrol on KDISC's
+                        Campus-to-Corporate platform to place students with
+                        industry partners through structured, trackable programmes.
+                    </p>
+                    <a class="btn-c2c-navy" href="https://campustocorporate.kdisc.in" target="_blank" rel="noopener">
+                        <i class="bi bi-mortarboard me-1"></i> Visit Campus to Corporate <i class="bi bi-box-arrow-up-right ms-1 small"></i>
+                    </a>
+                    <div class="caption"><i class="bi bi-arrow-up-right-square me-1"></i>Opens in a new tab · higher-ed institutions only</div>
                 </div>
             </div>
         </div>
