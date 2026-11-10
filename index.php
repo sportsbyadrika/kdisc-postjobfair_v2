@@ -367,7 +367,7 @@ $year = date('Y');
                      reasons. Distinct accent (navy filled tile + aqua button)
                      so a visitor reads the two cards as siblings, not twins. -->
                 <div class="hero-cta-card c2c-card">
-                    <div class="script script-aqua">Our sister platform</div>
+                    <div class="script script-aqua">Our latest program</div>
                     <h2>Campus to Corporate</h2>
                     <p class="text-secondary mb-3">
                         Higher-education institutions in Kerala can enrol on KDISC's
