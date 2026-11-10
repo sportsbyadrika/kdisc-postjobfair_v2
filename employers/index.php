@@ -355,11 +355,11 @@ $states = india_states_list();
             <div class="row g-3">
                 <div class="col-md-6">
                     <label class="form-label">Name of Company<span class="req">*</span></label>
-                    <input type="text" name="company_name" class="form-control form-control-lg" required maxlength="255" value="<?= $esc($values['company_name']) ?>" placeholder="Registered name of your company">
+                    <input type="text" name="company_name" class="form-control" required maxlength="255" value="<?= $esc($values['company_name']) ?>" placeholder="Registered name of your company">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">Type of the Company<span class="req">*</span></label>
-                    <select name="company_type" class="form-select form-select-lg" required>
+                    <select name="company_type" class="form-select" required>
                         <option value="">— Select type —</option>
                         <?php foreach (EMPLOYER_ENQUIRY_COMPANY_TYPES as $t): ?>
                             <option value="<?= $esc($t) ?>" <?= $values['company_type'] === $t ? 'selected' : '' ?>><?= $esc($t) ?></option>
@@ -386,11 +386,11 @@ $states = india_states_list();
             <div class="row g-3">
                 <div class="col-md-6">
                     <label class="form-label">Email address of HR<span class="req">*</span></label>
-                    <input type="email" name="hr_email" class="form-control form-control-lg" required maxlength="255" value="<?= $esc($values['hr_email']) ?>" placeholder="hr@yourcompany.com">
+                    <input type="email" name="hr_email" class="form-control" required maxlength="255" value="<?= $esc($values['hr_email']) ?>" placeholder="hr@yourcompany.com">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">Phone number of HR<span class="req">*</span></label>
-                    <input type="tel" name="hr_phone" class="form-control form-control-lg" required maxlength="40" value="<?= $esc($values['hr_phone']) ?>" placeholder="+91 98765 43210" inputmode="tel">
+                    <input type="tel" name="hr_phone" class="form-control" required maxlength="40" value="<?= $esc($values['hr_phone']) ?>" placeholder="+91 98765 43210" inputmode="tel">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">Name of the Contact person<span class="req">*</span></label>
