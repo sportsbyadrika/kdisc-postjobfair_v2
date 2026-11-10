@@ -15,7 +15,10 @@ function current_user(): ?array
 function require_auth(): void
 {
     if (!current_user()) {
-        header('Location: /index.php');
+        // /index.php is the public home page; the actual sign-in form
+        // lives at /login.php — point unauthenticated users directly
+        // at the form so the round-trip is one click, not two.
+        header('Location: /login.php');
         exit;
     }
     // Bootstrap the module + role catalogue once per request. Safe to
