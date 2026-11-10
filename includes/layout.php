@@ -194,6 +194,7 @@ function render_header(string $title, array $options = []): void
                                 $canPmu        = function_exists('user_can_access_module') && user_can_access_module($uid, 'pmu_assets');
                                 $canLoi        = function_exists('user_can_access_module') && user_can_access_module($uid, 'loi_jobs');
                                 $canPlatReq    = function_exists('user_can_access_module') && user_can_access_module($uid, 'platform_requests');
+                                $canEmpEnq     = function_exists('user_can_access_module') && user_can_access_module($uid, 'employer_enquiry');
                                 $canAdminMod   = function_exists('user_can_access_module') && user_can_access_module($uid, 'administration');
                                 $isJobFairAdmin  = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'job_fair');
                                 $isProjMgmtAdmin = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'project_management');
@@ -202,6 +203,7 @@ function render_header(string $title, array $options = []): void
                                 $isPmuAdmin      = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'pmu_assets');
                                 $isLoiAdmin      = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'loi_jobs');
                                 $isPlatReqAdmin  = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'platform_requests');
+                                $isEmpEnqAdmin   = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'employer_enquiry');
                                 $isAdminAdmin    = function_exists('user_can_admin_module') && user_can_admin_module($uid, 'administration');
                             ?>
                             <?php /* ============ Module: Job Fair Result ============ */ ?>
@@ -378,6 +380,22 @@ function render_header(string $title, array $options = []): void
                                             <li><hr class="dropdown-divider"></li>
                                             <li><h6 class="dropdown-header">Reports</h6></li>
                                             <li><a class="dropdown-item ps-4" href="/loi_reports.php"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Employer-wise Report</a></li>
+                                        <?php endif; ?>
+                                    </ul>
+                                </li>
+                            <?php endif; ?>
+
+                            <?php /* ============ Module: Employer Enquiry ============ */ ?>
+                            <?php if ($canEmpEnq || is_admin($user)): ?>
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link dropdown-toggle<?= $isActive(['employer_enquiry_list.php','employer_enquiry_view.php','employer_enquiry_settings.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-building-check me-1"></i>Employer Enquiry</a>
+                                    <ul class="dropdown-menu">
+                                        <li><h6 class="dropdown-header">Transactions</h6></li>
+                                        <li><a class="dropdown-item ps-4" href="/employer_enquiry_list.php"><i class="bi bi-inboxes me-2"></i>Enquiries</a></li>
+                                        <?php if ($isEmpEnqAdmin || is_manage_admin($user)): ?>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><h6 class="dropdown-header">Settings</h6></li>
+                                            <li><a class="dropdown-item ps-4" href="/employer_enquiry_settings.php"><i class="bi bi-sliders2 me-2"></i>Public form header text</a></li>
                                         <?php endif; ?>
                                     </ul>
                                 </li>

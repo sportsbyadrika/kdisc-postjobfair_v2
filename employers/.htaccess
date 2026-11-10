@@ -1,0 +1,15 @@
+# /employers/ — the public Employer Enquiry entry point.
+#
+# Hitting /employers/ without a filename lands on index.php, same
+# as the top-level site. Directory listing is off so the file list
+# is never exposed. PHP execution stays on (it's a form).
+
+DirectoryIndex index.php
+Options -Indexes
+
+# Light hardening: this is public and unauthenticated, so block
+# access to anything non-public that might be dropped in here by
+# mistake (dotfiles, backups).
+<FilesMatch "^\.|\.(bak|log|ini|md|sql)$">
+    Require all denied
+</FilesMatch>

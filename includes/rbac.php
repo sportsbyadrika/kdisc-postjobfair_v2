@@ -36,6 +36,7 @@ const RBAC_MODULES = [
     ['code' => 'pmu_assets',         'name' => 'PMU Assets',         'sort_order' => 40],
     ['code' => 'loi_jobs',           'name' => 'LOI & Jobs',         'sort_order' => 45],
     ['code' => 'platform_requests',  'name' => 'Platform Requests',  'sort_order' => 47],
+    ['code' => 'employer_enquiry',   'name' => 'Employer Enquiry',   'sort_order' => 48],
     ['code' => 'administration',     'name' => 'Administration',     'sort_order' => 50],
 ];
 
@@ -167,9 +168,9 @@ function rbac_bootstrap(): void
 function rbac__backfill_from_legacy_roles(Database $db): void
 {
     $mapping = [
-        'administrator' => ['job_fair' => 'admin', 'project_management' => 'admin', 'meetings' => 'admin', 'demand_side' => 'admin', 'pmu_assets' => 'admin', 'administration' => 'admin'],
-        'dsm_admin'     => ['job_fair' => 'user',  'project_management' => 'admin', 'meetings' => 'admin', 'demand_side' => 'admin', 'pmu_assets' => 'admin', 'administration' => 'admin'],
-        'state_dsm'     => ['job_fair' => 'user',  'meetings' => 'user', 'demand_side' => 'admin'],
+        'administrator' => ['job_fair' => 'admin', 'project_management' => 'admin', 'meetings' => 'admin', 'demand_side' => 'admin', 'pmu_assets' => 'admin', 'employer_enquiry' => 'admin', 'administration' => 'admin'],
+        'dsm_admin'     => ['job_fair' => 'user',  'project_management' => 'admin', 'meetings' => 'admin', 'demand_side' => 'admin', 'pmu_assets' => 'admin', 'employer_enquiry' => 'admin', 'administration' => 'admin'],
+        'state_dsm'     => ['job_fair' => 'user',  'meetings' => 'user', 'demand_side' => 'admin', 'employer_enquiry' => 'reviewer'],
         'crm_member'    => ['job_fair' => 'user',  'meetings' => 'user'],
         'district_user' => ['job_fair' => 'user',  'meetings' => 'user'],
         'district_pmu'  => ['meetings' => 'user', 'pmu_assets' => 'user'],
