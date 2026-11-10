@@ -26,8 +26,11 @@ header('Content-Type: image/png');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 
-$width  = 180;
-$height = 60;
+// Larger plate so the TTF glyphs below can be big without clipping —
+// the form's .captcha-box img rule sizes it back down proportionally,
+// so we're really after sharper, readable characters, not a bigger box.
+$width  = 260;
+$height = 90;
 
 if (!function_exists('imagecreatetruecolor')) {
     // GD missing — stream a tiny 1x1 transparent PNG. The form's
@@ -66,15 +69,19 @@ $glyphW = (int) ($width / (strlen($code) + 1));
 $ttfPath = __DIR__ . '/../vendor/dompdf/dompdf/lib/fonts/DejaVuSans-Bold.ttf';
 $hasTtf  = function_exists('imagettftext') && is_file($ttfPath);
 
+// Font size bumped so each glyph reads clearly on both the raw
+// 260×90 plate AND when the browser scales it down inside the form.
 for ($i = 0; $i < strlen($code); $i++) {
     $ch = $code[$i];
-    $x  = ($i + 0.5) * $glyphW + random_int(-4, 4);
+    $x  = ($i + 0.5) * $glyphW + random_int(-5, 5);
     if ($hasTtf) {
-        $y     = (int) ($height * 0.72) + random_int(-4, 4);
-        $angle = random_int(-18, 18);
-        imagettftext($im, 24, $angle, (int) $x, $y, $ink, $ttfPath, $ch);
+        $y     = (int) ($height * 0.70) + random_int(-5, 5);
+        $angle = random_int(-16, 16);
+        imagettftext($im, 42, $angle, (int) $x, $y, $ink, $ttfPath, $ch);
     } else {
-        $y = (int) ($height / 2 - 8) + random_int(-4, 4);
+        // GD built-in font 5 is the largest available; stack the
+        // glyph a little bigger via a scaled sub-image.
+        $y = (int) ($height / 2 - 12) + random_int(-4, 4);
         imagestring($im, 5, (int) $x, $y, $ch, $ink);
     }
 }

@@ -33,6 +33,69 @@ const EMPLOYER_ENQUIRY_COMPANY_TYPES = [
     'NGO', 'Educational Institution', 'Cooperative Society', 'Others',
 ];
 
+/**
+ * ISO 3166-1 country list, India removed — the public form stores
+ * "India" on its own path (with a state/district cascade), so for
+ * the Outside-India branch the operator picks a specific country
+ * from this list and that name is saved in the `country` column.
+ * Short display names, in alphabetical order.
+ */
+const EMPLOYER_ENQUIRY_COUNTRIES_EXCEPT_INDIA = [
+    'Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola',
+    'Antigua and Barbuda', 'Argentina', 'Armenia', 'Australia',
+    'Austria', 'Azerbaijan', 'Bahamas', 'Bahrain', 'Bangladesh',
+    'Barbados', 'Belarus', 'Belgium', 'Belize', 'Benin', 'Bhutan',
+    'Bolivia', 'Bosnia and Herzegovina', 'Botswana', 'Brazil',
+    'Brunei', 'Bulgaria', 'Burkina Faso', 'Burundi', 'Cabo Verde',
+    'Cambodia', 'Cameroon', 'Canada', 'Central African Republic',
+    'Chad', 'Chile', 'China', 'Colombia', 'Comoros',
+    'Congo (Brazzaville)', 'Congo (Kinshasa)', 'Costa Rica',
+    "Côte d'Ivoire", 'Croatia', 'Cuba', 'Cyprus', 'Czech Republic',
+    'Denmark', 'Djibouti', 'Dominica', 'Dominican Republic',
+    'Ecuador', 'Egypt', 'El Salvador', 'Equatorial Guinea',
+    'Eritrea', 'Estonia', 'Eswatini', 'Ethiopia', 'Fiji', 'Finland',
+    'France', 'Gabon', 'Gambia', 'Georgia', 'Germany', 'Ghana',
+    'Greece', 'Grenada', 'Guatemala', 'Guinea', 'Guinea-Bissau',
+    'Guyana', 'Haiti', 'Honduras', 'Hungary', 'Iceland',
+    'Indonesia', 'Iran', 'Iraq', 'Ireland', 'Israel', 'Italy',
+    'Jamaica', 'Japan', 'Jordan', 'Kazakhstan', 'Kenya', 'Kiribati',
+    'Korea (North)', 'Korea (South)', 'Kuwait', 'Kyrgyzstan',
+    'Laos', 'Latvia', 'Lebanon', 'Lesotho', 'Liberia', 'Libya',
+    'Liechtenstein', 'Lithuania', 'Luxembourg', 'Madagascar',
+    'Malawi', 'Malaysia', 'Maldives', 'Mali', 'Malta',
+    'Marshall Islands', 'Mauritania', 'Mauritius', 'Mexico',
+    'Micronesia', 'Moldova', 'Monaco', 'Mongolia', 'Montenegro',
+    'Morocco', 'Mozambique', 'Myanmar (Burma)', 'Namibia', 'Nauru',
+    'Nepal', 'Netherlands', 'New Zealand', 'Nicaragua', 'Niger',
+    'Nigeria', 'North Macedonia', 'Norway', 'Oman', 'Pakistan',
+    'Palau', 'Palestine', 'Panama', 'Papua New Guinea', 'Paraguay',
+    'Peru', 'Philippines', 'Poland', 'Portugal', 'Qatar', 'Romania',
+    'Russia', 'Rwanda', 'Saint Kitts and Nevis', 'Saint Lucia',
+    'Saint Vincent and the Grenadines', 'Samoa', 'San Marino',
+    'Sao Tome and Principe', 'Saudi Arabia', 'Senegal', 'Serbia',
+    'Seychelles', 'Sierra Leone', 'Singapore', 'Slovakia',
+    'Slovenia', 'Solomon Islands', 'Somalia', 'South Africa',
+    'South Sudan', 'Spain', 'Sri Lanka', 'Sudan', 'Suriname',
+    'Sweden', 'Switzerland', 'Syria', 'Taiwan', 'Tajikistan',
+    'Tanzania', 'Thailand', 'Timor-Leste', 'Togo', 'Tonga',
+    'Trinidad and Tobago', 'Tunisia', 'Turkey', 'Turkmenistan',
+    'Tuvalu', 'Uganda', 'Ukraine', 'United Arab Emirates',
+    'United Kingdom', 'United States', 'Uruguay', 'Uzbekistan',
+    'Vanuatu', 'Vatican City', 'Venezuela', 'Vietnam', 'Yemen',
+    'Zambia', 'Zimbabwe',
+];
+
+/** Case-insensitive check: is this a recognised non-India country? */
+function employer_enquiry_is_valid_foreign_country(string $name): bool
+{
+    $needle = mb_strtolower(trim($name));
+    if ($needle === '') return false;
+    foreach (EMPLOYER_ENQUIRY_COUNTRIES_EXCEPT_INDIA as $c) {
+        if (mb_strtolower($c) === $needle) return true;
+    }
+    return false;
+}
+
 function employer_enquiry_bootstrap(): void
 {
     static $done = false;
@@ -75,6 +138,15 @@ function employer_enquiry_bootstrap(): void
             KEY idx_created (created_at),
             KEY idx_company (company_name)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // Idempotent column add: postcode landed in the form after
+        // the first cut of the schema was pushed. SHOW COLUMNS
+        // short-circuits the ALTER on repeat runs so it's safe.
+        $has = $db->query("SHOW COLUMNS FROM employer_enquiry LIKE 'postcode'")->fetchAll();
+        if ($has === []) {
+            try { $db->query("ALTER TABLE employer_enquiry ADD COLUMN postcode VARCHAR(20) NULL AFTER district"); }
+            catch (Throwable $e) { /* ignore */ }
+        }
 
         $db->query("CREATE TABLE IF NOT EXISTS employer_enquiry_setting (
             setting_key VARCHAR(80) NOT NULL PRIMARY KEY,

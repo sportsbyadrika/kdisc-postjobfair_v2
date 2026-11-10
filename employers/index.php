@@ -53,7 +53,8 @@ $errors = [];
 $success = null;
 $values = [
     'company_name' => '', 'hr_email' => '', 'hr_phone' => '', 'contact_person_name' => '',
-    'website' => '', 'address' => '', 'country' => 'India', 'state' => '', 'district' => '',
+    'website' => '', 'address' => '', 'country' => 'India', 'country_other' => '',
+    'state' => '', 'district' => '', 'postcode' => '',
     'company_type' => '', 'pan_number' => '', 'tin_cin_number' => '',
     'interested_dwms' => '0',
     'vacancies_posts' => '', 'vacancies_open_positions' => '',
@@ -111,6 +112,18 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     if ($values['country'] === 'India') {
         if ($values['state'] === '')    $errors[] = 'State is required for India.';
         if ($values['district'] === '') $errors[] = 'District is required for India.';
+    } elseif ($values['country'] === 'Outside India') {
+        // "Outside India" is a routing choice, not a country value —
+        // the user must pick a specific country from the searchable
+        // list (and must not pick India from it either, that's what
+        // the India branch is for).
+        if ($values['country_other'] === '') {
+            $errors[] = 'Please pick the country.';
+        } elseif (!employer_enquiry_is_valid_foreign_country($values['country_other'])) {
+            $errors[] = 'Please pick a country from the suggestions list.';
+        }
+    } else {
+        $errors[] = 'Country is required.';
     }
     if ($values['website'] !== '' && !preg_match('/^(https?:\/\/)?[a-z0-9.\-]+\.[a-z]{2,}([\/?#].*)?$/i', $values['website'])) {
         $errors[] = 'Website should be a URL (e.g. https://example.com).';
@@ -129,16 +142,28 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
     if ($errors === []) {
         try {
+            // Resolve the country value that lands in the DB:
+            //   India        → 'India'
+            //   Outside India → the picked country name, exact case
+            //                   as it appears in the whitelist.
+            $resolvedCountry = 'India';
+            if ($values['country'] === 'Outside India') {
+                $needle = mb_strtolower(trim($values['country_other']));
+                $resolvedCountry = $values['country_other'];
+                foreach (EMPLOYER_ENQUIRY_COUNTRIES_EXCEPT_INDIA as $c) {
+                    if (mb_strtolower($c) === $needle) { $resolvedCountry = $c; break; }
+                }
+            }
             $reference = employer_enquiry_make_reference();
             $db = db();
             $stmt = $db->prepare('INSERT INTO employer_enquiry
                 (reference_number, company_name, hr_email, hr_phone, contact_person_name,
-                 website, address, country, state, district, company_type,
+                 website, address, country, state, district, postcode, company_type,
                  pan_number, tin_cin_number, interested_dwms,
                  vacancies_posts, vacancies_open_positions,
                  internship_available, internship_with_stipend, internship_open_positions,
                  submitter_ip, submitter_ua, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "new", NOW(), NOW())');
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "new", NOW(), NOW())');
             $stmt->execute([
                 $reference,
                 $values['company_name'],
@@ -147,9 +172,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $values['contact_person_name'],
                 $values['website']       === '' ? null : $values['website'],
                 $values['address'],
-                $values['country'],
-                $values['country'] === 'India' ? $values['state']    : null,
-                $values['country'] === 'India' ? $values['district'] : null,
+                $resolvedCountry,
+                $resolvedCountry === 'India' ? $values['state']    : null,
+                $resolvedCountry === 'India' ? $values['district'] : null,
+                $values['postcode']      === '' ? null : $values['postcode'],
                 $values['company_type'],
                 $values['pan_number']    === '' ? null : $values['pan_number'],
                 $values['tin_cin_number']=== '' ? null : $values['tin_cin_number'],
@@ -237,8 +263,9 @@ $states = india_states_list();
 
         .footer-strip { background: #fff; border-top: 1px solid #e2e8f0; padding: 1.25rem 0; color: var(--c2c-slate); font-size: 0.85rem; margin-top: 2rem; }
 
-        .captcha-box { background: var(--c2c-wash); border: 1px solid #d7ebe9; border-radius: 10px; padding: 0.75rem; display: inline-flex; align-items: center; gap: 0.75rem; }
-        .captcha-box img { height: 50px; border-radius: 6px; background: #fff; border: 1px solid #e0e6ef; }
+        .captcha-box { background: var(--c2c-wash); border: 1px solid #d7ebe9; border-radius: 10px; padding: 0.75rem; display: inline-flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+        .captcha-box img { height: 72px; border-radius: 8px; background: #fff; border: 1px solid #e0e6ef; }
+        .captcha-box input { font-size: 1.15rem; font-family: 'Poppins', sans-serif; letter-spacing: 0.1em; }
         .btn-c2c { background: linear-gradient(135deg, var(--c2c-navy) 0%, var(--c2c-sky) 100%); color: #fff; border: 0; padding: 0.75rem 1.75rem; border-radius: 999px; font-weight: 600; box-shadow: 0 14px 28px rgba(13, 55, 120, 0.22); }
         .btn-c2c:hover, .btn-c2c:focus { color: #fff; filter: brightness(1.05); }
 
@@ -375,9 +402,15 @@ $states = india_states_list();
         <div class="card-section">
             <h2><span class="sec-dot"><i class="bi bi-geo-alt"></i></span>Company address</h2>
             <div class="row g-3">
-                <div class="col-12">
+                <div class="col-md-9">
                     <label class="form-label">Full address<span class="req">*</span></label>
-                    <textarea name="address" class="form-control" required rows="3" placeholder="Street, area, city, postcode"><?= $esc($values['address']) ?></textarea>
+                    <textarea name="address" class="form-control" required rows="3" placeholder="Street, area, city"><?= $esc($values['address']) ?></textarea>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Post Code / ZIP</label>
+                    <input type="text" name="postcode" class="form-control" maxlength="20"
+                           value="<?= $esc($values['postcode']) ?>" placeholder="e.g. 695001" autocomplete="postal-code">
+                    <div class="form-text">PIN for India, ZIP/postcode for elsewhere.</div>
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">Country<span class="req">*</span></label>
@@ -385,6 +418,23 @@ $states = india_states_list();
                         <option value="India" <?= $values['country'] === 'India' ? 'selected' : '' ?>>India</option>
                         <option value="Outside India" <?= $values['country'] === 'Outside India' ? 'selected' : '' ?>>Outside India</option>
                     </select>
+                </div>
+                <!-- Country-name picker, only shown when "Outside India" is chosen.
+                     A text input backed by a <datalist> gives native type-to-search
+                     without shipping any JS library; it still accepts only entries
+                     from the whitelist because the server re-validates on submit. -->
+                <div class="col-md-8" id="countryOtherWrap" style="display:none;">
+                    <label class="form-label">Which country?<span class="req">*</span></label>
+                    <input type="text" name="country_other" id="countryOther" class="form-control"
+                           list="countriesList" autocomplete="off"
+                           placeholder="Start typing country name (e.g. United States, Germany, UAE…)"
+                           value="<?= $esc($values['country_other']) ?>">
+                    <datalist id="countriesList">
+                        <?php foreach (EMPLOYER_ENQUIRY_COUNTRIES_EXCEPT_INDIA as $c): ?>
+                            <option value="<?= $esc($c) ?>">
+                        <?php endforeach; ?>
+                    </datalist>
+                    <div class="form-text">Pick from the suggestions — India has its own branch above.</div>
                 </div>
                 <div class="col-md-4" id="stateWrap">
                     <label class="form-label">State<span class="req">*</span></label>
@@ -491,19 +541,30 @@ $states = india_states_list();
     const country = document.getElementById('country');
     const stateWrap = document.getElementById('stateWrap');
     const districtWrap = document.getElementById('districtWrap');
+    const countryOtherWrap = document.getElementById('countryOtherWrap');
+    const countryOther = document.getElementById('countryOther');
     const stateSel = document.getElementById('state');
     const distSel  = document.getElementById('district');
 
-    const toggleIndiaFields = () => {
-        const isIndia = country.value === 'India';
+    const toggleCountryBranch = () => {
+        const isIndia   = country.value === 'India';
+        const isForeign = country.value === 'Outside India';
+        // India branch → show state + district (cascaded).
         stateWrap.style.display    = isIndia ? '' : 'none';
         districtWrap.style.display = isIndia ? '' : 'none';
         stateSel.required = isIndia;
         distSel.required  = isIndia;
-        if (!isIndia) { stateSel.value = ''; distSel.innerHTML = '<option value="">— Select district —</option>'; }
+        if (!isIndia) {
+            stateSel.value = '';
+            distSel.innerHTML = '<option value="">— Select district —</option>';
+        }
+        // Outside-India branch → show the searchable country picker.
+        countryOtherWrap.style.display = isForeign ? '' : 'none';
+        countryOther.required = isForeign;
+        if (!isForeign) countryOther.value = '';
     };
-    country.addEventListener('change', toggleIndiaFields);
-    toggleIndiaFields();
+    country.addEventListener('change', toggleCountryBranch);
+    toggleCountryBranch();
 
     const loadDistricts = (state, selected) => {
         distSel.innerHTML = '<option value="">— Loading… —</option>';

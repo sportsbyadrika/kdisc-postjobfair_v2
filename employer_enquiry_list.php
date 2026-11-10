@@ -50,7 +50,16 @@ if ($filters['q'] !== '') {
     array_push($params, $q, $q, $q, $q, $q);
 }
 if ($filters['status'] !== '')          { $where[] = 'status = ?';        $params[] = $filters['status']; }
-if ($filters['country'] !== '')         { $where[] = 'country = ?';       $params[] = $filters['country']; }
+if ($filters['country'] !== '') {
+    // Public form now stores the real country name (e.g. 'United
+    // States') rather than a literal 'Outside India', so the filter
+    // treats 'Outside India' as "anything that is not India".
+    if ($filters['country'] === 'Outside India') {
+        $where[] = "country <> 'India'";
+    } else {
+        $where[] = 'country = ?'; $params[] = $filters['country'];
+    }
+}
 if ($filters['state'] !== '')           { $where[] = 'state = ?';         $params[] = $filters['state']; }
 if ($filters['district'] !== '')        { $where[] = 'district = ?';      $params[] = $filters['district']; }
 if ($filters['company_type'] !== '')    { $where[] = 'company_type = ?';  $params[] = $filters['company_type']; }
@@ -73,7 +82,7 @@ if (($_GET['export'] ?? '') === 'xlsx') {
         'Reference', 'Submitted At', 'Status',
         'Company', 'Type', 'Website',
         'Contact Person', 'HR Email', 'HR Phone',
-        'Address', 'Country', 'State', 'District',
+        'Address', 'Country', 'State', 'District', 'Postcode',
         'PAN', 'TIN/CIN',
         'DWMS Interest',
         'Vacancy Posts', 'Vacancy Open Positions',
@@ -96,6 +105,7 @@ if (($_GET['export'] ?? '') === 'xlsx') {
                 (string) $r['country'],
                 (string) ($r['state'] ?? ''),
                 (string) ($r['district'] ?? ''),
+                (string) ($r['postcode'] ?? ''),
                 (string) ($r['pan_number'] ?? ''),
                 (string) ($r['tin_cin_number'] ?? ''),
                 ((int) $r['interested_dwms']) ? 'Yes' : 'No',
@@ -130,6 +140,17 @@ foreach ($countByStatusSt->fetchAll() as $r) $counts[(string) $r['status']] = (i
 $totalAll = array_sum($counts);
 
 $states = india_states_list();
+
+// Every distinct non-India country seen in the table so the filter
+// can offer them as quick picks. Keeps the dropdown relevant to
+// what has actually been submitted; the whitelist in helpers is
+// the master list, but we don't want to clutter the admin UI with
+// countries no one has entered.
+$foreignCountries = [];
+try {
+    $st = db()->query("SELECT DISTINCT country FROM employer_enquiry WHERE country IS NOT NULL AND country <> '' AND country <> 'India' ORDER BY country ASC");
+    foreach ($st->fetchAll() as $r) $foreignCountries[] = (string) $r['country'];
+} catch (Throwable $e) { /* ignore */ }
 
 render_header('Employer Enquiries');
 render_page_header('Employer Enquiries', [
@@ -199,7 +220,14 @@ $exportQs = http_build_query(array_merge($filters, ['export' => 'xlsx']));
                 <select name="country" class="form-select">
                     <option value="">All</option>
                     <option value="India" <?= $filters['country'] === 'India' ? 'selected' : '' ?>>India</option>
-                    <option value="Outside India" <?= $filters['country'] === 'Outside India' ? 'selected' : '' ?>>Outside India</option>
+                    <option value="Outside India" <?= $filters['country'] === 'Outside India' ? 'selected' : '' ?>>Outside India (any)</option>
+                    <?php if ($foreignCountries !== []): ?>
+                        <optgroup label="Specific country">
+                            <?php foreach ($foreignCountries as $fc): ?>
+                                <option value="<?= esc($fc) ?>" <?= $filters['country'] === $fc ? 'selected' : '' ?>><?= esc($fc) ?></option>
+                            <?php endforeach; ?>
+                        </optgroup>
+                    <?php endif; ?>
                 </select>
             </div>
             <div class="col-md-2">
