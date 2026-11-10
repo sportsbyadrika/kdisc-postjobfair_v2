@@ -129,6 +129,7 @@ render_page_header($row['reference_number'] . ' · ' . $row['company_name'], [
                     <?= esc($row['country']) ?>
                     <?php if (!empty($row['state'])): ?> · <?= esc($row['state']) ?><?php endif; ?>
                     <?php if (!empty($row['district'])): ?> · <?= esc($row['district']) ?><?php endif; ?>
+                    <?php if (!empty($row['postcode'])): ?> · <strong><?= esc($row['postcode']) ?></strong><?php endif; ?>
                 </div>
 
                 <hr>
