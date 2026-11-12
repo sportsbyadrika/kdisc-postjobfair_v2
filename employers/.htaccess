@@ -1,15 +1,16 @@
 # /employers/ — the public Employer Enquiry entry point.
 #
-# Hitting /employers/ without a filename lands on index.php, same
-# as the top-level site. Directory listing is off so the file list
-# is never exposed. PHP execution stays on (it's a form).
+# This file is kept intentionally minimal. The only directive is
+# DirectoryIndex, which needs AllowOverride Indexes — the broadest
+# permission category and the one cPanel enables by default on
+# every account. Options and FilesMatch were removed because they
+# need AllowOverride Options / Limit, which some shared-host vhost
+# configs refuse; when Apache rejects a directive it 500s the
+# whole directory, and the proxy in front often surfaces that as
+# a 404 (which is what was being seen).
+#
+# If directory listing needs to be blocked, set it on the vhost
+# instead of here — /employers/ already has an index.php so the
+# listing never shows up in practice.
 
 DirectoryIndex index.php
-Options -Indexes
-
-# Light hardening: this is public and unauthenticated, so block
-# access to anything non-public that might be dropped in here by
-# mistake (dotfiles, backups).
-<FilesMatch "^\.|\.(bak|log|ini|md|sql)$">
-    Require all denied
-</FilesMatch>

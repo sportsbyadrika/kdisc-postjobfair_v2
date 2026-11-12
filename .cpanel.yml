@@ -2,21 +2,55 @@
 # cPanel Git Version Control deployment manifest.
 #
 # cPanel runs these tasks (in a single bash session) whenever you click
-# "Deploy HEAD Commit" in Git Version Control, or via the cPanel API.
+# "Deploy HEAD Commit" in the cPanel Git UI, or via the cPanel API.
 #
 # >>> BEFORE FIRST USE: edit the DEPLOYPATH line below. <<<
 #   - Replace  youruser  with your cPanel account username.
-#   - Replace  kdisc     with the actual subfolder your site is served from.
-#   The final path must be the document root of this app on the server.
+#   - Replace  kdisc     with the actual subfolder your site is served
+#     from. DEPLOYPATH must be the document root of this app on the
+#     server.
+#
+# Workflow note (hits us most often):
+#   "Deploy HEAD Commit" deploys the branch cPanel's git clone is
+#   currently sitting on, from whatever commit it already has.
+#   It does NOT pull new commits from GitHub by itself. Before each
+#   deploy, open the repo in cPanel's Git UI and click
+#   "Update from Remote" first — that pulls the latest commits.
+#   Then "Deploy HEAD Commit". Skipping Update is the usual cause
+#   of "I pushed but nothing changed".
+#
+# How to add a new top-level folder:
+#   1. Add its name to the DIRS_TO_DEPLOY array below.
+#   2. Commit + push. On the next Update-from-Remote + Deploy, the
+#      new folder lands on the server.
+#   `uploads` is intentionally NOT in the list — it's runtime data
+#   that lives only on the server and must never be overwritten
+#   from the repo.
+
 deployment:
   tasks:
     - export DEPLOYPATH=/home/youruser/public_html/kdisc
+
     - /bin/mkdir -p "$DEPLOYPATH"
+
+    # Every root-level *.php page — the bulk of the app.
     - /bin/cp -R *.php "$DEPLOYPATH/"
-    - /bin/cp -R includes "$DEPLOYPATH/"
-    - /bin/cp -R assets "$DEPLOYPATH/"
-    - /bin/cp -R config "$DEPLOYPATH/"
-    # The public Employer Enquiry form lives in its own folder, so
-    # it can later be aliased to employers.kdiscmis.org.in. The
-    # dir carries its own .htaccess — cp -R preserves it.
-    - /bin/cp -R employers "$DEPLOYPATH/"
+
+    # Each top-level folder goes through a "mkdir -p + cp -R src/.
+    # dest/src/" pair. The `/.` is important — it copies the
+    # CONTENTS of the source folder (including hidden files like
+    # .htaccess) into the destination folder, and never creates a
+    # nested employers/employers/ on repeat deploys the way
+    # `cp -R employers dest/` can on some cp implementations.
+    - /bin/mkdir -p "$DEPLOYPATH/includes"  && /bin/cp -R includes/.  "$DEPLOYPATH/includes/"
+    - /bin/mkdir -p "$DEPLOYPATH/assets"    && /bin/cp -R assets/.    "$DEPLOYPATH/assets/"
+    - /bin/mkdir -p "$DEPLOYPATH/config"    && /bin/cp -R config/.    "$DEPLOYPATH/config/"
+    - /bin/mkdir -p "$DEPLOYPATH/employers" && /bin/cp -R employers/. "$DEPLOYPATH/employers/"
+    - /bin/mkdir -p "$DEPLOYPATH/vendor"    && /bin/cp -R vendor/.    "$DEPLOYPATH/vendor/"
+
+    # Deploy-log sanity so a future 404 can be diagnosed from the
+    # cPanel deploy output without guessing. If you ever see 404
+    # on a page you just shipped, open the deploy log in cPanel
+    # and look for these lines — they prove what actually landed.
+    - /bin/echo '--- Deployed top-level files ---' && /bin/ls -la "$DEPLOYPATH/" | /usr/bin/head -40
+    - /bin/echo '--- /employers/ contents ---'     && /bin/ls -la "$DEPLOYPATH/employers/"
