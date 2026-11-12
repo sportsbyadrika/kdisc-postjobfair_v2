@@ -54,8 +54,12 @@ $success = null;
 $values = [
     'company_name' => '', 'hr_email' => '', 'hr_phone' => '', 'contact_person_name' => '',
     'website' => '', 'address' => '', 'country' => 'India', 'country_other' => '',
-    'state' => '', 'district' => '', 'postcode' => '',
-    'company_type' => '', 'pan_number' => '', 'tin_cin_number' => '',
+    // State defaults to Kerala on a fresh GET — KKEM's enquiries
+    // overwhelmingly come from Kerala, so we save the typical
+    // visitor a click. Re-renders after a POST error keep whatever
+    // the user had chosen, including blank.
+    'state' => 'Kerala', 'district' => '', 'postcode' => '',
+    'company_type' => '',
     'interested_dwms' => '0',
     'vacancies_posts' => '', 'vacancies_open_positions' => '',
     'internship_available' => '0', 'internship_with_stipend' => '0', 'internship_open_positions' => '',
@@ -106,9 +110,6 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     if ($values['hr_phone'] !== '' && !employer_enquiry_valid_phone($values['hr_phone'])) {
         $errors[] = 'HR phone number does not look right (expected 7–15 digits).';
     }
-    if ($values['pan_number'] !== '' && !employer_enquiry_valid_pan($values['pan_number'])) {
-        $errors[] = 'PAN format should be like ABCDE1234F.';
-    }
     if ($values['country'] === 'India') {
         if ($values['state'] === '')    $errors[] = 'State is required for India.';
         if ($values['district'] === '') $errors[] = 'District is required for India.';
@@ -128,9 +129,6 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     if ($values['website'] !== '' && !preg_match('/^(https?:\/\/)?[a-z0-9.\-]+\.[a-z]{2,}([\/?#].*)?$/i', $values['website'])) {
         $errors[] = 'Website should be a URL (e.g. https://example.com).';
     }
-    // Normalise PAN to uppercase before insert.
-    $values['pan_number'] = strtoupper($values['pan_number']);
-
     $intOrNull = static function (string $v): ?int {
         $v = trim($v);
         if ($v === '') return null;
@@ -156,14 +154,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             }
             $reference = employer_enquiry_make_reference();
             $db = db();
+            // pan_number and tin_cin_number columns stay in the
+            // schema (idempotent bootstrap never drops anything) but
+            // the form no longer collects them, so every new row
+            // gets NULL for both — older rows keep whatever they
+            // had.
             $stmt = $db->prepare('INSERT INTO employer_enquiry
                 (reference_number, company_name, hr_email, hr_phone, contact_person_name,
                  website, address, country, state, district, postcode, company_type,
-                 pan_number, tin_cin_number, interested_dwms,
+                 interested_dwms,
                  vacancies_posts, vacancies_open_positions,
                  internship_available, internship_with_stipend, internship_open_positions,
                  submitter_ip, submitter_ua, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "new", NOW(), NOW())');
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "new", NOW(), NOW())');
             $stmt->execute([
                 $reference,
                 $values['company_name'],
@@ -177,8 +180,6 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $resolvedCountry === 'India' ? $values['district'] : null,
                 $values['postcode']      === '' ? null : $values['postcode'],
                 $values['company_type'],
-                $values['pan_number']    === '' ? null : $values['pan_number'],
-                $values['tin_cin_number']=== '' ? null : $values['tin_cin_number'],
                 (int) $values['interested_dwms'],
                 $vacPosts, $vacOpen,
                 (int) $values['internship_available'],
@@ -368,14 +369,6 @@ $states = india_states_list();
                 <div class="col-md-6">
                     <label class="form-label">Website</label>
                     <input type="text" name="website" class="form-control" maxlength="500" value="<?= $esc($values['website']) ?>" placeholder="https://yourcompany.com">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">PAN</label>
-                    <input type="text" name="pan_number" class="form-control" maxlength="20" value="<?= $esc($values['pan_number']) ?>" placeholder="ABCDE1234F" style="text-transform: uppercase;">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">TIN / CIN</label>
-                    <input type="text" name="tin_cin_number" class="form-control" maxlength="50" value="<?= $esc($values['tin_cin_number']) ?>">
                 </div>
             </div>
         </div>
