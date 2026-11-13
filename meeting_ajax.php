@@ -28,6 +28,7 @@ require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/meetings_helpers.php';
 require_once __DIR__ . '/includes/task_tracker_helpers.php';
 require_once __DIR__ . '/includes/teams_helpers.php';
+require_once __DIR__ . '/includes/html_sanitizer.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -154,7 +155,15 @@ if ($action === 'upsert_agenda') {
     $id = (int) ($_POST['id'] ?? 0);
     $title = trim((string) ($_POST['title'] ?? ''));
     if ($title === '') $sendError('Title required.');
-    $desc = trim((string) ($_POST['description'] ?? '')) ?: null;
+    // Description now carries TinyMCE-authored HTML. safe_html()
+    // parses it via DOMDocument, keeps a bounded allowlist of tags
+    // + attributes (bold, italic, lists, tables, links, headings)
+    // and drops everything else — so stored rows are safe to emit
+    // directly on render.
+    $descRaw = (string) ($_POST['description'] ?? '');
+    $desc    = $descRaw === '' ? null : safe_html($descRaw);
+    if ($desc === '') $desc = null;
+    $hasAgendaHtmlCol = meetings_column_exists('meeting_agenda', 'description_html');
     $remarks = array_key_exists('remarks', $_POST) ? (trim((string) $_POST['remarks']) ?: null) : null;
     $touchRemarks = array_key_exists('remarks', $_POST) && meetings_column_exists('meeting_agenda', 'remarks');
     // Grid-mode saves only touch the title/description columns and
@@ -201,6 +210,13 @@ if ($action === 'upsert_agenda') {
         if ($touchRemarks) {
             db()->prepare('UPDATE meeting_agenda SET remarks = ? WHERE id = ? AND meeting_id = ?')
                 ->execute([$remarks, $id, $meetingId]);
+        }
+        // Stamp the HTML flag so renderers know the description is
+        // already sanitised and can emit it without the esc() + pre-
+        // wrap pathway used for legacy plain-text rows.
+        if ($hasAgendaHtmlCol) {
+            db()->prepare('UPDATE meeting_agenda SET description_html = 1 WHERE id = ? AND meeting_id = ?')
+                ->execute([$id, $meetingId]);
         }
         db()->query('COMMIT');
         echo json_encode(['ok' => true, 'item_id' => $id]); exit;

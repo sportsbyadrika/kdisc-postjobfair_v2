@@ -9,6 +9,7 @@ require_once __DIR__ . '/includes/layout.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/meetings_helpers.php';
+require_once __DIR__ . '/includes/html_sanitizer.php';
 require_auth();
 
 $viewer   = current_user() ?? [];
@@ -405,7 +406,13 @@ render_page_header($meeting['reference_no'] . ' · ' . $meeting['title'], [
                     <?php foreach ($agenda as $a): ?>
                         <li class="mb-2">
                             <strong><?= esc((string) $a['title']) ?></strong>
-                            <?php if (!empty($a['description'])): ?><div class="small text-muted" style="white-space:pre-wrap;"><?= esc((string) $a['description']) ?></div><?php endif; ?>
+                            <?php if (!empty($a['description'])): ?>
+                                <?php if (!empty($a['description_html'])): ?>
+                                    <div class="small text-muted rt-content"><?= render_rich_text((string) $a['description'], true) ?></div>
+                                <?php else: ?>
+                                    <div class="small text-muted" style="white-space:pre-wrap;"><?= esc((string) $a['description']) ?></div>
+                                <?php endif; ?>
+                            <?php endif; ?>
                             <?php if (!empty($a['remarks'])): ?><div class="small text-warning-emphasis mt-1" style="white-space:pre-wrap;"><i class="bi bi-exclamation-triangle me-1"></i><em>Remarks:</em> <?= esc((string) $a['remarks']) ?></div><?php endif; ?>
                             <?php
                                 $leads = $agendaLeads[(int) $a['id']] ?? [];

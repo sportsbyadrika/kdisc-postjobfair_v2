@@ -20,6 +20,7 @@ require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/rbac.php';
 require_once __DIR__ . '/includes/meetings_helpers.php';
 require_once __DIR__ . '/includes/teams_helpers.php';
+require_once __DIR__ . '/includes/html_sanitizer.php';
 require_auth();
 
 $viewer   = current_user() ?? [];
@@ -222,7 +223,14 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
         // agenda IDs flip each time). Build $tmpToAgendaId while we
         // re-insert, then resolve decision.agenda_id from it below.
         $hasAgendaRemarksSave = false;
-        try { foreach ($db->query('SHOW COLUMNS FROM meeting_agenda')->fetchAll() as $c) if (strtolower((string) $c['Field']) === 'remarks') $hasAgendaRemarksSave = true; } catch (Throwable $e) { /* ignore */ }
+        $hasAgendaHtmlSave    = false;
+        try {
+            foreach ($db->query('SHOW COLUMNS FROM meeting_agenda')->fetchAll() as $c) {
+                $f = strtolower((string) $c['Field']);
+                if ($f === 'remarks')          $hasAgendaRemarksSave = true;
+                if ($f === 'description_html') $hasAgendaHtmlSave    = true;
+            }
+        } catch (Throwable $e) { /* ignore */ }
         $insA = $db->prepare('INSERT INTO meeting_agenda
             (meeting_id, sort_order, title, description, lead_user_id, lead_seat_id, lead_contact_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)');
@@ -231,9 +239,15 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
         foreach ((array) ($_POST['agenda'] ?? []) as $row) {
             $t = trim((string) ($row['title'] ?? ''));
             if ($t === '') continue;
+            // Description is TinyMCE HTML — sanitise through the
+            // allowlist before it lands in the DB. Empty-after-sanitise
+            // becomes NULL, same as before.
+            $descRaw = (string) ($row['description'] ?? '');
+            $descSafe = $descRaw === '' ? null : safe_html($descRaw);
+            if ($descSafe === '') $descSafe = null;
             $insA->execute([
                 $id, ++$order, $t,
-                trim((string) ($row['description'] ?? '')) ?: null,
+                $descSafe,
                 ((int) ($row['lead_user_id'] ?? 0)) ?: null,
                 ((int) ($row['lead_seat_id'] ?? 0)) ?: null,
                 ((int) ($row['lead_contact_id'] ?? 0)) ?: null,
@@ -245,6 +259,10 @@ if (is_post() && ($_POST['action'] ?? '') === 'save') {
                 $remarksRaw = trim((string) ($row['remarks'] ?? ''));
                 $db->prepare('UPDATE meeting_agenda SET remarks = ? WHERE id = ?')
                     ->execute([$remarksRaw === '' ? null : $remarksRaw, $newAgendaId]);
+            }
+            if ($hasAgendaHtmlSave && $descSafe !== null) {
+                $db->prepare('UPDATE meeting_agenda SET description_html = 1 WHERE id = ?')
+                    ->execute([$newAgendaId]);
             }
         }
 
@@ -896,6 +914,11 @@ window.__meetingRef = {
                 'id' => (int) $a['id'],
                 'title' => (string) $a['title'],
                 'description' => (string) ($a['description'] ?? ''),
+                // Flag that tells the renderer whether `description`
+                // is sanitised HTML (1) or legacy plain text (0). Set
+                // by the upsert_agenda AJAX + the full-form save
+                // once the row has been authored through the WYSIWYG.
+                'description_html' => (int) ($a['description_html'] ?? 0),
                 'remarks' => (string) ($a['remarks'] ?? ''),
                 'user_ids' => $uIds, 'seat_ids' => $sIds, 'contact_ids' => $cIds,
             ];
@@ -1010,6 +1033,16 @@ window.__meetingRef = {
 /* ---------- View-page-style section lists (replaces the sub-tables) --- */
 .meeting-section .card-header         { font-weight: 600; }
 .meeting-list-item                    { font-size: .9rem; }
+/* Rich-text rendered by the WYSIWYG. Keep the inline list from
+   inheriting the "no-margin, pre-wrap" style of its ancestors so
+   bold / lists / tables actually breathe inside the agenda row. */
+.rt-content p             { margin: 0 0 .25rem; }
+.rt-content ul, .rt-content ol { margin: .25rem 0 .25rem 1.1rem; padding: 0; }
+.rt-content table         { border-collapse: collapse; margin: .35rem 0; }
+.rt-content table td,
+.rt-content table th      { border: 1px solid #c9d2df; padding: 3px 7px; }
+.rt-content a             { color: #1d7fb8; text-decoration: underline; }
+.rt-content blockquote    { margin: .25rem 0; padding: .1rem .75rem; border-left: 3px solid #c9d2df; color: #475569; }
 .meeting-list-item:last-child         { border-bottom: 0 !important; }
 .meeting-list-item .meeting-sl        { min-width: 1.75rem; padding-top: 0.1rem; }
 .meeting-group-header                 { letter-spacing: .02em; }
@@ -1191,6 +1224,12 @@ window.__meetingRef = {
 <!-- SortableJS must load before the main editor script below, which
      calls initAgendaSortable() on first renderAll(). -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+
+<!-- TinyMCE 6.8.3 — WYSIWYG for agenda description. Loaded locally
+     via cdnjs (no API key). If this script fails to load the
+     textareas still work as plain text; init guard in the main
+     script below checks `typeof tinymce !== 'undefined'`. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
 
 <script>
 (function () {
@@ -1411,7 +1450,16 @@ window.__meetingRef = {
             ...((a.seat_ids    || []).map(id => nameOf(R.seats,       id))),
             ...((a.contact_ids || []).map(id => nameOf(contactsPool,  id))),
         ].filter(Boolean);
-        const descBlock    = (a.description || '').trim() === '' ? '' : `<div class="small text-muted mt-1" style="white-space:pre-wrap;">${esc(a.description)}</div>`;
+        // description_html = 1 means the stored string is sanitised
+        // HTML (produced by the WYSIWYG + safe_html() server-side);
+        // emit it directly. Legacy rows (flag 0) stay on the esc()
+        // + pre-wrap plain-text path.
+        const descRaw = (a.description || '').trim();
+        const descBlock = descRaw === '' ? '' : (
+            Number(a.description_html || 0) === 1
+                ? `<div class="small text-muted mt-1 rt-content">${a.description}</div>`
+                : `<div class="small text-muted mt-1" style="white-space:pre-wrap;">${esc(a.description)}</div>`
+        );
         const remarksBlock = (a.remarks     || '').trim() === '' ? '' : `<div class="small text-warning-emphasis mt-1" style="white-space:pre-wrap;"><i class="bi bi-exclamation-triangle me-1"></i><em>Remarks:</em> ${esc(a.remarks)}</div>`;
         const leadsBlock   = leads.length === 0 ? '' : `<div class="small text-muted mt-1"><i class="bi bi-person-check me-1"></i>Lead: ${esc(leads.join(', '))}</div>`;
         return `<div class="meeting-list-item meeting-agenda-row d-flex align-items-start gap-2 py-2 border-bottom" data-agenda-row-id="${a.id || 0}">
@@ -1449,7 +1497,7 @@ window.__meetingRef = {
             <div class="meeting-sl text-muted small">${i+1}.</div>
             <div class="flex-grow-1">
                 <input class="form-control form-control-sm mb-2 js-agenda-title" placeholder="Title *" value="${esc(a.title || '')}">
-                <textarea class="form-control form-control-sm mb-2 js-agenda-desc" rows="2" placeholder="Description">${esc(a.description || '')}</textarea>
+                <textarea class="form-control form-control-sm mb-2 js-agenda-desc js-rte" data-rte-mode="inline" rows="3" placeholder="Description">${esc(a.description || '')}</textarea>
                 <div class="agenda-leads-widget mb-2" data-leads-widget>
                     <div class="d-flex flex-wrap gap-1 mb-1 js-leads-pills">${pillHtml}</div>
                     <div class="position-relative">
@@ -1500,6 +1548,49 @@ window.__meetingRef = {
             },
         });
     };
+    // -------- TinyMCE wire-up for agenda descriptions --------
+    // One shared config for the inline row textarea AND the agenda
+    // modal textarea. If the TinyMCE script failed to load for any
+    // reason (CDN miss, offline), these helpers degrade to the
+    // plain textarea — the main save path still reads textarea.value.
+    const RTE_CONFIG = {
+        height: 180,
+        menubar: false,
+        branding: false,
+        promotion: false,
+        statusbar: false,
+        elementpath: false,
+        plugins: 'lists table link autolink',
+        toolbar: 'undo redo | bold italic underline | bullist numlist | table | link | removeformat',
+        content_style: "body { font-family: Inter, system-ui, sans-serif; font-size: 14px; color: #0e3e66; } table { border-collapse: collapse; } table td, table th { border: 1px solid #c9d2df; padding: 4px 8px; }",
+        table_default_attributes: { border: '1' },
+        table_default_styles:     { 'border-collapse': 'collapse' },
+    };
+    const hasTinyMCE = () => typeof tinymce !== 'undefined';
+    // Reset + re-init on the inline agenda-edit row's description.
+    const initInlineAgendaRichText = () => {
+        if (!hasTinyMCE()) return;
+        // Remove any inline instances from the old render.
+        tinymce.remove('[data-agenda-edit-row] textarea.js-agenda-desc');
+        const el = document.querySelector('[data-agenda-edit-row] textarea.js-agenda-desc');
+        if (!el) return;
+        tinymce.init({ ...RTE_CONFIG, target: el });
+    };
+    // Reset + re-init on the agenda modal description. Called on
+    // every modal open so the initial content lands correctly.
+    const initModalAgendaRichText = (initialHtml) => {
+        if (!hasTinyMCE()) return;
+        tinymce.remove('#aModalDesc');
+        tinymce.init({
+            ...RTE_CONFIG,
+            selector: '#aModalDesc',
+            setup: (ed) => ed.on('init', () => ed.setContent(initialHtml || '')),
+        });
+    };
+    // Flush any TinyMCE edits back to the source textarea so a
+    // subsequent .value read sees what the operator just typed.
+    const flushRichText = () => { if (hasTinyMCE()) tinymce.triggerSave(); };
+
     const renderAgenda = () => {
         const list = document.getElementById('agendaList');
         list.innerHTML = state.agenda.map(renderAgendaItem).join('') || '<div class="text-muted small">No agenda items yet.</div>';
@@ -1508,6 +1599,10 @@ window.__meetingRef = {
             const row = list.querySelector(`[data-agenda-edit-row="${agendaEditIdx}"]`);
             row?.querySelector('.js-agenda-title')?.focus();
         }
+        // Rebuild any TinyMCE instance on the inline edit row's
+        // description textarea. Old instances have to be removed
+        // first because we just blew the DOM away with innerHTML.
+        initInlineAgendaRichText();
         initAgendaSortable();
         const hidden = document.getElementById('agendaHidden');
         hidden.innerHTML = state.agenda.map((a, i) => {
@@ -1616,6 +1711,10 @@ window.__meetingRef = {
     const saveAgendaInline = async (i) => {
         const row = document.querySelector(`[data-agenda-edit-row="${i}"]`);
         if (!row) return;
+        // Push any un-committed TinyMCE edits back into the textarea
+        // BEFORE we read its value, otherwise the latest keystrokes
+        // never leave the editor's internal buffer.
+        flushRichText();
         const title = row.querySelector('.js-agenda-title').value.trim();
         if (title === '') { alert('Title required.'); return; }
         const desc    = row.querySelector('.js-agenda-desc').value.trim();
@@ -1974,6 +2073,10 @@ window.__meetingRef = {
         document.getElementById('aModalIdx').value = idx == null ? '' : idx;
         document.getElementById('aModalTitle').value = a.title || '';
         document.getElementById('aModalDesc').value  = a.description || '';
+        // Spin up a TinyMCE instance on the description textarea
+        // whenever the modal opens. We tear down the previous one
+        // first so repeat-opens don't leak editors.
+        initModalAgendaRichText(a.description || '');
         document.getElementById('aModalRemarks').value = a.remarks || '';
         // Participant pool (prefixed-id scheme: u<id> or c<id>).
         const partPool = sortByName(buildParticipantPool());
@@ -2153,6 +2256,7 @@ window.__meetingRef = {
         } catch (e) { alert('Save failed: ' + e.message); setStatus('Save error', 'danger'); }
     });
     document.getElementById('aModalSave').addEventListener('click', () => {
+        flushRichText();
         const idxRaw = document.getElementById('aModalIdx').value;
         const title = document.getElementById('aModalTitle').value.trim();
         if (title === '') { alert('Title required.'); return; }

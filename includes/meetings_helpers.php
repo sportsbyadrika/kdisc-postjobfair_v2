@@ -277,6 +277,29 @@ function meetings_bootstrap(): void
             }
         } catch (Throwable $e) { /* ALTER refused — approval gates reduce to always-visible */ }
 
+        // Rich-text flag on the four description-carrying columns.
+        // When the WYSIWYG editor saves a row, the handler stamps this
+        // TINYINT(1) = 1 so the render layer knows to emit the stored
+        // string as (pre-sanitised) HTML. Existing rows keep the
+        // default 0 and render as plain text with nl2br — no data
+        // migration needed.
+        try {
+            $cols = [];
+            foreach ($db->query('SHOW COLUMNS FROM meeting')->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
+            if (!isset($cols['minutes_body_html'])) {
+                $db->query('ALTER TABLE meeting ADD COLUMN minutes_body_html TINYINT(1) NOT NULL DEFAULT 0 AFTER minutes_body');
+            }
+        } catch (Throwable $e) { /* ALTER refused — render falls back to plain text */ }
+        foreach (['meeting_agenda', 'meeting_decision', 'meeting_next_agenda'] as $tbl) {
+            try {
+                $cols = [];
+                foreach ($db->query("SHOW COLUMNS FROM $tbl")->fetchAll() as $c) $cols[strtolower((string) $c['Field'])] = true;
+                if (!isset($cols['description_html'])) {
+                    $db->query("ALTER TABLE $tbl ADD COLUMN description_html TINYINT(1) NOT NULL DEFAULT 0 AFTER description");
+                }
+            } catch (Throwable $e) { /* ALTER refused */ }
+        }
+
         // Seed the MoM PDF branding keys so the settings page always
         // renders every row even on a fresh install.
         $seed = $db->prepare('INSERT IGNORE INTO meeting_setting (setting_key, setting_value, updated_at) VALUES (?, ?, NOW())');
