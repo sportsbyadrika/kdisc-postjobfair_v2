@@ -825,6 +825,23 @@ render_page_header($pageTitle, [
                         <span><i class="bi bi-people me-1"></i>Participants <span class="badge text-bg-light border ms-1" id="participantCount">0</span></span>
                         <button type="button" class="btn btn-sm btn-outline-primary" data-open-modal="participantModal"><i class="bi bi-plus-lg"></i></button>
                     </div>
+                    <!-- Bulk-attendance toolbar: select all + two chips that
+                         flip every ticked participant to Present or Absent
+                         via the same upsert_participant AJAX the per-row P/A
+                         buttons use. Hidden when the list is empty. -->
+                    <div class="px-2 pt-2 d-none" id="participantsBulkBar">
+                        <div class="d-flex align-items-center flex-wrap gap-2 py-1 px-2 bg-light rounded-2 border small">
+                            <div class="form-check mb-0">
+                                <input class="form-check-input" type="checkbox" id="participantSelectAll">
+                                <label class="form-check-label" for="participantSelectAll">Select all</label>
+                            </div>
+                            <span class="text-muted" id="participantSelectCount">0 selected</span>
+                            <div class="ms-auto d-flex gap-1">
+                                <button type="button" class="btn btn-sm btn-success py-0 px-2" id="participantMarkPresent" title="Mark selected as Present" disabled><i class="bi bi-check2-circle me-1"></i>Mark P</button>
+                                <button type="button" class="btn btn-sm btn-danger  py-0 px-2" id="participantMarkAbsent"  title="Mark selected as Absent"  disabled><i class="bi bi-x-circle me-1"></i>Mark A</button>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card-body p-2" id="participantList"></div>
                 </div>
                 <div id="participantHidden"></div>
@@ -1329,9 +1346,17 @@ window.__meetingRef = {
     // Each section is a stacked block of items with pencil + x icons on
     // the right. Pencil opens the existing modal; x deletes the row via
     // the same AJAX endpoint the old table rows used.
+    // Selected participant indices for the bulk-attendance toolbar.
+    // Kept in a Set outside state so it doesn't leak into the hidden
+    // mirror inputs (which would then land in the full-form POST).
+    const participantSelected = new Set();
     const renderParticipants = () => {
         const list = document.getElementById('participantList');
         document.getElementById('participantCount').textContent = state.participants.length;
+        // Drop any selected indices that no longer exist (deletes).
+        for (const i of Array.from(participantSelected)) {
+            if (i >= state.participants.length) participantSelected.delete(i);
+        }
         list.innerHTML = state.participants.map((p, i) => {
             const name = p.user_id ? nameOf(R.users, p.user_id) : (p.contact_id ? nameOf(contactsPool, p.contact_id) : '—');
             const sub  = p.contact_id ? (findById(contactsPool, p.contact_id)?.inst || '') : '';
@@ -1342,13 +1367,11 @@ window.__meetingRef = {
             const current = String(p.attended ?? '');
             const presentActive = current === '1';
             const absentActive  = current === '0';
-            const attendPill = presentActive
-                ? '<span class="badge text-bg-success" title="Present">P</span>'
-                : (absentActive ? '<span class="badge text-bg-danger" title="Absent">A</span>'
-                    : '<span class="badge text-bg-light border" title="Attendance not recorded">—</span>');
             const subRow = sub ? `<div class="text-muted small">${esc(sub)}</div>` : '';
             const roleRow = role ? `<div class="text-muted small"><i class="bi bi-tag me-1"></i>${esc(role)}</div>` : '';
+            const checked = participantSelected.has(i) ? 'checked' : '';
             return `<div class="meeting-list-item d-flex align-items-start gap-2 py-2 px-1 border-bottom">
+                <input type="checkbox" class="form-check-input mt-1 js-participant-select" data-pidx="${i}" ${checked} title="Select for bulk attendance">
                 ${mandMark}
                 <div class="flex-grow-1 small">
                     <strong>${esc(name)}</strong>
@@ -1367,6 +1390,7 @@ window.__meetingRef = {
                 </div>
             </div>`;
         }).join('') || '<div class="text-muted small p-2">No participants yet — click the + to add.</div>';
+        refreshParticipantBulkBar();
         const hidden = document.getElementById('participantHidden');
         hidden.innerHTML = state.participants.map((p, i) => {
             return `<input type="hidden" name="participant[${i}][user_id]"      value="${p.user_id || 0}">
@@ -1775,6 +1799,71 @@ window.__meetingRef = {
             setStatus('Attendance saved', 'success');
         } catch (e) { setStatus('Save error', 'danger'); alert('Attendance save failed: ' + e.message); }
     };
+    // Bulk-attendance toolbar: refresh the Select-all state, the
+    // "N selected" counter, and disable Mark-P / Mark-A when nothing
+    // is ticked. Called on every renderParticipants + after every
+    // per-row checkbox change.
+    const refreshParticipantBulkBar = () => {
+        const bar = document.getElementById('participantsBulkBar');
+        if (!bar) return;
+        const n = state.participants.length;
+        if (n === 0) { bar.classList.add('d-none'); return; }
+        bar.classList.remove('d-none');
+        const selCount = participantSelected.size;
+        document.getElementById('participantSelectCount').textContent =
+            selCount + ' selected';
+        const all = document.getElementById('participantSelectAll');
+        all.checked       = selCount === n;
+        all.indeterminate = selCount > 0 && selCount < n;
+        const disabled = selCount === 0;
+        document.getElementById('participantMarkPresent').disabled = disabled;
+        document.getElementById('participantMarkAbsent').disabled  = disabled;
+    };
+    // Mark every ticked participant as Present ('1') or Absent ('0').
+    // Each row is persisted through the same upsert_participant AJAX
+    // the single-click P/A buttons use, so ticks and bulk marks land
+    // in meeting_participant.attended identically.
+    const bulkSetAttendance = async (val) => {
+        if (participantSelected.size === 0) return;
+        const indices = Array.from(participantSelected).sort((a, b) => a - b);
+        for (const idx of indices) {
+            const p = state.participants[idx];
+            if (p) p.attended = val;
+        }
+        renderParticipants();
+        setStatus('Saving attendance for ' + indices.length + '…', 'info');
+        for (const idx of indices) {
+            await saveParticipantAttendance(idx);
+        }
+        setStatus('Attendance saved for ' + indices.length, 'success');
+    };
+    // Checkbox events (change bubbles): per-row tick + select-all.
+    document.addEventListener('change', (ev) => {
+        const cb = ev.target.closest('.js-participant-select');
+        if (cb) {
+            const idx = +cb.dataset.pidx;
+            if (cb.checked) participantSelected.add(idx);
+            else participantSelected.delete(idx);
+            refreshParticipantBulkBar();
+            return;
+        }
+        if (ev.target.id === 'participantSelectAll') {
+            if (ev.target.checked) {
+                state.participants.forEach((_, i) => participantSelected.add(i));
+            } else {
+                participantSelected.clear();
+            }
+            renderParticipants();
+            return;
+        }
+    });
+    // Toolbar button clicks — wired separately from the big click
+    // listener below so the existing data-attribute routing isn't
+    // disturbed.
+    document.addEventListener('click', (ev) => {
+        if (ev.target.closest('#participantMarkPresent')) { ev.preventDefault(); return bulkSetAttendance('1'); }
+        if (ev.target.closest('#participantMarkAbsent'))  { ev.preventDefault(); return bulkSetAttendance('0'); }
+    });
     document.addEventListener('click', (ev) => {
         const aB = ev.target.closest('[data-attend-set]');
         if (aB) {
