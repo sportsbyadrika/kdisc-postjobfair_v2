@@ -256,9 +256,7 @@ function render_header(string $title, array $options = []): void
                                     <a class="nav-link dropdown-toggle<?= $isActive(['task_tracker_my_work.php','task_tracker_projects.php','task_tracker_project_view.php','task_tracker_task.php','task_tracker_task_view.php','task_tracker_reports.php','task_tracker_project_status.php','task_tracker_import.php','task_tracker_status.php','task_tracker_financial_years.php']) ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-kanban me-1"></i>Project Management</a>
                                     <ul class="dropdown-menu">
                                         <li><h6 class="dropdown-header">Transactions</h6></li>
-                                        <?php if ($isProjMgmtAdmin || is_manage_admin($user)): ?>
-                                            <li><a class="dropdown-item ps-4" href="/task_tracker_my_work.php"><i class="bi bi-person-workspace me-2"></i>My Work</a></li>
-                                        <?php endif; ?>
+                                        <li><a class="dropdown-item ps-4" href="/task_tracker_my_work.php"><i class="bi bi-person-workspace me-2"></i>My Work</a></li>
                                         <li><a class="dropdown-item ps-4" href="/task_tracker_projects.php"><i class="bi bi-briefcase me-2"></i>Projects</a></li>
                                         <li><a class="dropdown-item ps-4" href="/task_tracker_project_status.php"><i class="bi bi-diagram-2 me-2"></i>Project Status (tree &amp; Gantt)</a></li>
                                         <?php if ($isProjMgmtAdmin || is_manage_admin($user)): ?>

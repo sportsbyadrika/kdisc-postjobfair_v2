@@ -7,9 +7,16 @@
  * column, ordered by planned end (earliest first), with a filter for
  * All / Primary only / Secondary only.
  *
- * Access: any authenticated user with at least one seat (or admin).
- * Admins with no seats see an empty view with a hint — this page is
- * scoped to seats, not roles.
+ * Access: any authenticated user. Admins see the same seat-scoped
+ * list — no system-wide fallback here (use /task_tracker_projects.php
+ * for the admin's project list). An admin who personally holds no
+ * seats sees an empty page with the "needs a seat" hint.
+ *
+ * Seats are enumerated DIRECTLY from office_hierarchy_officer_history
+ * (not via get_user_scope) because get_user_scope() short-circuits
+ * for admins and returns an empty seat_ids list to signal "sees
+ * everything" to its other callers. My Work needs the viewer's real
+ * seats regardless of role.
  */
 
 require_once __DIR__ . '/includes/auth.php';
@@ -20,12 +27,26 @@ task_tracker_bootstrap();
 
 $viewer   = current_user();
 $viewerId = (int) $viewer['id'];
-$scope    = get_user_scope($viewerId);
 
 $filter = (string) ($_GET['filter'] ?? 'all');
 if (!in_array($filter, ['all', 'primary', 'secondary'], true)) $filter = 'all';
 
-$seats = $scope['seat_ids'];
+// Fetch the viewer's currently-held seats directly — same shape as
+// get_user_scope's own query, but never short-circuits on role, so
+// admins who DO hold seats see their tasks instead of an empty list.
+$seats = [];
+try {
+    $st = db()->prepare("SELECT h.node_id AS seat_id
+        FROM office_hierarchy_officer_history h
+        INNER JOIN office_hierarchy_nodes n ON n.id = h.node_id
+        WHERE h.officer_id = ? AND h.unassigned_at IS NULL
+          AND n.level_type = 'seat' AND n.active_status = 1");
+    $st->execute([$viewerId]);
+    foreach ($st->fetchAll() as $r) {
+        $sid = (int) $r['seat_id'];
+        if ($sid > 0 && !in_array($sid, $seats, true)) $seats[] = $sid;
+    }
+} catch (Throwable $e) { /* hierarchy table missing — empty list */ }
 $rows  = [];
 
 // task_assignment.user_id lets a meeting decision land on a user who
